@@ -1,0 +1,169 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "Information about the registered user, including language and currency preferences.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "The firebase auth unique id of the user." },
+        "name": { "type": "string", "description": "User displayed name." },
+        "email": { "type": "string", "format": "email", "description": "User registration email." },
+        "preferredLanguage": { "type": "string", "enum": ["ar", "en"], "description": "User preferred language." },
+        "preferredCurrency": { "type": "string", "enum": ["LYD", "USD"], "description": "User default display currency." },
+        "exchangeRateUSD_LYD": { "type": "number", "description": "Custom manual exchange rate conversion factor for USD to LYD." },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "name", "email", "preferredLanguage", "preferredCurrency", "exchangeRateUSD_LYD", "createdAt", "updatedAt"]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "Financial categorization labels used for incomes, expenses, or purchasing.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "name": { "type": "string", "description": "Name of the category in format 'ArabicName / EnglishName' or similar." },
+        "type": { "type": "string", "enum": ["income", "expense", "purchase"] },
+        "color": { "type": "string", "description": "Hex color code or tailwind color name." },
+        "icon": { "type": "string", "description": "Lucide icon identifier string." },
+        "isArchived": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "name", "type", "color", "icon", "isArchived", "createdAt"]
+    },
+    "Income": {
+      "title": "Income",
+      "description": "A financial deposit or revenue record.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "amount": { "type": "number" },
+        "currency": { "type": "string", "enum": ["LYD", "USD"] },
+        "title": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "categoryId": { "type": "string" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "amount", "currency", "title", "date", "categoryId", "createdAt", "updatedAt"]
+    },
+    "Expense": {
+      "title": "Expense",
+      "description": "A financial spending or cost record.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "amount": { "type": "number" },
+        "currency": { "type": "string", "enum": ["LYD", "USD"] },
+        "title": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "categoryId": { "type": "string" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "amount", "currency", "title", "date", "categoryId", "createdAt", "updatedAt"]
+    },
+    "FuturePurchase": {
+      "title": "Future Purchase",
+      "description": "Planned wishlist items for future acquisition.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "itemName": { "type": "string" },
+        "expectedPrice": { "type": "number" },
+        "currency": { "type": "string", "enum": ["LYD", "USD"] },
+        "expectedDate": { "type": "string", "format": "date" },
+        "priority": { "type": "string", "enum": ["low", "medium", "high"] },
+        "categoryId": { "type": "string" },
+        "notes": { "type": "string" },
+        "isPurchased": { "type": "boolean" },
+        "matchedExpenseId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "itemName", "expectedPrice", "currency", "priority", "isPurchased", "createdAt", "updatedAt"]
+    },
+    "SavingsGroup": {
+      "title": "Savings Group",
+      "description": "Rotating Credit and Savings Association (ROSCA / الجمعية) record.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "currency": { "type": "string", "enum": ["LYD", "USD"] },
+        "totalAmount": { "type": "number" },
+        "numMembers": { "type": "number" },
+        "paymentPerMember": { "type": "number" },
+        "paymentCycle": { "type": "string", "enum": ["monthly", "weekly", "custom"] },
+        "startDate": { "type": "string", "format": "date" },
+        "members": {
+          "type": "array",
+          "description": "List of group members, restricted size list."
+        },
+        "receivingOrder": {
+          "type": "array",
+          "description": "Ordered user IDs or indexes for collection schedule."
+        },
+        "isArchived": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "name", "currency", "totalAmount", "numMembers", "paymentPerMember", "paymentCycle", "startDate", "members", "receivingOrder", "isArchived", "createdAt", "updatedAt"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "Triggered in-app alert or reminder for the user.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "titleAr": { "type": "string" },
+        "titleEn": { "type": "string" },
+        "messageAr": { "type": "string" },
+        "messageEn": { "type": "string" },
+        "type": { "type": "string" },
+        "date": { "type": "string", "format": "date-time" },
+        "isRead": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "titleAr", "titleEn", "messageAr", "messageEn", "type", "date", "isRead", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Isolated profiles of registered fintech users."
+    },
+    "/categories/{categoryId}": {
+      "schema": "Category",
+      "description": "Bespoke categories for incomes, expenses, and wishlist tracking."
+    },
+    "/incomes/{incomeId}": {
+      "schema": "Income",
+      "description": "User income records."
+    },
+    "/expenses/{expenseId}": {
+      "schema": "Expense",
+      "description": "User spending transactions."
+    },
+    "/futurePurchases/{purchaseId}": {
+      "schema": "FuturePurchase",
+      "description": "Planned user wishlist acquisitions."
+    },
+    "/savingsGroups/{groupId}": {
+      "schema": "SavingsGroup",
+      "description": "Rotating credit association groups."
+    },
+    "/notifications/{notificationId}": {
+      "schema": "Notification",
+      "description": "History of bilingual user alerts."
+    }
+  }
+}

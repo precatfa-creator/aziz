@@ -1,0 +1,269 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 1. Global Safety Net: Default Deny Catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Global Hardened Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // --- Validation Schemas ---
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'name', 'email', 'preferredLanguage', 'preferredCurrency', 'exchangeRateUSD_LYD', 'createdAt', 'updatedAt'])
+        && data.keys().size() == 8
+        && data.uid is string && data.uid.size() <= 128
+        && data.name is string && data.name.size() <= 100
+        && data.email is string && data.email.size() <= 150
+        && data.preferredLanguage in ['ar', 'en']
+        && data.preferredCurrency in ['LYD', 'USD']
+        && data.exchangeRateUSD_LYD is number
+        && data.exchangeRateUSD_LYD >= 0.1
+        && data.exchangeRateUSD_LYD <= 50.0
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCategory(data) {
+      return data.keys().hasAll(['id', 'userId', 'name', 'type', 'color', 'icon', 'isArchived', 'createdAt'])
+        && (data.keys().size() == 8 || (data.keys().size() >= 9 && data.keys().size() <= 10 && (data.keys().hasAny(['parentId']) || data.keys().hasAny(['updatedAt']))))
+        && data.id is string && data.id.size() <= 128
+        && data.userId is string && data.userId.size() <= 128
+        && data.name is string && data.name.size() <= 100
+        && data.type in ['income', 'expense', 'purchase']
+        && data.color is string && data.color.size() <= 30
+        && data.icon is string && data.icon.size() <= 50
+        && data.isArchived is bool
+        && (!data.keys().hasAny(['parentId']) || data.parentId == null || (data.parentId is string && data.parentId.size() <= 128))
+        && (!data.keys().hasAny(['updatedAt']) || data.updatedAt is timestamp)
+        && data.createdAt is timestamp;
+    }
+
+    function isValidIncome(data) {
+      return data.keys().hasAll(['id', 'userId', 'amount', 'currency', 'title', 'date', 'categoryId', 'createdAt', 'updatedAt'])
+        && (data.keys().size() >= 9 && data.keys().size() <= 13)
+        && data.id is string && data.id.size() <= 128
+        && data.userId is string && data.userId.size() <= 128
+        && data.amount is number && data.amount >= 0.0
+        && data.currency in ['LYD', 'USD']
+        && data.title is string && data.title.size() <= 150
+        && data.date is string && data.date.size() <= 30
+        && data.categoryId is string && data.categoryId.size() <= 128
+        && (!data.keys().hasAny(['notes']) || (data.notes is string && data.notes.size() <= 5000))
+        && (!data.keys().hasAny(['imageUrl']) || (data.imageUrl is string && data.imageUrl.size() <= 1048576))
+        && (!data.keys().hasAny(['priority']) || (data.priority in ['low', 'medium', 'high']))
+        && (!data.keys().hasAny(['walletId']) || (data.walletId is string && data.walletId.size() <= 128))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidExpense(data) {
+      return data.keys().hasAll(['id', 'userId', 'amount', 'currency', 'title', 'date', 'categoryId', 'createdAt', 'updatedAt'])
+        && (data.keys().size() >= 9 && data.keys().size() <= 13)
+        && data.id is string && data.id.size() <= 128
+        && data.userId is string && data.userId.size() <= 128
+        && data.amount is number && data.amount >= 0.0
+        && data.currency in ['LYD', 'USD']
+        && data.title is string && data.title.size() <= 150
+        && data.date is string && data.date.size() <= 30
+        && data.categoryId is string && data.categoryId.size() <= 128
+        && (!data.keys().hasAny(['notes']) || (data.notes is string && data.notes.size() <= 5000))
+        && (!data.keys().hasAny(['imageUrl']) || (data.imageUrl is string && data.imageUrl.size() <= 1048576))
+        && (!data.keys().hasAny(['priority']) || (data.priority in ['low', 'medium', 'high']))
+        && (!data.keys().hasAny(['walletId']) || (data.walletId is string && data.walletId.size() <= 128))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidFuturePurchase(data) {
+      return data.keys().hasAll(['id', 'userId', 'itemName', 'expectedPrice', 'currency', 'priority', 'isPurchased', 'createdAt', 'updatedAt'])
+        && (
+          data.keys().size() == 9 
+          || (data.keys().size() == 10 && (data.keys().hasAny(['notes']) || data.keys().hasAny(['categoryId']) || data.keys().hasAny(['expectedDate']) || data.keys().hasAny(['matchedExpenseId'])))
+          || (data.keys().size() == 11 && (data.keys().hasAny(['notes']) && data.keys().hasAny(['categoryId'])))
+          || (data.keys().size() == 12 && (data.keys().hasAny(['notes']) && data.keys().hasAny(['categoryId']) && data.keys().hasAny(['expectedDate'])))
+          || (data.keys().size() == 13 && (data.keys().hasAny(['notes']) && data.keys().hasAny(['categoryId']) && data.keys().hasAny(['expectedDate']) && data.keys().hasAny(['matchedExpenseId'])))
+        )
+        && data.id is string && data.id.size() <= 128
+        && data.userId is string && data.userId.size() <= 128
+        && data.itemName is string && data.itemName.size() <= 150
+        && data.expectedPrice is number && data.expectedPrice >= 0.0
+        && data.currency in ['LYD', 'USD']
+        && data.priority in ['low', 'medium', 'high']
+        && data.isPurchased is bool
+        && (!data.keys().hasAny(['expectedDate']) || (data.expectedDate is string && data.expectedDate.size() <= 30))
+        && (!data.keys().hasAny(['categoryId']) || (data.categoryId is string && data.categoryId.size() <= 128))
+        && (!data.keys().hasAny(['notes']) || (data.notes is string && data.notes.size() <= 5000))
+        && (!data.keys().hasAny(['matchedExpenseId']) || (data.matchedExpenseId is string && data.matchedExpenseId.size() <= 128))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // Rotating Savings Group schema
+    function isValidSavingsGroup(data) {
+      return data.keys().hasAll(['id', 'userId', 'name', 'currency', 'totalAmount', 'numMembers', 'paymentPerMember', 'paymentCycle', 'startDate', 'members', 'receivingOrder', 'isArchived', 'createdAt', 'updatedAt'])
+        && (data.keys().size() >= 14 && data.keys().size() <= 16)
+        && data.id is string && data.id.size() <= 128
+        && data.userId is string && data.userId.size() <= 128
+        && data.name is string && data.name.size() <= 200
+        && data.currency in ['LYD', 'USD']
+        && data.totalAmount is number && data.totalAmount >= 0.0
+        && data.numMembers is number && data.numMembers >= 2 && data.numMembers <= 100
+        && data.paymentPerMember is number && data.paymentPerMember >= 0.0
+        && data.paymentCycle in ['monthly', 'weekly', 'custom']
+        && data.startDate is string && data.startDate.size() <= 30
+        && data.members is list && data.members.size() <= 100
+        && data.receivingOrder is list && data.receivingOrder.size() <= 100
+        && data.isArchived is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidNotification(data) {
+      return data.keys().hasAll(['id', 'userId', 'titleAr', 'titleEn', 'messageAr', 'messageEn', 'type', 'date', 'isRead', 'createdAt'])
+        && (data.keys().size() >= 10 && data.keys().size() <= 12)
+        && data.id is string && data.id.size() <= 128
+        && data.userId is string && data.userId.size() <= 128
+        && data.titleAr is string && data.titleAr.size() <= 200
+        && data.titleEn is string && data.titleEn.size() <= 200
+        && data.messageAr is string && data.messageAr.size() <= 2000
+        && data.messageEn is string && data.messageEn.size() <= 2000
+        && data.type is string && data.type.size() <= 50
+        && data.date is timestamp
+        && data.isRead is bool
+        && data.createdAt is timestamp;
+    }
+
+    function isValidWallet(data) {
+      return data.keys().hasAll(['id', 'userId', 'name', 'initialBalance', 'currency', 'color', 'icon', 'createdAt', 'updatedAt'])
+        && (data.keys().size() >= 9 && data.keys().size() <= 10)
+        && data.id is string && data.id.size() <= 128
+        && data.userId is string && data.userId.size() <= 128
+        && data.name is string && data.name.size() <= 150
+        && data.initialBalance is number
+        && data.currency in ['LYD', 'USD']
+        && data.color is string && data.color.size() <= 50
+        && data.icon is string && data.icon.size() <= 50
+        && (!data.keys().hasAny(['isHidden']) || data.isHidden is bool)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidComment(data) {
+      return data.keys().hasAll(['id', 'userId', 'transactionId', 'transactionType', 'userName', 'userEmail', 'text', 'createdAt'])
+        && data.keys().size() == 8
+        && data.id is string && data.id.size() <= 128
+        && data.userId is string && data.userId.size() <= 128
+        && data.transactionId is string && data.transactionId.size() <= 128
+        && data.transactionType in ['income', 'expense']
+        && data.userName is string && data.userName.size() <= 200
+        && data.userEmail is string && data.userEmail.size() <= 200
+        && data.text is string && data.text.size() <= 5000
+        && data.createdAt is timestamp;
+    }
+
+    // --- RULES FOR SPECIFIC COLLECTIONS ---
+
+    // 1. Users Profile Collection
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidUser(incoming()) && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isOwner(userId) && isValidUser(incoming()) && incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time;
+      allow delete: if isOwner(userId);
+    }
+
+    // 2. Categories Collection
+    match /categories/{categoryId} {
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow get: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidCategory(incoming()) && incoming().userId == request.auth.uid && incoming().createdAt == request.time;
+      allow update: if isSignedIn() && isValidCategory(incoming()) && existing().userId == request.auth.uid && incoming().userId == request.auth.uid && incoming().createdAt == existing().createdAt;
+      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+    }
+
+    // 3. Incomes Collection
+    match /incomes/{incomeId} {
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow get: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidIncome(incoming()) && incoming().userId == request.auth.uid && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isSignedIn() && isValidIncome(incoming()) && existing().userId == request.auth.uid && incoming().userId == request.auth.uid && incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time;
+      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+    }
+
+    // 4. Expenses Collection
+    match /expenses/{expenseId} {
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow get: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidExpense(incoming()) && incoming().userId == request.auth.uid && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isSignedIn() && isValidExpense(incoming()) && existing().userId == request.auth.uid && incoming().userId == request.auth.uid && incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time;
+      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+    }
+
+    // 5. Future Purchases Collection
+    match /futurePurchases/{purchaseId} {
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow get: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidFuturePurchase(incoming()) && incoming().userId == request.auth.uid && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isSignedIn() && isValidFuturePurchase(incoming()) && existing().userId == request.auth.uid && incoming().userId == request.auth.uid && incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time;
+      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+    }
+
+    // 6. Savings Groups Collection
+    match /savingsGroups/{groupId} {
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow get: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidSavingsGroup(incoming()) && incoming().userId == request.auth.uid && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isSignedIn() && isValidSavingsGroup(incoming()) && existing().userId == request.auth.uid && incoming().userId == request.auth.uid && incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time;
+      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+    }
+
+    // 7. Notifications Collection
+    match /notifications/{notificationId} {
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow get: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidNotification(incoming()) && incoming().userId == request.auth.uid && incoming().createdAt == request.time;
+      allow update: if isSignedIn() && isValidNotification(incoming()) && existing().userId == request.auth.uid && incoming().userId == request.auth.uid && incoming().createdAt == existing().createdAt;
+      allow delete: if isSignedIn() && (resource == null || !('userId' in resource.data) || resource.data.userId == request.auth.uid);
+    }
+
+    // 8. Wallets Collection
+    match /wallets/{walletId} {
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow get: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidWallet(incoming()) && incoming().userId == request.auth.uid && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isSignedIn() && isValidWallet(incoming()) && existing().userId == request.auth.uid && incoming().userId == request.auth.uid && incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time;
+      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+    }
+
+    // 9. Comments Collection
+    match /comments/{commentId} {
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow get: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidComment(incoming()) && incoming().userId == request.auth.uid && incoming().createdAt == request.time;
+      allow update: if isSignedIn() && isValidComment(incoming()) && existing().userId == request.auth.uid && incoming().userId == request.auth.uid && incoming().createdAt == existing().createdAt;
+      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+    }
+
+  }
+}
