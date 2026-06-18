@@ -51,6 +51,8 @@ export const IncomeManager: React.FC = () => {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
+  // Notes expand state by income ID
+  const [expandedNotesIds, setExpandedNotesIds] = useState<Record<string, boolean>>({});
   
   // Form States
   const [showAddForm, setShowAddForm] = useState(false);
@@ -352,7 +354,11 @@ export const IncomeManager: React.FC = () => {
                       </div>
 
                       {inc.notes && (
-                        <p className="text-xs text-slate-400 dark:text-slate-500 max-w-md line-clamp-2">
+                        <p 
+                          onClick={() => setExpandedNotesIds(prev => ({ ...prev, [inc.id]: !prev[inc.id] }))}
+                          className={`text-xs text-slate-400 dark:text-slate-500 max-w-md cursor-pointer hover:text-slate-600 dark:hover:text-slate-305 transition-colors duration-150 ${expandedNotesIds[inc.id] ? "" : "line-clamp-2"}`}
+                          title={language === "ar" ? "اضغط للتوسيع / الطي" : "Click to expand/collapse"}
+                        >
                           {inc.notes}
                         </p>
                       )}

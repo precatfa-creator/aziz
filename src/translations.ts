@@ -16,6 +16,20 @@ export const translations = {
     reports: "التقارير",
     notifications: "الإشعارات",
     settings: "الإعدادات",
+    trash: "سلة المحذوفات",
+    deletedItems: "العناصر المحذوفة مؤقتاً",
+    restore: "استعادة",
+    permDelete: "حذف نهائي",
+    trashEmpty: "السلة فارغة تماماً؛ لا توجد عناصر محذوفة حالياً.",
+    trashSubtitle: "يتم حفظ المحذوفات هنا لمدة 3 أيام لاستعادتها قبل الحذف التلقائي الآمن.",
+    daysRemaining: "متبقي {days} يوم",
+    hoursRemaining: "متبقي {hours} ساعة",
+    lessThanAnHour: "أقل من ساعة",
+    deletedSuccess: "تم نقل العنصر إلى سلة المحذوفات بنجاح ويمكنك استعادته خلال 3 أيام.",
+    restoredSuccess: "تم استعادة العنصر إلى وضعه الأصلي وتعديل الأرصدة والتقارير فوراً!",
+    permDeletedSuccess: "تم حذف العنصر نهائياً بنجاح وتصفية المعلقات.",
+    clearedExpired: "تم تشغيل نظام التنظيف الآلي وتصفير المحذوفات منتهية الصلاحية.",
+
     
     // Auth
     greeting: "مرحباً بك في عزيز",
@@ -164,6 +178,19 @@ export const translations = {
     arabicFont: "Tajawal",
     englishFont: "Inter",
 
+    // Wallet Transfer
+    transferMoney: "تحويل مالي بين المحافظ",
+    fromWallet: "من محفظة (خصم)",
+    toWallet: "إلى محفظة (إيراد)",
+    transferAmount: "مبلغ التحويل",
+    transferAmountPlaceholder: "اتركه فارغاً لتحويل الرصيد كاملاً",
+    transferDate: "تاريخ التحويل",
+    transferTime: "وقت التحويل",
+    transferNotes: "ملاحظات التحويل",
+    transferSuccess: "تم التحويل بنجاح!",
+    transferError: "حدث خطأ أثناء إتمام التحويل.",
+    insufficientBalance: "الرصيد غير كافٍ في المحفظة المصدر.",
+
     // General Words
     searchPlaceholder: "ابحث هنا...",
     save: "حفظ",
@@ -191,6 +218,20 @@ export const translations = {
     reports: "Reports",
     notifications: "Notifications",
     settings: "Settings",
+    trash: "Trash Bin",
+    deletedItems: "Deleted Items",
+    restore: "Restore",
+    permDelete: "Delete Forever",
+    trashEmpty: "The trash is completely empty; no deleted items found.",
+    trashSubtitle: "Deleted items are safely retained here for 3 days before being automatically purged.",
+    daysRemaining: "{days}d remaining",
+    hoursRemaining: "{hours}h remaining",
+    lessThanAnHour: "less than 1h",
+    deletedSuccess: "Item moved to Trash successfully. It is recoverable for 3 days.",
+    restoredSuccess: "Item restored successfully! Wallet and reports have been recalculated.",
+    permDeletedSuccess: "Item permanently deleted successfully.",
+    clearedExpired: "Automated cleanup executed; expired deleted items older than 3 days have been purged.",
+
 
     // Auth
     greeting: "Welcome to Aziz",
@@ -338,6 +379,19 @@ export const translations = {
     startDate: "Start Date",
     arabicFont: "Tajawal",
     englishFont: "Inter",
+
+    // Wallet Transfer
+    transferMoney: "Transfer Money",
+    fromWallet: "From Wallet (Deduction)",
+    toWallet: "To Wallet (Addition)",
+    transferAmount: "Transfer Amount",
+    transferAmountPlaceholder: "Leave empty to transfer full balance",
+    transferDate: "Transfer Date",
+    transferTime: "Transfer Time",
+    transferNotes: "Transfer Notes",
+    transferSuccess: "Transfer successful!",
+    transferError: "An error occurred during transfer.",
+    insufficientBalance: "Insufficient balance in the source wallet.",
 
     // General Words
     searchPlaceholder: "Search...",

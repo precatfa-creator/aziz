@@ -37,6 +37,7 @@ import {
   JamiyaNotification,
   Wallet,
   TransactionComment,
+  TrashItem,
 } from "../types";
 import { translations } from "../translations";
 
@@ -56,6 +57,7 @@ interface AppContextProps {
   notifications: JamiyaNotification[];
   wallets: Wallet[];
   comments: TransactionComment[];
+  trashItems: TrashItem[];
 
   // Translation Helper
   t: typeof translations.en;
@@ -102,6 +104,9 @@ interface AppContextProps {
     imageUrl?: string,
     priority?: "low" | "medium" | "high",
     walletId?: string,
+    isHistorical?: boolean,
+    categoryName?: string,
+    isOpening?: boolean,
   ) => Promise<void>;
   updateIncome: (
     id: string,
@@ -128,6 +133,8 @@ interface AppContextProps {
     imageUrl?: string,
     priority?: "low" | "medium" | "high",
     walletId?: string,
+    isHistorical?: boolean,
+    categoryName?: string,
   ) => Promise<string>;
   updateExpense: (
     id: string,
@@ -259,6 +266,17 @@ interface AppContextProps {
     isArchived: boolean,
     parentId?: string | null,
   ) => Promise<void>;
+  hideHistoricalData: boolean;
+  setHideHistoricalData: (val: boolean) => void;
+
+  // Trash Operations
+  restoreTrashItem: (id: string) => Promise<void>;
+  permanentlyDeleteTrashItem: (id: string) => Promise<void>;
+  cleanupExpiredTrashItems: () => Promise<void>;
+
+  // Custom Wallet Filter crossing views
+  selectedWalletFilter: string;
+  setSelectedWalletFilter: (val: string) => void;
 }
 
 const AppContext = createContext<AppContextProps | undefined>(undefined);
@@ -287,6 +305,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
   const [notifications, setNotifications] = useState<JamiyaNotification[]>([]);
   const [wallets, setWallets] = useState<Wallet[]>([]);
   const [comments, setComments] = useState<TransactionComment[]>([]);
+  const [trashItems, setTrashItems] = useState<TrashItem[]>([]);
+  const [selectedWalletFilter, setSelectedWalletFilter] = useState<string>("");
 
   // Select literal translation matching current language state
   const t = translations[language];
@@ -322,6 +342,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     const nextTheme = theme === "light" ? "dark" : "light";
     setTheme(nextTheme);
     localStorage.setItem("aziz_theme", nextTheme);
+  };
+
+  const [hideHistoricalData, setHideHistoricalDataState] = useState<boolean>(false);
+
+  useEffect(() => {
+    const savedHide = localStorage.getItem("aziz_hide_historical") === "true";
+    setHideHistoricalDataState(savedHide);
+  }, []);
+
+  const setHideHistoricalData = (val: boolean) => {
+    setHideHistoricalDataState(val);
+    localStorage.setItem("aziz_hide_historical", val ? "true" : "false");
   };
 
   // Seeding Default Base Categories when user triggers first signup
@@ -531,6 +563,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
         setSavingsGroups([]);
         setNotifications([]);
         setWallets([]);
+        setTrashItems([]);
       }
       setLoading(false);
     });
@@ -599,6 +632,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
             walletId: raw.walletId || "",
             priority: raw.priority || "medium",
             imageUrl: raw.imageUrl || "",
+            isHistorical: !!raw.isHistorical,
+            categoryName: raw.categoryName || "",
+            isOpening: !!raw.isOpening,
           });
         });
         setIncomes(items.sort((x, y) => y.date.localeCompare(x.date)));
@@ -633,6 +669,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
             walletId: raw.walletId || "",
             priority: raw.priority || "medium",
             imageUrl: raw.imageUrl || "",
+            isHistorical: !!raw.isHistorical,
+            categoryName: raw.categoryName || "",
           });
         });
         setExpenses(items.sort((x, y) => y.date.localeCompare(x.date)));
@@ -813,6 +851,34 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
       },
     );
 
+    // I. Listen Trash Items
+    const qTrash = query(
+      collection(db, "trash"),
+      where("userId", "==", uid),
+    );
+    const unsubTrash = onSnapshot(
+      qTrash,
+      (snap) => {
+        const items: TrashItem[] = [];
+        snap.forEach((d) => {
+          const raw = d.data();
+          items.push({
+            id: raw.id,
+            userId: raw.userId,
+            deletedAt: raw.deletedAt?.toDate() || new Date(),
+            deletedBy: raw.deletedBy || "",
+            originalId: raw.originalId,
+            originalType: raw.originalType,
+            originalData: raw.originalData,
+          });
+        });
+        setTrashItems(items.sort((x, y) => y.deletedAt.getTime() - x.deletedAt.getTime()));
+      },
+      (err) => {
+        handleFirestoreError(err, OperationType.LIST, "trash");
+      },
+    );
+
     return () => {
       unsubCategories();
       unsubIncomes();
@@ -822,6 +888,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
       unsubNotify();
       unsubWallets();
       unsubComments();
+      unsubTrash();
     };
   }, [user]);
 
@@ -1028,6 +1095,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     imageUrl?: string,
     priority?: "low" | "medium" | "high",
     walletId?: string,
+    isHistorical?: boolean,
+    categoryName?: string,
+    isOpening?: boolean,
   ) => {
     if (!user) return;
     const path = "incomes";
@@ -1035,6 +1105,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     const payload: Omit<Income, "createdAt" | "updatedAt"> & {
       createdAt: any;
       updatedAt: any;
+      isOpening?: boolean;
     } = {
       id,
       userId: user.uid,
@@ -1050,6 +1121,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     if (imageUrl) payload.imageUrl = imageUrl;
     if (priority) payload.priority = priority;
     if (walletId) payload.walletId = walletId;
+    if (isHistorical !== undefined) payload.isHistorical = isHistorical;
+    if (categoryName !== undefined) payload.categoryName = categoryName;
+    if (isOpening !== undefined) payload.isOpening = isOpening;
     try {
       await setDoc(doc(db, "incomes", id), payload);
     } catch (e) {
@@ -1091,8 +1165,46 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const deleteIncome = async (id: string) => {
     const path = `incomes/${id}`;
+    if (!user) return;
     try {
+      const item = incomes.find(i => i.id === id);
+      if (!item) return;
+
+      const trashId = `trash_${id}`;
+      await setDoc(doc(db, "trash", trashId), {
+        id: trashId,
+        userId: user.uid,
+        deletedAt: serverTimestamp(),
+        deletedBy: user.email || "User",
+        originalId: id,
+        originalType: "income",
+        originalData: {
+          id: item.id,
+          userId: item.userId,
+          amount: item.amount,
+          currency: item.currency,
+          title: item.title,
+          date: item.date,
+          categoryId: item.categoryId,
+          notes: item.notes || "",
+          walletId: item.walletId || "",
+          priority: item.priority || "medium",
+          imageUrl: item.imageUrl || "",
+          isHistorical: !!item.isHistorical,
+          categoryName: item.categoryName || "",
+          isOpening: !!item.isOpening,
+        }
+      });
+
       await deleteDoc(doc(db, "incomes", id));
+
+      await addNotificationArEn(
+        "تم نقل عنصر إلى السلة",
+        "Moved to Trash",
+        `تم نقل الوارد المالي "${item.title}" إلى سلة المحذوفات. متاح للاستعادة لمدة 3 أيام.`,
+        `Successfully moved income "${item.title}" to Trash. It remains recoverable for 3 days.`,
+        "general"
+      );
     } catch (e) {
       handleFirestoreError(e, OperationType.DELETE, path);
     }
@@ -1109,6 +1221,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     imageUrl?: string,
     priority?: "low" | "medium" | "high",
     walletId?: string,
+    isHistorical?: boolean,
+    categoryName?: string,
   ): Promise<string> => {
     if (!user) throw new Error("Unauthorized");
     const path = "expenses";
@@ -1131,6 +1245,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     if (imageUrl) payload.imageUrl = imageUrl;
     if (priority) payload.priority = priority;
     if (walletId) payload.walletId = walletId;
+    if (isHistorical !== undefined) payload.isHistorical = isHistorical;
+    if (categoryName !== undefined) payload.categoryName = categoryName;
     try {
       await setDoc(doc(db, "expenses", id), payload);
 
@@ -1184,8 +1300,45 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const deleteExpense = async (id: string) => {
     const path = `expenses/${id}`;
+    if (!user) return;
     try {
+      const item = expenses.find(e => e.id === id);
+      if (!item) return;
+
+      const trashId = `trash_${id}`;
+      await setDoc(doc(db, "trash", trashId), {
+        id: trashId,
+        userId: user.uid,
+        deletedAt: serverTimestamp(),
+        deletedBy: user.email || "User",
+        originalId: id,
+        originalType: "expense",
+        originalData: {
+          id: item.id,
+          userId: item.userId,
+          amount: item.amount,
+          currency: item.currency,
+          title: item.title,
+          date: item.date,
+          categoryId: item.categoryId,
+          notes: item.notes || "",
+          walletId: item.walletId || "",
+          priority: item.priority || "medium",
+          imageUrl: item.imageUrl || "",
+          isHistorical: !!item.isHistorical,
+          categoryName: item.categoryName || "",
+        }
+      });
+
       await deleteDoc(doc(db, "expenses", id));
+
+      await addNotificationArEn(
+        "تم نقل عنصر إلى السلة",
+        "Moved to Trash",
+        `تم نقل المصروف المالي "${item.title}" إلى سلة المحذوفات. متاح للاستعادة لمدة 3 أيام.`,
+        `Successfully moved expense "${item.title}" to Trash. It remains recoverable for 3 days.`,
+        "general"
+      );
     } catch (e) {
       handleFirestoreError(e, OperationType.DELETE, path);
     }
@@ -1317,8 +1470,43 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const deleteFuturePurchase = async (id: string) => {
     const path = `futurePurchases/${id}`;
+    if (!user) return;
     try {
+      const item = plannedPurchases.find(p => p.id === id);
+      if (!item) return;
+
+      const trashId = `trash_${id}`;
+      await setDoc(doc(db, "trash", trashId), {
+        id: trashId,
+        userId: user.uid,
+        deletedAt: serverTimestamp(),
+        deletedBy: user.email || "User",
+        originalId: id,
+        originalType: "future_purchase",
+        originalData: {
+          id: item.id,
+          userId: item.userId,
+          itemName: item.itemName,
+          expectedPrice: item.expectedPrice,
+          currency: item.currency,
+          expectedDate: item.expectedDate || "",
+          priority: item.priority,
+          categoryId: item.categoryId || "",
+          notes: item.notes || "",
+          isPurchased: !!item.isPurchased,
+          matchedExpenseId: item.matchedExpenseId || "",
+        }
+      });
+
       await deleteDoc(doc(db, "futurePurchases", id));
+
+      await addNotificationArEn(
+        "تم نقل غرض مخطط إلى السلة",
+        "Moved to Trash",
+        `تم نقل الشراء المخطط "${item.itemName}" إلى سلة المحذوفات. متاح للاستعادة لمدة 3 أيام.`,
+        `Successfully moved planned purchase "${item.itemName}" to Trash. It remains recoverable for 3 days.`,
+        "general"
+      );
     } catch (e) {
       handleFirestoreError(e, OperationType.DELETE, path);
     }
@@ -1529,8 +1717,44 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const deleteSavingsGroup = async (id: string) => {
     const path = `savingsGroups/${id}`;
+    if (!user) return;
     try {
+      const item = savingsGroups.find(g => g.id === id);
+      if (!item) return;
+
+      const trashId = `trash_${id}`;
+      await setDoc(doc(db, "trash", trashId), {
+        id: trashId,
+        userId: user.uid,
+        deletedAt: serverTimestamp(),
+        deletedBy: user.email || "User",
+        originalId: id,
+        originalType: "savings_group",
+        originalData: {
+          id: item.id,
+          userId: item.userId,
+          name: item.name,
+          currency: item.currency,
+          totalAmount: item.totalAmount,
+          numMembers: item.numMembers,
+          paymentPerMember: item.paymentPerMember,
+          paymentCycle: item.paymentCycle,
+          startDate: item.startDate,
+          members: item.members,
+          receivingOrder: item.receivingOrder,
+          isArchived: !!item.isArchived,
+        }
+      });
+
       await deleteDoc(doc(db, "savingsGroups", id));
+
+      await addNotificationArEn(
+        "تم نقل الجمعية إلى السلة",
+        "Moved to Trash",
+        `تم نقل الجمعية المشتركة "${item.name}" إلى سلة المحذوفات ورصيدها. متاح للاستعادة لمدة 3 أيام.`,
+        `Successfully moved Savings Group "${item.name}" to Trash. It remains recoverable for 3 days.`,
+        "general"
+      );
     } catch (e) {
       handleFirestoreError(e, OperationType.DELETE, path);
     }
@@ -1614,8 +1838,40 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const deleteComment = async (id: string) => {
     const path = `comments/${id}`;
+    if (!user) return;
     try {
+      const item = comments.find(c => c.id === id);
+      if (!item) return;
+
+      const trashId = `trash_${id}`;
+      await setDoc(doc(db, "trash", trashId), {
+        id: trashId,
+        userId: user.uid,
+        deletedAt: serverTimestamp(),
+        deletedBy: user.email || "User",
+        originalId: id,
+        originalType: "comment",
+        originalData: {
+          id: item.id,
+          userId: item.userId,
+          transactionId: item.transactionId,
+          transactionType: item.transactionType,
+          userName: item.userName,
+          userEmail: item.userEmail,
+          text: item.text,
+          createdAt: item.createdAt instanceof Date ? item.createdAt.toISOString() : (item.createdAt || ""),
+        }
+      });
+
       await deleteDoc(doc(db, "comments", id));
+
+      await addNotificationArEn(
+        "تم نقل التعليق إلى السلة",
+        "Comment Moved to Trash",
+        `تم نقل تعليق العنصر بكاتبه "${item.userName}" إلى سلة المحذوفات. متاح للاستعادة خلال 3 أيام.`,
+        `Successfully moved comment by "${item.userName}" to Trash. It remains recoverable for 3 days.`,
+        "general"
+      );
     } catch (e) {
       handleFirestoreError(e, OperationType.DELETE, path);
     }
@@ -1681,12 +1937,146 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const deleteWallet = async (id: string) => {
     const path = `wallets/${id}`;
-    // Optionally check if used in incomes/expenses, or cascade set to null?
-    // We'll just allow deletion, as walletId isn't universally strictly enforced
+    if (!user) return;
     try {
+      const item = wallets.find(w => w.id === id);
+      if (!item) return;
+
+      const trashId = `trash_${id}`;
+      await setDoc(doc(db, "trash", trashId), {
+        id: trashId,
+        userId: user.uid,
+        deletedAt: serverTimestamp(),
+        deletedBy: user.email || "User",
+        originalId: id,
+        originalType: "wallet",
+        originalData: {
+          id: item.id,
+          userId: item.userId,
+          name: item.name,
+          initialBalance: item.initialBalance,
+          currency: item.currency,
+          color: item.color,
+          icon: item.icon,
+          isHidden: !!item.isHidden,
+          createdAt: item.createdAt instanceof Date ? item.createdAt.toISOString() : (item.createdAt || ""),
+        }
+      });
+
       await deleteDoc(doc(db, "wallets", id));
+
+      await addNotificationArEn(
+        "تم نقل المحفظة إلى السلة",
+        "Wallet Moved to Trash",
+        `تم نقل المحفظة المالية "${item.name}" إلى سلة المحذوفات. متاح للاستعادة خلال 3 أيام.`,
+        `Successfully moved wallet "${item.name}" to Trash. It remains recoverable for 3 days.`,
+        "general"
+      );
     } catch (e) {
       handleFirestoreError(e, OperationType.DELETE, path);
+    }
+  };
+
+  // TRASH MANAGEMENT PIPELINE
+  const restoreTrashItem = async (id: string) => {
+    const path = `trash/${id}`;
+    if (!user) return;
+    try {
+      const trashItem = trashItems.find((itm) => itm.id === id);
+      if (!trashItem) return;
+
+      const destCollection = 
+        trashItem.originalType === 'income' ? 'incomes' :
+        trashItem.originalType === 'expense' ? 'expenses' :
+        trashItem.originalType === 'future_purchase' ? 'futurePurchases' :
+        trashItem.originalType === 'savings_group' ? 'savingsGroups' :
+        trashItem.originalType === 'wallet' ? 'wallets' :
+        'comments';
+
+      const destDocRef = doc(db, destCollection, trashItem.originalId);
+
+      const payload = {
+        ...trashItem.originalData,
+        createdAt: trashItem.originalData.createdAt 
+          ? new Date(trashItem.originalData.createdAt) 
+          : serverTimestamp(),
+        updatedAt: serverTimestamp()
+      };
+
+      await setDoc(destDocRef, payload);
+      await deleteDoc(doc(db, "trash", id));
+
+      const titleToShow = trashItem.originalData.name || trashItem.originalData.title || trashItem.originalData.itemName || (trashItem.originalType === 'comment' ? (language === 'ar' ? 'تعليق' : 'Comment') : '');
+
+      await addNotificationArEn(
+        "تم استعادة عنصر بنجاح!",
+        "Item Restored Successfully!",
+        `تم استعادة العنصر "${titleToShow}" إلى سجلاته ودمجه في الحسابات الفورية للأرصدة بنجاح!`,
+        `Successfully restored "${titleToShow}" back into ledger indexes.`,
+        "general"
+      );
+    } catch (e) {
+      handleFirestoreError(e, OperationType.DELETE, path);
+    }
+  };
+
+  const permanentlyDeleteTrashItem = async (id: string) => {
+    const path = `trash/${id}`;
+    if (!user) return;
+    try {
+      const trashItem = trashItems.find((itm) => itm.id === id);
+      if (!trashItem) return;
+
+      await deleteDoc(doc(db, "trash", id));
+
+      if (trashItem.originalType === "income" || trashItem.originalType === "expense") {
+        const dependentComments = comments.filter(c => c.transactionId === trashItem.originalId);
+        for (const comment of dependentComments) {
+          try {
+            await deleteDoc(doc(db, "comments", comment.id));
+          } catch (commErr) {
+            console.error("Failed to delete dependent comment:", commErr);
+          }
+        }
+      }
+    } catch (e) {
+      handleFirestoreError(e, OperationType.DELETE, path);
+    }
+  };
+
+  const cleanupExpiredTrashItems = async () => {
+    if (!user) return;
+    const now = new Date();
+    const threeDaysMs = 3 * 24 * 60 * 60 * 1000;
+    const expiredItems = trashItems.filter((item) => {
+      const deletedTime = item.deletedAt.getTime();
+      return (now.getTime() - deletedTime) > threeDaysMs;
+    });
+
+    if (expiredItems.length > 0) {
+      console.log(`Starting scheduled auto-cleanup of ${expiredItems.length} expired trash items...`);
+      for (const item of expiredItems) {
+        try {
+          await deleteDoc(doc(db, "trash", item.id));
+
+          if (item.originalType === "income" || item.originalType === "expense") {
+            const dependentComments = comments.filter(c => c.transactionId === item.originalId);
+            for (const comment of dependentComments) {
+              await deleteDoc(doc(db, "comments", comment.id));
+            }
+          }
+        } catch (err) {
+          console.error(`Scheduled automatic cleanup failed for trash item ${item.id}:`, err);
+        }
+      }
+
+      await addNotificationArEn(
+        "تنظيف آلي لسلة المحذوفات",
+        "Automated Trash Purge",
+        `تم تنظيف عدد ${expiredItems.length} من العناصر التالفة والمحذوفة التي انقضت مهلة استعادتها (3 أيام).`,
+        `Successfully purged ${expiredItems.length} expired trash items older than 3 days automatically.`,
+        "general"
+      );
     }
   };
 
@@ -1708,6 +2098,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
         notifications,
         wallets,
         comments,
+        trashItems,
 
         t,
 
@@ -1758,6 +2149,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
         setExchangeRate: changeExchangeRate,
         updateProfile,
         updateCategory,
+        hideHistoricalData,
+        setHideHistoricalData,
+
+        // Trash Operations
+        restoreTrashItem,
+        permanentlyDeleteTrashItem,
+        cleanupExpiredTrashItems,
+
+        // Custom Wallet Filter crossing views
+        selectedWalletFilter,
+        setSelectedWalletFilter,
       }}
     >
       {children}

@@ -62,7 +62,7 @@ service cloud.firestore {
 
     function isValidIncome(data) {
       return data.keys().hasAll(['id', 'userId', 'amount', 'currency', 'title', 'date', 'categoryId', 'createdAt', 'updatedAt'])
-        && (data.keys().size() >= 9 && data.keys().size() <= 13)
+        && (data.keys().size() >= 9 && data.keys().size() <= 16)
         && data.id is string && data.id.size() <= 128
         && data.userId is string && data.userId.size() <= 128
         && data.amount is number && data.amount >= 0.0
@@ -74,13 +74,16 @@ service cloud.firestore {
         && (!data.keys().hasAny(['imageUrl']) || (data.imageUrl is string && data.imageUrl.size() <= 1048576))
         && (!data.keys().hasAny(['priority']) || (data.priority in ['low', 'medium', 'high']))
         && (!data.keys().hasAny(['walletId']) || (data.walletId is string && data.walletId.size() <= 128))
+        && (!data.keys().hasAny(['isOpening']) || (data.isOpening is bool))
+        && (!data.keys().hasAny(['isHistorical']) || (data.isHistorical is bool))
+        && (!data.keys().hasAny(['categoryName']) || (data.categoryName is string && data.categoryName.size() <= 150))
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
 
     function isValidExpense(data) {
       return data.keys().hasAll(['id', 'userId', 'amount', 'currency', 'title', 'date', 'categoryId', 'createdAt', 'updatedAt'])
-        && (data.keys().size() >= 9 && data.keys().size() <= 13)
+        && (data.keys().size() >= 9 && data.keys().size() <= 15)
         && data.id is string && data.id.size() <= 128
         && data.userId is string && data.userId.size() <= 128
         && data.amount is number && data.amount >= 0.0
@@ -92,19 +95,15 @@ service cloud.firestore {
         && (!data.keys().hasAny(['imageUrl']) || (data.imageUrl is string && data.imageUrl.size() <= 1048576))
         && (!data.keys().hasAny(['priority']) || (data.priority in ['low', 'medium', 'high']))
         && (!data.keys().hasAny(['walletId']) || (data.walletId is string && data.walletId.size() <= 128))
+        && (!data.keys().hasAny(['isHistorical']) || (data.isHistorical is bool))
+        && (!data.keys().hasAny(['categoryName']) || (data.categoryName is string && data.categoryName.size() <= 150))
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
 
     function isValidFuturePurchase(data) {
       return data.keys().hasAll(['id', 'userId', 'itemName', 'expectedPrice', 'currency', 'priority', 'isPurchased', 'createdAt', 'updatedAt'])
-        && (
-          data.keys().size() == 9 
-          || (data.keys().size() == 10 && (data.keys().hasAny(['notes']) || data.keys().hasAny(['categoryId']) || data.keys().hasAny(['expectedDate']) || data.keys().hasAny(['matchedExpenseId'])))
-          || (data.keys().size() == 11 && (data.keys().hasAny(['notes']) && data.keys().hasAny(['categoryId'])))
-          || (data.keys().size() == 12 && (data.keys().hasAny(['notes']) && data.keys().hasAny(['categoryId']) && data.keys().hasAny(['expectedDate'])))
-          || (data.keys().size() == 13 && (data.keys().hasAny(['notes']) && data.keys().hasAny(['categoryId']) && data.keys().hasAny(['expectedDate']) && data.keys().hasAny(['matchedExpenseId'])))
-        )
+        && (data.keys().size() >= 9 && data.keys().size() <= 13)
         && data.id is string && data.id.size() <= 128
         && data.userId is string && data.userId.size() <= 128
         && data.itemName is string && data.itemName.size() <= 150
@@ -172,7 +171,7 @@ service cloud.firestore {
 
     function isValidComment(data) {
       return data.keys().hasAll(['id', 'userId', 'transactionId', 'transactionType', 'userName', 'userEmail', 'text', 'createdAt'])
-        && data.keys().size() == 8
+        && (data.keys().size() == 8 || (data.keys().size() == 9 && data.keys().hasAny(['updatedAt'])))
         && data.id is string && data.id.size() <= 128
         && data.userId is string && data.userId.size() <= 128
         && data.transactionId is string && data.transactionId.size() <= 128
@@ -180,16 +179,30 @@ service cloud.firestore {
         && data.userName is string && data.userName.size() <= 200
         && data.userEmail is string && data.userEmail.size() <= 200
         && data.text is string && data.text.size() <= 5000
+        && (!data.keys().hasAny(['updatedAt']) || data.updatedAt is timestamp)
         && data.createdAt is timestamp;
     }
+
+    function isValidTrash(data) {
+      return data.keys().hasAll(['id', 'userId', 'deletedAt', 'deletedBy', 'originalId', 'originalType', 'originalData'])
+        && data.keys().size() == 7
+        && data.id is string && data.id.size() <= 128
+        && data.userId is string && data.userId.size() <= 128
+        && data.deletedAt is timestamp
+        && data.deletedBy is string && data.deletedBy.size() <= 150
+        && data.originalId is string && data.originalId.size() <= 128
+        && data.originalType in ['income', 'expense', 'future_purchase', 'savings_group', 'wallet', 'comment']
+        && data.originalData is map;
+    }
+
 
     // --- RULES FOR SPECIFIC COLLECTIONS ---
 
     // 1. Users Profile Collection
     match /users/{userId} {
       allow read: if isOwner(userId);
-      allow create: if isOwner(userId) && isValidUser(incoming()) && incoming().createdAt == request.time && incoming().updatedAt == request.time;
-      allow update: if isOwner(userId) && isValidUser(incoming()) && incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time;
+      allow create: if isOwner(userId) && isValidUser(incoming());
+      allow update: if isOwner(userId) && isValidUser(incoming()) && incoming().createdAt == existing().createdAt;
       allow delete: if isOwner(userId);
     }
 
@@ -197,7 +210,7 @@ service cloud.firestore {
     match /categories/{categoryId} {
       allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
       allow get: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow create: if isSignedIn() && isValidCategory(incoming()) && incoming().userId == request.auth.uid && incoming().createdAt == request.time;
+      allow create: if isSignedIn() && isValidCategory(incoming()) && incoming().userId == request.auth.uid;
       allow update: if isSignedIn() && isValidCategory(incoming()) && existing().userId == request.auth.uid && incoming().userId == request.auth.uid && incoming().createdAt == existing().createdAt;
       allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
     }
@@ -206,8 +219,8 @@ service cloud.firestore {
     match /incomes/{incomeId} {
       allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
       allow get: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow create: if isSignedIn() && isValidIncome(incoming()) && incoming().userId == request.auth.uid && incoming().createdAt == request.time && incoming().updatedAt == request.time;
-      allow update: if isSignedIn() && isValidIncome(incoming()) && existing().userId == request.auth.uid && incoming().userId == request.auth.uid && incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time;
+      allow create: if isSignedIn() && isValidIncome(incoming()) && incoming().userId == request.auth.uid;
+      allow update: if isSignedIn() && isValidIncome(incoming()) && existing().userId == request.auth.uid && incoming().userId == request.auth.uid && incoming().createdAt == existing().createdAt;
       allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
     }
 
@@ -215,8 +228,8 @@ service cloud.firestore {
     match /expenses/{expenseId} {
       allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
       allow get: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow create: if isSignedIn() && isValidExpense(incoming()) && incoming().userId == request.auth.uid && incoming().createdAt == request.time && incoming().updatedAt == request.time;
-      allow update: if isSignedIn() && isValidExpense(incoming()) && existing().userId == request.auth.uid && incoming().userId == request.auth.uid && incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time;
+      allow create: if isSignedIn() && isValidExpense(incoming()) && incoming().userId == request.auth.uid;
+      allow update: if isSignedIn() && isValidExpense(incoming()) && existing().userId == request.auth.uid && incoming().userId == request.auth.uid && incoming().createdAt == existing().createdAt;
       allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
     }
 
@@ -224,8 +237,8 @@ service cloud.firestore {
     match /futurePurchases/{purchaseId} {
       allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
       allow get: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow create: if isSignedIn() && isValidFuturePurchase(incoming()) && incoming().userId == request.auth.uid && incoming().createdAt == request.time && incoming().updatedAt == request.time;
-      allow update: if isSignedIn() && isValidFuturePurchase(incoming()) && existing().userId == request.auth.uid && incoming().userId == request.auth.uid && incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time;
+      allow create: if isSignedIn() && isValidFuturePurchase(incoming()) && incoming().userId == request.auth.uid;
+      allow update: if isSignedIn() && isValidFuturePurchase(incoming()) && existing().userId == request.auth.uid && incoming().userId == request.auth.uid && incoming().createdAt == existing().createdAt;
       allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
     }
 
@@ -233,26 +246,26 @@ service cloud.firestore {
     match /savingsGroups/{groupId} {
       allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
       allow get: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow create: if isSignedIn() && isValidSavingsGroup(incoming()) && incoming().userId == request.auth.uid && incoming().createdAt == request.time && incoming().updatedAt == request.time;
-      allow update: if isSignedIn() && isValidSavingsGroup(incoming()) && existing().userId == request.auth.uid && incoming().userId == request.auth.uid && incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time;
+      allow create: if isSignedIn() && isValidSavingsGroup(incoming()) && incoming().userId == request.auth.uid;
+      allow update: if isSignedIn() && isValidSavingsGroup(incoming()) && existing().userId == request.auth.uid && incoming().userId == request.auth.uid && incoming().createdAt == existing().createdAt;
       allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
     }
 
     // 7. Notifications Collection
     match /notifications/{notificationId} {
       allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow get: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow create: if isSignedIn() && isValidNotification(incoming()) && incoming().userId == request.auth.uid && incoming().createdAt == request.time;
+      allow get: if isSignedIn() && (resource == null || resource.data.userId == request.auth.uid);
+      allow create: if isSignedIn() && isValidNotification(incoming()) && incoming().userId == request.auth.uid;
       allow update: if isSignedIn() && isValidNotification(incoming()) && existing().userId == request.auth.uid && incoming().userId == request.auth.uid && incoming().createdAt == existing().createdAt;
-      allow delete: if isSignedIn() && (resource == null || !('userId' in resource.data) || resource.data.userId == request.auth.uid);
+      allow delete: if isSignedIn() && (resource == null || resource.data.userId == request.auth.uid);
     }
 
     // 8. Wallets Collection
     match /wallets/{walletId} {
       allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
       allow get: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow create: if isSignedIn() && isValidWallet(incoming()) && incoming().userId == request.auth.uid && incoming().createdAt == request.time && incoming().updatedAt == request.time;
-      allow update: if isSignedIn() && isValidWallet(incoming()) && existing().userId == request.auth.uid && incoming().userId == request.auth.uid && incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time;
+      allow create: if isSignedIn() && isValidWallet(incoming()) && incoming().userId == request.auth.uid;
+      allow update: if isSignedIn() && isValidWallet(incoming()) && existing().userId == request.auth.uid && incoming().userId == request.auth.uid && incoming().createdAt == existing().createdAt;
       allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
     }
 
@@ -260,10 +273,20 @@ service cloud.firestore {
     match /comments/{commentId} {
       allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
       allow get: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow create: if isSignedIn() && isValidComment(incoming()) && incoming().userId == request.auth.uid && incoming().createdAt == request.time;
+      allow create: if isSignedIn() && isValidComment(incoming()) && incoming().userId == request.auth.uid;
       allow update: if isSignedIn() && isValidComment(incoming()) && existing().userId == request.auth.uid && incoming().userId == request.auth.uid && incoming().createdAt == existing().createdAt;
       allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
     }
+
+    // 10. Trash / Deleted Items Collection
+    match /trash/{trashId} {
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow get: if isSignedIn() && (resource == null || !('userId' in resource.data) || resource.data.userId == request.auth.uid);
+      allow create: if isSignedIn() && isValidTrash(incoming()) && incoming().userId == request.auth.uid;
+      allow update: if false; // Trash items are immutable! Only created, deleted, or listed.
+      allow delete: if isSignedIn() && (resource == null || !('userId' in resource.data) || resource.data.userId == request.auth.uid);
+    }
+
 
   }
 }

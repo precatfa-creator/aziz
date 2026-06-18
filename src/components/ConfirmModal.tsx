@@ -28,9 +28,15 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
 
   if (!isOpen) return null;
 
-  const defaultConfirmText = confirmText || (type === 'archive' 
-    ? (language === 'ar' ? 'تأكيد الأرشفة' : 'Confirm Archive')
-    : (language === 'ar' ? 'تأكيد الحذف' : 'Confirm Delete'));
+  const defaultConfirmText = confirmText || (
+    type === 'archive' 
+      ? (language === 'ar' ? 'تأكيد الأرشفة' : 'Confirm Archive')
+      : type === 'warning'
+        ? (language === 'ar' ? 'تأكيد' : 'Confirm')
+        : type === 'info'
+          ? (language === 'ar' ? 'موافق' : 'OK')
+          : (language === 'ar' ? 'تأكيد الحذف' : 'Confirm Delete')
+  );
     
   const defaultCancelText = cancelText || (language === 'ar' ? 'إلغاء' : 'Cancel');
 
@@ -91,6 +97,13 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
             <p className="text-xs text-slate-450 dark:text-slate-400 font-bold leading-relaxed">
               {message}
             </p>
+            {type === 'danger' && (
+              <div className="mt-3 text-[10px] bg-rose-50 dark:bg-rose-950/20 text-rose-600 dark:text-rose-450 border border-rose-100 dark:border-rose-900/30 font-bold rounded-xl p-2.5 leading-normal">
+                {language === 'ar' 
+                  ? '💡 سيتم نقل المحدد إلى سلة المحذوفات مؤقتاً لمدة 3 أيام مع إمكانية استعادته بالكامل بأي وقت.'
+                  : '💡 This will be moved to the Trash Bin temporarily for 3 days where it remains fully restorable.'}
+              </div>
+            )}
           </div>
 
           {/* Two-Column responsive Action Buttons in RTL order */}

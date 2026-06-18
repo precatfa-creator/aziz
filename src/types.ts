@@ -40,6 +40,9 @@ export interface Income {
   imageUrl?: string;
   priority?: 'low' | 'medium' | 'high';
   walletId?: string;
+  isHistorical?: boolean;
+  categoryName?: string;
+  isOpening?: boolean;
 }
 
 export interface Expense {
@@ -56,6 +59,8 @@ export interface Expense {
   imageUrl?: string;
   priority?: 'low' | 'medium' | 'high';
   walletId?: string;
+  isHistorical?: boolean;
+  categoryName?: string;
 }
 
 export interface Wallet {
@@ -146,4 +151,15 @@ export interface TransactionComment {
   text: string;
   createdAt: Date;
 }
+
+export interface TrashItem {
+  id: string;
+  userId: string;
+  deletedAt: Date;
+  deletedBy: string;
+  originalId: string;
+  originalType: 'income' | 'expense' | 'future_purchase' | 'savings_group' | 'wallet' | 'comment';
+  originalData: any;
+}
+
 

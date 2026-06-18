@@ -15,6 +15,7 @@ import { CategoryManager } from './CategoryManager';
 import { Reports } from './Reports';
 import { Settings } from './Settings';
 import { WalletManager } from './WalletManager';
+import { TrashPage } from './TrashPage';
 import { Coins, Loader2, Bell, Info, Trash2, CheckCheck, Languages } from 'lucide-react';
 import { AboutModal } from './AboutModal';
 import { ProductTour } from './ProductTour';
@@ -136,13 +137,15 @@ export const Layout: React.FC = () => {
       case 'savingsGroups':
         return <SavingsGroups />;
       case 'wallets':
-        return <WalletManager />;
+        return <WalletManager setCurrentTab={setCurrentTab} />;
       case 'categories':
         return <CategoryManager />;
       case 'reports':
         return <Reports />;
       case 'settings':
         return <Settings />;
+      case 'trash':
+        return <TrashPage />;
       default:
         return <Dashboard />;
     }

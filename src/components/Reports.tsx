@@ -25,12 +25,17 @@ export const Reports: React.FC = () => {
     t, 
     language, 
     currency: defaultCurrency,
-    incomes, 
-    expenses, 
+    incomes: allIncomes, 
+    expenses: allExpenses, 
     savingsGroups, 
     plannedPurchases, 
-    categories 
+    categories,
+    hideHistoricalData,
+    setHideHistoricalData
   } = useApp();
+
+  const incomes = hideHistoricalData ? allIncomes.filter(i => !i.isHistorical) : allIncomes;
+  const expenses = hideHistoricalData ? allExpenses.filter(e => !e.isHistorical) : allExpenses;
 
   const [activeGrouping, setActiveGrouping] = useState<'week' | 'month' | 'year'>('month');
   const [activeCurrency, setActiveCurrency] = useState<'LYD' | 'USD'>('LYD');
@@ -293,6 +298,19 @@ export const Reports: React.FC = () => {
           ))}
         </div>
 
+        {/* Hide Historical Data Toggle */}
+        <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-105/90 dark:bg-slate-950/95 rounded-xl cursor-pointer shadow-xs">
+          <label className="text-xs font-bold text-slate-600 dark:text-slate-400 cursor-pointer flex items-center gap-2 select-none">
+            <span>{language === 'ar' ? 'إخفاء البيانات القديمة' : 'Hide Historical'}</span>
+            <input
+              type="checkbox"
+              checked={hideHistoricalData}
+              onChange={(e) => setHideHistoricalData(e.target.checked)}
+              className="w-4 h-4 text-emerald-500 border-gray-300 rounded focus:ring-emerald-500 focus:ring-offset-0 accent-emerald-500 cursor-pointer"
+            />
+          </label>
+        </div>
+
       </div>
 
       {/* 4. Grouped Reports Accordions list */}
@@ -354,11 +372,23 @@ export const Reports: React.FC = () => {
                     return (
                       <div key={tx.id} className="p-4 flex justify-between items-center text-xs hover:bg-slate-55/10">
                         <div className="space-y-0.5">
-                          <span className="font-semibold text-slate-900 dark:text-white">
-                            {tx.title}
-                          </span>
-                          <span className="text-[10px] text-slate-400 block">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-semibold text-slate-900 dark:text-white" dir="auto">
+                              {tx.title}
+                            </span>
+                            {tx.isHistorical && (
+                              <span className="text-[9px] font-bold bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 px-1.5 py-0.5 rounded border border-amber-250/20 dark:border-amber-900/10">
+                                {language === 'ar' ? 'بيانات قديمة/مستوردة' : 'Imported'}
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-[10px] text-slate-400 block pb-0.5">
                             {tx.date}
+                            {(() => {
+                              const parsedCat = categories.find(c => c.id === tx.categoryId);
+                              const catLabel = tx.categoryName || (parsedCat ? parsedCat.name.split(' / ')[language === 'ar' ? 0 : 1] || parsedCat.name : '');
+                              return catLabel ? ` • ${catLabel}` : '';
+                            })()}
                           </span>
                         </div>
 

@@ -52,6 +52,8 @@ export const ExpenseManager: React.FC = () => {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
+  // Notes expand state by expense ID
+  const [expandedNotesIds, setExpandedNotesIds] = useState<Record<string, boolean>>({});
   
   // Dialog Toggle
   const [showAddForm, setShowAddForm] = useState(false);
@@ -472,7 +474,11 @@ export const ExpenseManager: React.FC = () => {
                       </div>
 
                       {exp.notes && (
-                        <p className="text-xs text-slate-400 dark:text-slate-500 max-w-md line-clamp-2">
+                        <p 
+                          onClick={() => setExpandedNotesIds(prev => ({ ...prev, [exp.id]: !prev[exp.id] }))}
+                          className={`text-xs text-slate-400 dark:text-slate-500 max-w-md cursor-pointer hover:text-slate-600 dark:hover:text-slate-305 transition-colors duration-150 ${expandedNotesIds[exp.id] ? "" : "line-clamp-2"}`}
+                          title={language === "ar" ? "اضغط للتوسيع / الطي" : "Click to expand/collapse"}
+                        >
                           {exp.notes}
                         </p>
                       )}

@@ -41,8 +41,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ setCurrentTab }) => {
     language, 
     currency: defaultCurrency, 
     exchangeRate,
-    incomes, 
-    expenses, 
+    incomes: allIncomes, 
+    expenses: allExpenses, 
     plannedPurchases, 
     savingsGroups, 
     categories,
@@ -50,6 +50,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ setCurrentTab }) => {
     addExpense,
     wallets
   } = useApp();
+
+  const incomes = allIncomes.filter(i => !i.isHistorical);
+  const expenses = allExpenses.filter(e => !e.isHistorical);
 
   const [activeCurrency, setActiveCurrency] = useState<'LYD' | 'USD' | 'MERGED'>('MERGED');
   
@@ -102,7 +105,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ setCurrentTab }) => {
     wallets.forEach(w => {
       if (w.isHidden) return; // Exclude hidden wallets
       
-      const wIncomes = incomes.filter(inc => inc.walletId === w.id);
+      const wIncomes = incomes.filter(inc => inc.walletId === w.id && !inc.isOpening);
       const wExpenses = expenses.filter(exp => exp.walletId === w.id);
       
       const sumInc = wIncomes.reduce((acc, curr) => acc + curr.amount, 0);
@@ -347,7 +350,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ setCurrentTab }) => {
               <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 block uppercase tracking-wider">
                 {t.totalExpenses}
               </span>
-              <h3 className="text-2xl md:text-3xl font-black text-slate-900 dark:text-white">
+              <h3 className="text-2xl md:text-3xl font-black text-rose-600 dark:text-rose-400">
                 {formatMoney(stats.expense, activeCurrency)}
               </h3>
             </div>
@@ -694,7 +697,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ setCurrentTab }) => {
                       {isIncome ? <ArrowUpRight className="w-5 h-5" /> : <ArrowDownRight className="w-5 h-5" />}
                     </div>
                     <div>
-                      <h4 className="font-bold text-xs text-slate-900 dark:text-white leading-snug">
+                      <h4 className="font-bold text-xs text-slate-900 dark:text-white leading-snug" dir="auto">
                         {tx.title}
                       </h4>
                       <div className="flex items-center gap-2 mt-0.5">

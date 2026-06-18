@@ -13,7 +13,8 @@ import {
   Sparkles, 
   Settings as SettingsIcon, 
   Layers,
-  Wallet
+  Wallet,
+  Trash2
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -22,7 +23,7 @@ interface SidebarProps {
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({ currentTab, setCurrentTab }) => {
-  const { language, t, notifications } = useApp();
+  const { language, t, notifications, trashItems } = useApp();
   const navRef = React.useRef<HTMLElement>(null);
 
   // Unread notification count
@@ -47,7 +48,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, setCurrentTab }) =
     }
   }, [currentTab]);
 
-  const menuItems = [
+  const showTrash = trashItems && trashItems.length > 0;
+
+  const baseItems = [
     { id: 'futurePurchases', label: t.futurePurchases, icon: ShoppingBag },
     { id: 'savingsGroups', label: t.savingsGroups, icon: Users },
     { id: 'wallets', label: language === 'ar' ? 'المحافظ' : 'Wallets', icon: Wallet },
@@ -57,6 +60,17 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, setCurrentTab }) =
     { id: 'reports', label: t.reports, icon: Sparkles },
     { id: 'settings', label: t.settings, icon: SettingsIcon },
   ];
+
+  const menuItems = [...baseItems];
+  if (showTrash) {
+    if (language === 'ar') {
+      // In Arabic (RTL), unshifting makes it rendering on the extreme right.
+      menuItems.unshift({ id: 'trash', label: t.trash, icon: Trash2 });
+    } else {
+      // In English (LTR), pushing makes it rendering on the extreme right.
+      menuItems.push({ id: 'trash', label: t.trash, icon: Trash2 });
+    }
+  }
 
   return (
     <div className="fixed bottom-4 md:bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 w-full md:w-auto max-w-full">

@@ -31,6 +31,7 @@ import {
   ChevronRight,
   MessageSquare,
   Send,
+  SlidersHorizontal,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { ConfirmModal } from "./ConfirmModal";
@@ -57,11 +58,20 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
     comments,
     addComment,
     deleteComment,
+    hideHistoricalData,
+    setHideHistoricalData,
+    addWallet,
+    selectedWalletFilter,
+    setSelectedWalletFilter,
   } = useApp();
 
   // Comment expand/input state
   const [expandedCommentsTxId, setExpandedCommentsTxId] = useState<string | null>(null);
   const [newCommentText, setNewCommentText] = useState("");
+  // Notes expand state by transaction ID
+  const [expandedNotesTxIds, setExpandedNotesTxIds] = useState<Record<string, boolean>>({});
+  // Titles expand state by transaction ID
+  const [expandedTitlesTxIds, setExpandedTitlesTxIds] = useState<Record<string, boolean>>({});
 
   // Consolidation States
   const [transactionType, setTransactionType] = useState<"income" | "expense">(
@@ -72,6 +82,15 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
   const [priorityFilter, setPriorityFilter] = useState("");
   const [walletFilter, setWalletFilter] = useState("");
   const [typeFilter, setTypeFilter] = useState<"all" | "income" | "expense">("all",);
+  const [isFiltersExpanded, setIsFiltersExpanded] = useState(false);
+
+  // Derived filter metrics
+  const activeFiltersCount = 
+    (searchQuery ? 1 : 0) +
+    (categoryFilter ? 1 : 0) +
+    (priorityFilter ? 1 : 0) +
+    (walletFilter ? 1 : 0) +
+    (typeFilter !== "all" ? 1 : 0);
 
   // Tab and Subtab Toggle
   const [activeSubTab, setActiveSubTab] = useState<"new" | "history">("new");
@@ -85,6 +104,15 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
       setEditingType(null);
     }
   }, [defaultType]);
+
+  useEffect(() => {
+    if (selectedWalletFilter) {
+      setWalletFilter(selectedWalletFilter);
+      setActiveSubTab("history");
+      setSelectedWalletFilter("");
+      setIsFiltersExpanded(true);
+    }
+  }, [selectedWalletFilter, setSelectedWalletFilter]);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingType, setEditingType] = useState<"income" | "expense" | null>(
@@ -101,6 +129,11 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
   const [walletId, setWalletId] = useState("");
   const [priority, setPriority] = useState<"low" | "medium" | "high">("medium");
   const [imageUrl, setImageUrl] = useState<string>(""); // Base64 dataURL
+
+  // Option to create a new wallet on income addition
+  const [createAndTopupWallet, setCreateAndTopupWallet] = useState(false);
+  const [newWalletName, setNewWalletName] = useState("");
+  const [newWalletColor, setNewWalletColor] = useState("emerald");
 
   // Searchable Dropdown for Categories
   const [typedCategoryQuery, setTypedCategoryQuery] = useState("");
@@ -152,6 +185,29 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
     onConfirm: () => {},
     type: 'danger'
   });
+
+  // Overdraft Wallet Selection State
+  const [overdraftModalOpen, setOverdraftModalOpen] = useState(false);
+  const [overdraftData, setOverdraftData] = useState<{
+    originalWallet: any;
+    currentBalance: number;
+    remainingAmount: number;
+    availableWallets: any[];
+    numericAmount: number;
+  } | null>(null);
+  const [selectedAlternativeWalletId, setSelectedAlternativeWalletId] = useState("");
+
+  const getWalletCurrentBalance = (wallet: any) => {
+    const wIncomes = incomes.filter(
+      (inc) => inc.walletId === wallet.id && inc.currency === wallet.currency && !inc.isOpening,
+    );
+    const wExpenses = expenses.filter(
+      (exp) => exp.walletId === wallet.id && exp.currency === wallet.currency,
+    );
+    const totalIncomes = wIncomes.reduce((acc, curr) => acc + curr.amount, 0);
+    const totalExpenses = wExpenses.reduce((acc, curr) => acc + curr.amount, 0);
+    return wallet.initialBalance + totalIncomes - totalExpenses;
+  };
 
   const showConfirm = (
     title: string,
@@ -282,11 +338,53 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
   // Submit main consolidated ledger entry
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!amount || !title || !selectedCatId || !walletId) return;
+    const isNewWalletOptionActive = createAndTopupWallet && transactionType === "income" && !editingId;
+    if (!amount || !title || !selectedCatId || (!isNewWalletOptionActive && !walletId)) return;
     const numericAmount = parseFloat(amount);
     if (isNaN(numericAmount) || numericAmount <= 0) return;
 
     try {
+      let finalWalletId = walletId;
+      if (isNewWalletOptionActive) {
+        if (!newWalletName.trim()) return;
+        finalWalletId = await addWallet(
+          newWalletName.trim(),
+          numericAmount,
+          currency,
+          newWalletColor || "emerald",
+          "Wallet",
+        );
+      }
+
+      // Check for expense exceeding wallet balance on Standard Add
+      if (!editingId && transactionType === "expense") {
+        const w = wallets.find((w) => w.id === finalWalletId);
+        if (w) {
+          const currentBal = getWalletCurrentBalance(w);
+          if (currentBal < numericAmount) {
+            const remainingAmount = currentBal > 0 ? numericAmount - currentBal : numericAmount;
+            const availableWallets = wallets.filter((ow) => 
+               ow.id !== finalWalletId && 
+               ow.currency === w.currency && 
+               getWalletCurrentBalance(ow) >= remainingAmount
+            );
+
+            setOverdraftData({
+              originalWallet: w,
+              currentBalance: currentBal,
+              remainingAmount,
+              availableWallets,
+              numericAmount,
+            });
+            if (availableWallets.length > 0) {
+              setSelectedAlternativeWalletId(availableWallets[0].id);
+            }
+            setOverdraftModalOpen(true);
+            return; // Halt submission, wait for modal interaction
+          }
+        }
+      }
+
       if (editingId && editingType) {
         // If they changed the type during edit, delete old and create new or update in correct type
         if (editingType !== transactionType) {
@@ -303,7 +401,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                 notes,
                 imageUrl,
                 priority,
-                walletId,
+                finalWalletId,
               );
             }
           } else {
@@ -318,7 +416,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                 notes,
                 imageUrl,
                 priority,
-                walletId,
+                finalWalletId,
               );
             }
           }
@@ -335,7 +433,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
               notes,
               imageUrl,
               priority,
-              walletId,
+              finalWalletId,
             );
           } else {
             await updateExpense(
@@ -348,7 +446,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
               notes,
               imageUrl,
               priority,
-              walletId,
+              finalWalletId,
             );
           }
         }
@@ -364,7 +462,10 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
             notes,
             imageUrl,
             priority,
-            walletId,
+            finalWalletId,
+            false,
+            "",
+            isNewWalletOptionActive,
           );
         } else {
           await addExpense(
@@ -376,10 +477,90 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
             notes,
             imageUrl,
             priority,
-            walletId,
+            finalWalletId,
           );
         }
       }
+      resetForm();
+      setActiveSubTab("history");
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleForceProceed = async () => {
+    if (!overdraftData) return;
+    try {
+      await addExpense(
+        overdraftData.numericAmount,
+        currency,
+        title,
+        date,
+        selectedCatId,
+        notes,
+        imageUrl,
+        priority,
+        overdraftData.originalWallet.id
+      );
+
+      setOverdraftModalOpen(false);
+      setOverdraftData(null);
+      resetForm();
+      setActiveSubTab("history");
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleOverdraftProceed = async () => {
+    if (!overdraftData || !selectedAlternativeWalletId) return;
+
+    try {
+      const { originalWallet, currentBalance, remainingAmount, numericAmount } = overdraftData;
+      
+      if (currentBalance > 0) {
+        // Transaction 1: Drain original wallet
+        await addExpense(
+          currentBalance,
+          currency,
+          title,
+          date,
+          selectedCatId,
+          notes ? `${notes}\n(Partial payment)` : `(Partial payment)`,
+          imageUrl,
+          priority,
+          originalWallet.id
+        );
+
+        // Transaction 2: Remaining from alternative wallet
+        await addExpense(
+          remainingAmount,
+          currency,
+          title,
+          date,
+          selectedCatId,
+          notes ? `${notes}\n(Covering remaining from ${originalWallet.name})` : `(Covering remaining from ${originalWallet.name})`,
+          imageUrl,
+          priority,
+          selectedAlternativeWalletId
+        );
+      } else {
+         // If current balance is <= 0, we can't split, take the whole from the alternative wallet.
+         await addExpense(
+           numericAmount,
+           currency,
+           title,
+           date,
+           selectedCatId,
+           notes ? `${notes}\n(Paid from alternative wallet instead of ${originalWallet.name})` : `(Paid from alternative wallet instead of ${originalWallet.name})`,
+           imageUrl,
+           priority,
+           selectedAlternativeWalletId
+         );
+      }
+
+      setOverdraftModalOpen(false);
+      setOverdraftData(null);
       resetForm();
       setActiveSubTab("history");
     } catch (err) {
@@ -410,6 +591,9 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
     }
     setNotes(tx.notes || "");
     setActiveSubTab("new");
+    setCreateAndTopupWallet(false);
+    setNewWalletName("");
+    setNewWalletColor("emerald");
   };
 
   const resetForm = () => {
@@ -426,6 +610,9 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
     setTypedCategoryQuery("");
     setPriority("medium");
     setImageUrl("");
+    setCreateAndTopupWallet(false);
+    setNewWalletName("");
+    setNewWalletColor("emerald");
   };
 
   // Drag & drop file loaders
@@ -526,7 +713,9 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
   const consolidatedTransactions = [
     ...incomes.map((inc) => ({ ...inc, type: "income" as const })),
     ...expenses.map((exp) => ({ ...exp, type: "expense" as const })),
-  ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  ]
+    .filter((tx) => !hideHistoricalData || !tx.isHistorical)
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
   // Filters application
   const filteredTransactions = consolidatedTransactions.filter((tx) => {
@@ -810,6 +999,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                           ? t.incomeTitleArEn
                           : t.expenseTitlePlaceholder
                       }
+                      dir="auto"
                       className="w-full glass-input pl-10 pr-10 rtl:pr-10 rtl:pl-10 py-3.5 text-sm rounded-2xl focus:outline-none focus:ring-2 focus:ring-brand-teal/40 dark:text-white font-medium"
                     />
                   </div>
@@ -914,16 +1104,86 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                 <div className="flex justify-between items-center">
                   <label className="text-xs font-black text-slate-500 dark:text-slate-400 flex items-center gap-1">
                     <span>{language === "ar" ? "المحفظة المستخدمة للعملية" : "Source / Destination Wallet"}</span>
-                    <span className="text-rose-500">*</span>
+                    {!createAndTopupWallet && <span className="text-rose-500">*</span>}
                   </label>
-                  {walletId && wallets.find(w => w.id === walletId) && (
+                  {walletId && wallets.find(w => w.id === walletId) && !createAndTopupWallet && (
                     <span className="text-[10px] font-bold text-brand-teal bg-brand-teal/5 px-2.5 py-0.5 rounded-md border border-brand-teal/10">
                       {wallets.find(w => w.id === walletId)?.name}
                     </span>
                   )}
                 </div>
 
-                {(() => {
+                {/* Create & Top-up wallet option for new income only */}
+                {transactionType === "income" && !editingId && (
+                  <div className="bg-slate-50/50 dark:bg-slate-900/40 border border-slate-100 dark:border-slate-850 p-4 rounded-2xl flex flex-col gap-3">
+                    <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={createAndTopupWallet}
+                        onChange={(e) => {
+                          setCreateAndTopupWallet(e.target.checked);
+                        }}
+                        className="w-4 h-4 rounded border-slate-300 text-brand-teal focus:ring-brand-teal accent-brand-teal cursor-pointer"
+                      />
+                      <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                        {language === "ar"
+                          ? "إنشاء محفظة جديدة وتغذيتها بهذا الإيراد مباشرة"
+                          : "Create a new wallet and top it up with this income"}
+                      </span>
+                    </label>
+
+                    {createAndTopupWallet && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-1 animate-in slide-in-from-top-2 duration-200">
+                        <div className="flex flex-col gap-1.5">
+                          <label className="text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                            {language === "ar" ? "اسم المحفظة الجديدة" : "New Wallet Name"} <span className="text-rose-500">*</span>
+                          </label>
+                          <input
+                            type="text"
+                            value={newWalletName}
+                            onChange={(e) => setNewWalletName(e.target.value)}
+                            placeholder={language === "ar" ? "مثال: ميزانية مايو، حساب الراتب الأول..." : "e.g., May budget, primary salary account..."}
+                            required={createAndTopupWallet}
+                            className="px-3 py-2 text-xs bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 rounded-xl focus:border-brand-teal outline-hidden dark:text-white"
+                          />
+                        </div>
+
+                        <div className="flex flex-col gap-1.5">
+                          <label className="text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                            {language === "ar" ? "لون المحفظة المميز" : "Wallet Theme Color"}
+                          </label>
+                          <div className="flex items-center gap-2.5 h-full py-1">
+                            {["slate", "emerald", "blue", "purple", "rose", "amber"].map((col) => {
+                              const bgColors: Record<string, string> = {
+                                slate: "bg-slate-500",
+                                emerald: "bg-emerald-500",
+                                blue: "bg-blue-500",
+                                purple: "bg-purple-500",
+                                rose: "bg-rose-500",
+                                amber: "bg-amber-500",
+                              };
+                              const isSel = newWalletColor === col;
+                              return (
+                                <button
+                                  key={col}
+                                  type="button"
+                                  onClick={() => setNewWalletColor(col)}
+                                  className={`w-5 h-5 rounded-full ${bgColors[col] || "bg-slate-500"} cursor-pointer hover:scale-110 transition-transform relative flex items-center justify-center`}
+                                >
+                                  {isSel && (
+                                    <div className="w-1.5 h-1.5 rounded-full bg-white shadow-xs" />
+                                  )}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {!createAndTopupWallet && (() => {
                   const activeWallets = wallets.filter(w => !w.isHidden || w.id === walletId);
                   return activeWallets.length > 0 ? (
                     (() => {
@@ -969,7 +1229,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                                     {language === "ar" ? "الرصيد الحالي" : "Current balance"}
                                   </p>
                                   <p className="text-xs font-mono font-black mt-1">
-                                    {w.initialBalance.toLocaleString()} <span className="text-[9px]">{w.currency}</span>
+                                    {getWalletCurrentBalance(w).toLocaleString()} <span className="text-[9px]">{w.currency}</span>
                                   </p>
                                 </div>
 
@@ -1064,7 +1324,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                                                 <span className="truncate">{w.name} ({w.currency})</span>
                                               </div>
                                               <span className="text-[10px] font-mono font-black text-slate-400">
-                                                {w.initialBalance.toLocaleString()}
+                                                {getWalletCurrentBalance(w).toLocaleString()}
                                               </span>
                                             </button>
                                           );
@@ -1107,47 +1367,49 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                 </div>
 
                 {/* B. Priority buttons */}
-                <div className="flex flex-col gap-2">
-                  <label className="text-xs font-black text-slate-500 dark:text-slate-400">
-                    {language === "ar" ? "مستوى الأولوية في الصرف" : "Outflow priority tracker"}
-                  </label>
-                  <div className="grid grid-cols-3 gap-2">
-                    {[
-                      {
-                        value: "low" as const,
-                        label: language === "ar" ? "منخفضة" : "Low",
-                        activeColor: "bg-emerald-500 text-white border-transparent",
-                        inactiveColor: "bg-slate-100/40 dark:bg-slate-900/40 text-slate-500 border-slate-100 dark:border-slate-850 hover:bg-slate-100/60"
-                      },
-                      {
-                        value: "medium" as const,
-                        label: language === "ar" ? "متوسطة" : "Medium",
-                        activeColor: "bg-brand-teal text-slate-900 border-transparent",
-                        inactiveColor: "bg-slate-100/40 dark:bg-slate-900/40 text-slate-500 border-slate-100 dark:border-slate-850 hover:bg-slate-100/60"
-                      },
-                      {
-                        value: "high" as const,
-                        label: language === "ar" ? "ملحّة جداً" : "Urgent",
-                        activeColor: "bg-rose-500 text-white border-transparent",
-                        inactiveColor: "bg-slate-100/40 dark:bg-slate-900/40 text-slate-500 border-slate-100 dark:border-slate-850 hover:bg-slate-100/60"
-                      },
-                    ].map((btn) => {
-                      const isActive = priority === btn.value;
-                      return (
-                        <button
-                          key={btn.value}
-                          type="button"
-                          onClick={() => setPriority(btn.value)}
-                          className={`py-3.5 rounded-xl text-xs font-black text-center cursor-pointer transition-all duration-200 border ${
-                            isActive ? btn.activeColor + " shadow-xs scale-[1.02]" : btn.inactiveColor
-                          }`}
-                        >
-                          {btn.label}
-                        </button>
-                      );
-                    })}
+                {transactionType !== "income" && (
+                  <div className="flex flex-col gap-2">
+                    <label className="text-xs font-black text-slate-500 dark:text-slate-400">
+                      {language === "ar" ? "مستوى الأولوية في الصرف" : "Outflow priority tracker"}
+                    </label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {[
+                        {
+                          value: "low" as const,
+                          label: language === "ar" ? "منخفضة" : "Low",
+                          activeColor: "bg-emerald-500 text-white border-transparent",
+                          inactiveColor: "bg-slate-100/40 dark:bg-slate-900/40 text-slate-500 border-slate-100 dark:border-slate-850 hover:bg-slate-100/60"
+                        },
+                        {
+                          value: "medium" as const,
+                          label: language === "ar" ? "متوسطة" : "Medium",
+                          activeColor: "bg-brand-teal text-slate-900 border-transparent",
+                          inactiveColor: "bg-slate-100/40 dark:bg-slate-900/40 text-slate-500 border-slate-100 dark:border-slate-850 hover:bg-slate-100/60"
+                        },
+                        {
+                          value: "high" as const,
+                          label: language === "ar" ? "ملحّة جداً" : "Urgent",
+                          activeColor: "bg-rose-500 text-white border-transparent",
+                          inactiveColor: "bg-slate-100/40 dark:bg-slate-900/40 text-slate-500 border-slate-100 dark:border-slate-850 hover:bg-slate-100/60"
+                        },
+                      ].map((btn) => {
+                        const isActive = priority === btn.value;
+                        return (
+                          <button
+                            key={btn.value}
+                            type="button"
+                            onClick={() => setPriority(btn.value)}
+                            className={`py-3.5 rounded-xl text-xs font-black text-center cursor-pointer transition-all duration-200 border ${
+                              isActive ? btn.activeColor + " shadow-xs scale-[1.02]" : btn.inactiveColor
+                            }`}
+                          >
+                            {btn.label}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
+                )}
 
                 {/* C. Image Upload Receipt Dropzone */}
                 <div className="flex flex-col gap-2">
@@ -1300,6 +1562,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                         ? "تفاصيل السوبر ماركت، صيانة الهواتف، رحلة طرابلس..."
                         : "e.g., store name, fuel receipts..."
                   }
+                  dir="auto"
                   className="w-full glass-input px-4 py-3 text-sm rounded-2xl focus:outline-none focus:ring-2 focus:ring-brand-teal/40 dark:text-white resize-none"
                 />
               </div>
@@ -1337,309 +1600,382 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
             className="space-y-6"
           >
             {/* 3. High Focus Filters Bar */}
-            <div className="glass-card p-4 rounded-2xl space-y-3.5">
-
-        {/* Type & Search Row */}
-        <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-          {/* Segmented Filter control (All vs Income vs Expense) */}
-          <div className="md:col-span-5 grid grid-cols-3 p-1 bg-slate-100/50 dark:bg-slate-950/50 rounded-xl border border-white/10 dark:border-slate-900/30">
-            {[
-              { id: "all" as const, label: language === "ar" ? "الكل" : "All" },
-              {
-                id: "income" as const,
-                label: language === "ar" ? "الوارد فقط" : "Incomes",
-              },
-              {
-                id: "expense" as const,
-                label: language === "ar" ? "الصادر فقط" : "Expenses",
-              },
-            ].map((pill) => (
-              <button
-                key={pill.id}
-                onClick={() => setTypeFilter(pill.id)}
-                className={`py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${
-                  typeFilter === pill.id
-                    ? "bg-brand-slate text-white dark:bg-white dark:text-brand-slate shadow-xs"
-                    : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white"
-                }`}
+            <div className="glass-card p-4 rounded-2xl flex flex-col">
+              {/* Header to toggle expand/collapse */}
+              <div
+                onClick={() => setIsFiltersExpanded(!isFiltersExpanded)}
+                className="flex items-center justify-between cursor-pointer select-none pb-0.5"
               >
-                {pill.label}
-              </button>
-            ))}
-          </div>
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-lg bg-teal-500/10 text-brand-teal">
+                    <SlidersHorizontal className="w-3.5 h-3.5" />
+                  </div>
+                  <span className="text-xs font-black text-slate-700 dark:text-white">
+                    {language === "ar" ? "تصفية المعاملات والبحث" : "Filter & Search Transactions"}
+                  </span>
+                  
+                  {activeFiltersCount > 0 && (
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-brand-teal/20 text-teal-800 dark:text-brand-teal font-black animate-pulse">
+                      {activeFiltersCount}
+                    </span>
+                  )}
+                </div>
 
-          {/* Quick Search Input */}
-          <div className="md:col-span-7 relative">
-            <Search className="absolute top-2.5 right-3.5 rtl:right-auto rtl:left-3.5 w-4 h-4 text-slate-400 bg-transparent pointer-events-none" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder={
-                language === "ar"
-                  ? "بحث باسم العملية أو الملاحظة المرفقة..."
-                  : "Search ledger entries by title or custom logs..."
-              }
-              className="w-full glass-input pl-10 pr-4 rtl:pr-10 rtl:pl-4 py-2 text-xs rounded-xl focus:outline-none focus:ring-1 focus:ring-brand-teal/50 dark:text-white"
-            />
-          </div>
-        </div>
-
-        {/* Dropdowns filters row */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2 border-t border-slate-100 dark:border-slate-800/40">
-          
-          {/* 1. Custom Wallet Selection Filter */}
-          <div className="relative" ref={walletFilterRef}>
-            <button
-              type="button"
-              onClick={() => {
-                setWalletFilterOpen(!walletFilterOpen);
-                setCategoryFilterOpen(false);
-                setPriorityFilterOpen(false);
-              }}
-              className="w-full px-3 py-2.5 text-xs bg-white/70 dark:bg-slate-900/70 hover:bg-white dark:hover:bg-slate-900 backdrop-blur-md border border-slate-200/60 dark:border-slate-800 rounded-xl focus:border-brand-teal focus:ring-1 focus:ring-brand-teal/50 outline-hidden dark:text-white transition-all cursor-pointer flex items-center justify-between"
-            >
-              <div className="flex items-center gap-2 truncate">
-                <Wallet className="w-3.5 h-3.5 text-brand-teal flex-shrink-0" />
-                <span className="font-extrabold truncate text-slate-700 dark:text-slate-200">
-                  {walletFilter
-                    ? wallets.find((w) => w.id === walletFilter)?.name || walletFilter
-                    : language === "ar"
-                      ? "تصفية حسب المحفظة..."
-                      : "Filter by Wallet..."}
-                </span>
-              </div>
-              <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-250 ${walletFilterOpen ? "rotate-180" : ""}`} />
-            </button>
-
-            <AnimatePresence>
-              {walletFilterOpen && (
-                <motion.div
-                  initial={{ opacity: 0, y: 5, scale: 0.98 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: 5, scale: 0.98 }}
-                  transition={{ duration: 0.15 }}
-                  className="absolute top-11 left-0 right-0 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md border border-slate-200 dark:border-slate-800/80 rounded-2xl shadow-xl z-50 max-h-56 overflow-y-auto divide-y divide-slate-100/60 dark:divide-slate-900/60"
-                >
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setWalletFilter("");
-                      setWalletFilterOpen(false);
-                    }}
-                    className="w-full px-3.5 py-3 text-start text-xs font-bold text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-900 cursor-pointer flex items-center justify-between"
-                  >
-                    <span>{language === "ar" ? "كل المحافظ" : "All Wallets"}</span>
-                    {!walletFilter && <Check className="w-3.5 h-3.5 text-brand-teal stroke-[3]" />}
-                  </button>
-                  {wallets.map((w) => (
+                <div className="flex items-center gap-2">
+                  {activeFiltersCount > 0 && (
                     <button
-                      key={w.id}
                       type="button"
-                      onClick={() => {
-                        setWalletFilter(w.id);
-                        setWalletFilterOpen(false);
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSearchQuery("");
+                        setCategoryFilter("");
+                        setPriorityFilter("");
+                        setWalletFilter("");
+                        setTypeFilter("all");
                       }}
-                      className="w-full px-3.5 py-3 text-start text-xs font-black text-slate-800 dark:text-white hover:bg-slate-50 dark:hover:bg-slate-900 cursor-pointer flex items-center justify-between"
+                      className="text-[10px] font-black text-rose-500 hover:text-rose-600 dark:text-rose-400 dark:hover:text-rose-300 transition-colors bg-rose-500/10 dark:bg-rose-500/20 px-2.5 py-1 rounded-lg cursor-pointer animate-fade-in"
                     >
-                      <span className="truncate">{w.name} ({w.currency})</span>
-                      {walletFilter === w.id && <Check className="w-3.5 h-3.5 text-brand-teal stroke-[3]" />}
+                      {language === "ar" ? "إعادة تعيين" : "Reset Filters"}
                     </button>
-                  ))}
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-
-          {/* 2. Custom Category Selection Filter */}
-          <div className="relative" ref={categoryFilterRef}>
-            <button
-              type="button"
-              onClick={() => {
-                setCategoryFilterOpen(!categoryFilterOpen);
-                setWalletFilterOpen(false);
-                setPriorityFilterOpen(false);
-              }}
-              className="w-full px-3 py-2.5 text-xs bg-white/70 dark:bg-slate-900/70 hover:bg-white dark:hover:bg-slate-900 backdrop-blur-md border border-slate-200/60 dark:border-slate-800 rounded-xl focus:border-brand-teal focus:ring-1 focus:ring-brand-teal/50 outline-hidden dark:text-white transition-all cursor-pointer flex items-center justify-between"
-            >
-              <div className="flex items-center gap-2 truncate">
-                <Tag className="w-3.5 h-3.5 text-brand-teal flex-shrink-0" />
-                <span className="font-extrabold truncate text-slate-700 dark:text-slate-200">
-                  {categoryFilter
-                    ? categories.find((c) => c.id === categoryFilter)?.name.split(" / ")[language === "ar" ? 0 : 1] || categoryFilter
-                    : language === "ar"
-                      ? "تصفية بالتصنيفات..."
-                      : "Filter by categorization..."}
-                </span>
+                  )}
+                  <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform duration-300 ${isFiltersExpanded ? "rotate-180" : ""}`} />
+                </div>
               </div>
-              <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-250 ${categoryFilterOpen ? "rotate-180" : ""}`} />
-            </button>
 
-            <AnimatePresence>
-              {categoryFilterOpen && (
-                <motion.div
-                  initial={{ opacity: 0, y: 5, scale: 0.98 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: 5, scale: 0.98 }}
-                  transition={{ duration: 0.15 }}
-                  className="absolute top-11 left-0 right-0 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md border border-slate-200 dark:border-slate-800/80 rounded-2xl shadow-xl z-50 max-h-56 overflow-y-auto divide-y divide-slate-100/60 dark:divide-slate-900/60"
-                >
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCategoryFilter("");
-                      setCategoryFilterOpen(false);
-                    }}
-                    className="w-full px-3.5 py-3 text-start text-xs font-bold text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-900 cursor-pointer flex items-center justify-between"
+              {/* Collapsible Content */}
+              <AnimatePresence initial={false}>
+                {isFiltersExpanded && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0, marginTop: 0 }}
+                    animate={{ height: "auto", opacity: 1, marginTop: 14 }}
+                    exit={{ height: 0, opacity: 0, marginTop: 0 }}
+                    transition={{ duration: 0.25, ease: "easeInOut" }}
+                    className="overflow-hidden space-y-3.5"
                   >
-                    <span>{language === "ar" ? "كل التصنيفات" : "All Categories"}</span>
-                    {!categoryFilter && <Check className="w-3.5 h-3.5 text-brand-teal stroke-[3]" />}
-                  </button>
-                  {categories.map((c) => {
-                    const isSelected = categoryFilter === c.id;
-                    const cleanName = c.name.split(" / ")[language === "ar" ? 0 : 1] || c.name;
-                    return (
-                      <button
-                        key={c.id}
-                        type="button"
-                        onClick={() => {
-                          setCategoryFilter(c.id);
-                          setCategoryFilterOpen(false);
-                        }}
-                        className={`w-full px-3.5 py-3 text-start text-xs font-black hover:bg-slate-50 dark:hover:bg-slate-900 cursor-pointer flex items-center justify-between ${
-                          isSelected ? "text-brand-teal" : "text-slate-800 dark:text-white"
-                        }`}
-                      >
-                        <div className="flex items-center gap-2 truncate">
-                          <span className={`text-[9px] px-1.5 py-0.5 rounded-md font-bold ${
-                            c.type === "income" 
-                              ? "bg-emerald-500/10 text-emerald-600 dark:bg-emerald-500/20 dark:text-emerald-400" 
-                              : "bg-rose-500/10 text-rose-500 dark:bg-rose-500/20 dark:text-rose-400"
-                          }`}>
-                            {c.type === "income" ? (language === "ar" ? "وارد" : "In") : language === "ar" ? "صادر" : "Out"}
-                          </span>
-                          <span className="truncate">{cleanName}</span>
+                    <div className="pt-3.5 border-t border-slate-100 dark:border-slate-800/40 space-y-3.5">
+                      {/* Type & Search Row */}
+                      <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+                        {/* Segmented Filter control (All vs Income vs Expense) */}
+                        <div className="md:col-span-5 grid grid-cols-3 p-1 bg-slate-100/50 dark:bg-slate-950/50 rounded-xl border border-white/10 dark:border-slate-900/30">
+                          {[
+                            { id: "all" as const, label: language === "ar" ? "الكل" : "All" },
+                            {
+                              id: "income" as const,
+                              label: language === "ar" ? "الوارد فقط" : "Incomes",
+                            },
+                            {
+                              id: "expense" as const,
+                              label: language === "ar" ? "الصادر فقط" : "Expenses",
+                            },
+                          ].map((pill) => (
+                            <button
+                              key={pill.id}
+                              onClick={() => setTypeFilter(pill.id)}
+                              className={`py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${
+                                typeFilter === pill.id
+                                  ? "bg-brand-slate text-white dark:bg-white dark:text-brand-slate shadow-xs"
+                                  : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white"
+                              }`}
+                            >
+                              {pill.label}
+                            </button>
+                          ))}
                         </div>
-                        {isSelected && <Check className="w-3.5 h-3.5 text-brand-teal stroke-[3] flex-shrink-0" />}
-                      </button>
-                    );
-                  })}
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
 
-          {/* 3. Custom Priority filter */}
-          <div className="relative" ref={priorityFilterRef}>
-            <button
-              type="button"
-              onClick={() => {
-                setPriorityFilterOpen(!priorityFilterOpen);
-                setWalletFilterOpen(false);
-                setCategoryFilterOpen(false);
-              }}
-              className="w-full px-3 py-2.5 text-xs bg-white/70 dark:bg-slate-900/70 hover:bg-white dark:hover:bg-slate-900 backdrop-blur-md border border-slate-200/60 dark:border-slate-800 rounded-xl focus:border-brand-teal focus:ring-1 focus:ring-brand-teal/50 outline-hidden dark:text-white transition-all cursor-pointer flex items-center justify-between"
-            >
-              <div className="flex items-center gap-2 truncate">
-                <AlertTriangle className="w-3.5 h-3.5 text-brand-teal flex-shrink-0" />
-                <span className="font-extrabold truncate text-slate-700 dark:text-slate-200">
-                  {priorityFilter === "high"
-                    ? (language === "ar" ? "أولوية: مرتفعة جداً" : "Priority: Urgent/High")
-                    : priorityFilter === "medium"
-                      ? (language === "ar" ? "أولوية: متوسطة" : "Priority: General/Medium")
-                      : priorityFilter === "low"
-                        ? (language === "ar" ? "أولوية: منخفضة" : "Priority: Optional/Low")
-                        : (language === "ar" ? "تصفية حسب الأهمية..." : "Filter by Priority...")}
-                </span>
-              </div>
-              <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-250 ${priorityFilterOpen ? "rotate-180" : ""}`} />
-            </button>
+                        {/* Quick Search Input */}
+                        <div className="md:col-span-7 relative">
+                          <Search className="absolute top-2.5 right-3.5 rtl:right-auto rtl:left-3.5 w-4 h-4 text-slate-400 bg-transparent pointer-events-none" />
+                          <input
+                            type="text"
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            placeholder={
+                              language === "ar"
+                                ? "بحث باسم العملية أو الملاحظة المرفقة..."
+                                : "Search ledger entries by title or custom logs..."
+                            }
+                            className="w-full glass-input pl-10 pr-4 rtl:pr-10 rtl:pl-4 py-2 text-xs rounded-xl focus:outline-none focus:ring-1 focus:ring-brand-teal/50 dark:text-white"
+                          />
+                        </div>
+                      </div>
 
-            <AnimatePresence>
-              {priorityFilterOpen && (
-                <motion.div
-                  initial={{ opacity: 0, y: 5, scale: 0.98 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: 5, scale: 0.98 }}
-                  transition={{ duration: 0.15 }}
-                  className="absolute top-11 left-0 right-0 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md border border-slate-200 dark:border-slate-800/80 rounded-2xl shadow-xl z-50 max-h-56 overflow-y-auto divide-y divide-slate-100/60 dark:divide-slate-900/60"
-                >
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPriorityFilter("");
-                      setPriorityFilterOpen(false);
-                    }}
-                    className="w-full px-3.5 py-3 text-start text-xs font-bold text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-900 cursor-pointer flex items-center justify-between"
-                  >
-                    <span>{language === "ar" ? "كل المستويات" : "All Levels"}</span>
-                    {!priorityFilter && <Check className="w-3.5 h-3.5 text-brand-teal stroke-[3]" />}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPriorityFilter("high");
-                      setPriorityFilterOpen(false);
-                    }}
-                    className="w-full px-3.5 py-3 text-start text-xs font-black text-rose-500 hover:bg-slate-50 dark:hover:bg-slate-900 cursor-pointer flex items-center justify-between"
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
-                      <span>{language === "ar" ? "مرتفعة جداً" : "Urgent / High"}</span>
+                      {/* Dropdowns filters row */}
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2 border-t border-slate-100 dark:border-slate-800/40">
+                        {/* 1. Custom Wallet Selection Filter */}
+                        <div className="relative" ref={walletFilterRef}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setWalletFilterOpen(!walletFilterOpen);
+                              setCategoryFilterOpen(false);
+                              setPriorityFilterOpen(false);
+                            }}
+                            className="w-full px-3 py-2.5 text-xs bg-white/70 dark:bg-slate-900/70 hover:bg-white dark:hover:bg-slate-900 backdrop-blur-md border border-slate-200/60 dark:border-slate-800 rounded-xl focus:border-brand-teal focus:ring-1 focus:ring-brand-teal/50 outline-hidden dark:text-white transition-all cursor-pointer flex items-center justify-between"
+                          >
+                            <div className="flex items-center gap-2 truncate">
+                              <Wallet className="w-3.5 h-3.5 text-brand-teal flex-shrink-0" />
+                              <span className="font-extrabold truncate text-slate-700 dark:text-slate-200">
+                                {walletFilter
+                                  ? wallets.find((w) => w.id === walletFilter)?.name || walletFilter
+                                  : language === "ar"
+                                    ? "تصفية حسب المحفظة..."
+                                    : "Filter by Wallet..."}
+                              </span>
+                            </div>
+                            <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-250 ${walletFilterOpen ? "rotate-180" : ""}`} />
+                          </button>
+
+                          <AnimatePresence>
+                            {walletFilterOpen && (
+                              <motion.div
+                                initial={{ opacity: 0, y: 5, scale: 0.98 }}
+                                animate={{ opacity: 1, y: 0, scale: 1 }}
+                                exit={{ opacity: 0, y: 5, scale: 0.98 }}
+                                transition={{ duration: 0.15 }}
+                                className="absolute top-11 left-0 right-0 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md border border-slate-200 dark:border-slate-800/80 rounded-2xl shadow-xl z-50 max-h-56 overflow-y-auto divide-y divide-slate-100/60 dark:divide-slate-900/60"
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setWalletFilter("");
+                                    setWalletFilterOpen(false);
+                                  }}
+                                  className="w-full px-3.5 py-3 text-start text-xs font-bold text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-900 cursor-pointer flex items-center justify-between"
+                                >
+                                  <span>{language === "ar" ? "كل المحافظ" : "All Wallets"}</span>
+                                  {!walletFilter && <Check className="w-3.5 h-3.5 text-brand-teal stroke-[3]" />}
+                                </button>
+                                {wallets.map((w) => (
+                                  <button
+                                    key={w.id}
+                                    type="button"
+                                    onClick={() => {
+                                      setWalletFilter(w.id);
+                                      setWalletFilterOpen(false);
+                                    }}
+                                    className="w-full px-3.5 py-3 text-start text-xs font-black text-slate-800 dark:text-white hover:bg-slate-50 dark:hover:bg-slate-900 cursor-pointer flex items-center justify-between"
+                                  >
+                                    <span className="truncate">{w.name} ({w.currency})</span>
+                                    {walletFilter === w.id && <Check className="w-3.5 h-3.5 text-brand-teal stroke-[3]" />}
+                                  </button>
+                                ))}
+                              </motion.div>
+                            )}
+                          </AnimatePresence>
+                        </div>
+
+                        {/* 2. Custom Category Selection Filter */}
+                        <div className="relative" ref={categoryFilterRef}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCategoryFilterOpen(!categoryFilterOpen);
+                              setWalletFilterOpen(false);
+                              setPriorityFilterOpen(false);
+                            }}
+                            className="w-full px-3 py-2.5 text-xs bg-white/70 dark:bg-slate-900/70 hover:bg-white dark:hover:bg-slate-900 backdrop-blur-md border border-slate-200/60 dark:border-slate-800 rounded-xl focus:border-brand-teal focus:ring-1 focus:ring-brand-teal/50 outline-hidden dark:text-white transition-all cursor-pointer flex items-center justify-between"
+                          >
+                            <div className="flex items-center gap-2 truncate">
+                              <Tag className="w-3.5 h-3.5 text-brand-teal flex-shrink-0" />
+                              <span className="font-extrabold truncate text-slate-700 dark:text-slate-200">
+                                {categoryFilter
+                                  ? categories.find((c) => c.id === categoryFilter)?.name.split(" / ")[language === "ar" ? 0 : 1] || categoryFilter
+                                  : language === "ar"
+                                    ? "تصفية بالتصنيفات..."
+                                    : "Filter by categorization..."}
+                              </span>
+                            </div>
+                            <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-250 ${categoryFilterOpen ? "rotate-180" : ""}`} />
+                          </button>
+
+                          <AnimatePresence>
+                            {categoryFilterOpen && (
+                              <motion.div
+                                initial={{ opacity: 0, y: 5, scale: 0.98 }}
+                                animate={{ opacity: 1, y: 0, scale: 1 }}
+                                exit={{ opacity: 0, y: 5, scale: 0.98 }}
+                                transition={{ duration: 0.15 }}
+                                className="absolute top-11 left-0 right-0 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md border border-slate-200 dark:border-slate-800/80 rounded-2xl shadow-xl z-50 max-h-56 overflow-y-auto divide-y divide-slate-100/60 dark:divide-slate-900/60"
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setCategoryFilter("");
+                                    setCategoryFilterOpen(false);
+                                  }}
+                                  className="w-full px-3.5 py-3 text-start text-xs font-bold text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-900 cursor-pointer flex items-center justify-between"
+                                >
+                                  <span>{language === "ar" ? "كل التصنيفات" : "All Categories"}</span>
+                                  {!categoryFilter && <Check className="w-3.5 h-3.5 text-brand-teal stroke-[3]" />}
+                                </button>
+                                {categories.map((c) => {
+                                  const isSelected = categoryFilter === c.id;
+                                  const cleanName = c.name.split(" / ")[language === "ar" ? 0 : 1] || c.name;
+                                  return (
+                                    <button
+                                      key={c.id}
+                                      type="button"
+                                      onClick={() => {
+                                        setCategoryFilter(c.id);
+                                        setCategoryFilterOpen(false);
+                                      }}
+                                      className={`w-full px-3.5 py-3 text-start text-xs font-black hover:bg-slate-50 dark:hover:bg-slate-900 cursor-pointer flex items-center justify-between ${
+                                        isSelected ? "text-brand-teal" : "text-slate-800 dark:text-white"
+                                      }`}
+                                    >
+                                      <div className="flex items-center gap-2 truncate">
+                                        <span className={`text-[9px] px-1.5 py-0.5 rounded-md font-bold ${
+                                          c.type === "income" 
+                                            ? "bg-emerald-500/10 text-emerald-600 dark:bg-emerald-500/20 dark:text-emerald-400" 
+                                            : "bg-rose-500/10 text-rose-500 dark:bg-rose-500/20 dark:text-rose-400"
+                                        }`}>
+                                          {c.type === "income" ? (language === "ar" ? "وارد" : "In") : language === "ar" ? "صادر" : "Out"}
+                                        </span>
+                                        <span className="truncate">{cleanName}</span>
+                                      </div>
+                                      {isSelected && <Check className="w-3.5 h-3.5 text-brand-teal stroke-[3] flex-shrink-0" />}
+                                    </button>
+                                  );
+                                })}
+                              </motion.div>
+                            )}
+                          </AnimatePresence>
+                        </div>
+
+                        {/* 3. Custom Priority filter */}
+                        <div className="relative" ref={priorityFilterRef}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setPriorityFilterOpen(!priorityFilterOpen);
+                              setWalletFilterOpen(false);
+                              setCategoryFilterOpen(false);
+                            }}
+                            className="w-full px-3 py-2.5 text-xs bg-white/70 dark:bg-slate-900/70 hover:bg-white dark:hover:bg-slate-900 backdrop-blur-md border border-slate-200/60 dark:border-slate-800 rounded-xl focus:border-brand-teal focus:ring-1 focus:ring-brand-teal/50 outline-hidden dark:text-white transition-all cursor-pointer flex items-center justify-between"
+                          >
+                            <div className="flex items-center gap-2 truncate">
+                              <AlertTriangle className="w-3.5 h-3.5 text-brand-teal flex-shrink-0" />
+                              <span className="font-extrabold truncate text-slate-700 dark:text-slate-200">
+                                {priorityFilter === "high"
+                                  ? (language === "ar" ? "أولوية: مرتفعة جداً" : "Priority: Urgent/High")
+                                  : priorityFilter === "medium"
+                                    ? (language === "ar" ? "أولوية: متوسطة" : "Priority: General/Medium")
+                                    : priorityFilter === "low"
+                                      ? (language === "ar" ? "أولوية: منخفضة" : "Priority: Optional/Low")
+                                      : (language === "ar" ? "تصفية حسب الأهمية..." : "Filter by Priority...")}
+                              </span>
+                            </div>
+                            <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-250 ${priorityFilterOpen ? "rotate-180" : ""}`} />
+                          </button>
+
+                          <AnimatePresence>
+                            {priorityFilterOpen && (
+                              <motion.div
+                                initial={{ opacity: 0, y: 5, scale: 0.98 }}
+                                animate={{ opacity: 1, y: 0, scale: 1 }}
+                                exit={{ opacity: 0, y: 5, scale: 0.98 }}
+                                transition={{ duration: 0.15 }}
+                                className="absolute top-11 left-0 right-0 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md border border-slate-200 dark:border-slate-800/80 rounded-2xl shadow-xl z-50 max-h-56 overflow-y-auto divide-y divide-slate-100/60 dark:divide-slate-900/60"
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setPriorityFilter("");
+                                    setPriorityFilterOpen(false);
+                                  }}
+                                  className="w-full px-3.5 py-3 text-start text-xs font-bold text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-900 cursor-pointer flex items-center justify-between"
+                                >
+                                  <span>{language === "ar" ? "كل المستويات" : "All Levels"}</span>
+                                  {!priorityFilter && <Check className="w-3.5 h-3.5 text-brand-teal stroke-[3]" />}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setPriorityFilter("high");
+                                    setPriorityFilterOpen(false);
+                                  }}
+                                  className="w-full px-3.5 py-3 text-start text-xs font-black text-rose-500 hover:bg-slate-50 dark:hover:bg-slate-900 cursor-pointer flex items-center justify-between"
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
+                                    <span>{language === "ar" ? "مرتفعة جداً" : "Urgent / High"}</span>
+                                  </div>
+                                  {priorityFilter === "high" && <Check className="w-3.5 h-3.5 text-rose-500 stroke-[3]" />}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setPriorityFilter("medium");
+                                    setPriorityFilterOpen(false);
+                                  }}
+                                  className="w-full px-3.5 py-3 text-start text-xs font-black text-teal-600 dark:text-teal-400 hover:bg-slate-50 dark:hover:bg-slate-900 cursor-pointer flex items-center justify-between"
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-brand-teal" />
+                                    <span>{language === "ar" ? "متوسطة" : "General / Medium"}</span>
+                                  </div>
+                                  {priorityFilter === "medium" && <Check className="w-3.5 h-3.5 text-brand-teal stroke-[3]" />}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setPriorityFilter("low");
+                                    setPriorityFilterOpen(false);
+                                  }}
+                                  className="w-full px-3.5 py-3 text-start text-xs font-black text-emerald-500 hover:bg-slate-50 dark:hover:bg-slate-900 cursor-pointer flex items-center justify-between"
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                    <span>{language === "ar" ? "منخفضة" : "Optional / Low"}</span>
+                                  </div>
+                                  {priorityFilter === "low" && <Check className="w-3.5 h-3.5 text-emerald-500 stroke-[3]" />}
+                                </button>
+                              </motion.div>
+                            )}
+                          </AnimatePresence>
+                        </div>
+                      </div>
                     </div>
-                    {priorityFilter === "high" && <Check className="w-3.5 h-3.5 text-rose-500 stroke-[3]" />}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPriorityFilter("medium");
-                      setPriorityFilterOpen(false);
-                    }}
-                    className="w-full px-3.5 py-3 text-start text-xs font-black text-teal-600 dark:text-teal-400 hover:bg-slate-50 dark:hover:bg-slate-900 cursor-pointer flex items-center justify-between"
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="w-1.5 h-1.5 rounded-full bg-brand-teal" />
-                      <span>{language === "ar" ? "متوسطة" : "General / Medium"}</span>
-                    </div>
-                    {priorityFilter === "medium" && <Check className="w-3.5 h-3.5 text-brand-teal stroke-[3]" />}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPriorityFilter("low");
-                      setPriorityFilterOpen(false);
-                    }}
-                    className="w-full px-3.5 py-3 text-start text-xs font-black text-emerald-500 hover:bg-slate-50 dark:hover:bg-slate-900 cursor-pointer flex items-center justify-between"
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                      <span>{language === "ar" ? "منخفضة" : "Optional / Low"}</span>
-                    </div>
-                    {priorityFilter === "low" && <Check className="w-3.5 h-3.5 text-emerald-500 stroke-[3]" />}
-                  </button>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-        </div>
-      </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
 
       {/* 4. Combined Chronological Ledger List */}
       <div className="glass-card rounded-3xl overflow-hidden">
         {/* Ledger Header */}
-        <div className="p-5 border-b border-slate-100 dark:border-slate-800/60 flex justify-between items-center bg-slate-550/5/30 dark:bg-slate-900/10">
-          <span className="text-xs font-black text-brand-slate dark:text-slate-400 uppercase tracking-wider flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-brand-teal animate-pulse" />
-            <span>
+        <div className="p-5 border-b border-slate-100 dark:border-slate-800/60 flex flex-col gap-3.5 sm:flex-row sm:justify-between sm:items-center bg-slate-550/5/30 dark:bg-slate-900/10">
+          <span className="text-xs font-black text-brand-slate dark:text-slate-400 uppercase tracking-wider flex items-center gap-2 select-none">
+            <span className="w-2 h-2 rounded-full bg-brand-teal animate-pulse flex-shrink-0" />
+            <span className="whitespace-nowrap">
               {language === "ar"
                 ? "كشف العمليات الموحد الزمني"
                 : "Consolidated Ledger Feed"}
             </span>
           </span>
-          <span className="px-2.5 py-1 text-[10px] font-bold bg-slate-200/50 dark:bg-slate-800 text-slate-600 dark:text-slate-355 rounded-lg border border-white/20">
-            {filteredTransactions.length}{" "}
-            {language === "ar" ? "عملية مسجلة" : "Settled Entries"}
-          </span>
+          <div className="flex items-center gap-2.5 flex-wrap sm:flex-nowrap">
+            <button
+              type="button"
+              onClick={() => setHideHistoricalData(!hideHistoricalData)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] sm:text-xs font-black rounded-xl transition-all cursor-pointer shadow-xs border whitespace-nowrap select-none ${
+                hideHistoricalData 
+                  ? 'bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-900/40' 
+                  : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800'
+              }`}
+            >
+              <FileSpreadsheet className={`w-3.5 h-3.5 flex-shrink-0 ${hideHistoricalData ? 'text-amber-500' : 'text-slate-450'}`} />
+              <span className="whitespace-nowrap">
+                {hideHistoricalData 
+                  ? (language === "ar" ? "إظهار البيانات القديمة" : "Show Historical") 
+                  : (language === "ar" ? "إخفاء البيانات القديمة" : "Hide Historical")
+                }
+              </span>
+            </button>
+            <span className="px-2.5 py-1.5 text-[10px] sm:text-xs font-black bg-slate-100/80 dark:bg-slate-800 text-slate-650 dark:text-slate-300 rounded-xl border border-slate-200/50 dark:border-white/10 whitespace-nowrap select-none">
+              {filteredTransactions.length}{" "}
+              {language === "ar" ? "عملية مسجلة" : "Settled Entries"}
+            </span>
+          </div>
         </div>
 
         {/* Ledger Items */}
@@ -1650,7 +1986,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                 const cat = categories.find((c) => c.id === tx.categoryId);
                 const catLabel = cat
                   ? cat.name.split(" / ")[language === "ar" ? 0 : 1] || cat.name
-                  : t.none;
+                  : (tx.categoryName || t.none);
 
                 return (
                   <div
@@ -1679,9 +2015,20 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                         {/* Metadata summary block */}
                         <div className="space-y-1.5 flex-1 min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
-                            <h4 className="font-extrabold text-sm text-slate-900 dark:text-white truncate">
+                            <h4
+                              onClick={() => setExpandedTitlesTxIds(prev => ({ ...prev, [tx.id]: !prev[tx.id] }))}
+                              className={`font-extrabold text-sm text-slate-900 dark:text-white cursor-pointer hover:text-slate-700 dark:hover:text-slate-200 transition-colors duration-150 ${expandedTitlesTxIds[tx.id] ? "whitespace-normal break-words" : "truncate"}`}
+                              dir="auto"
+                              title={language === "ar" ? "اضغط للتكبير/التصغير" : "Click to expand/collapse"}
+                            >
                               {tx.title}
                             </h4>
+
+                            {tx.isHistorical && (
+                              <span className="text-[9px] font-bold bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 px-1.5 py-0.5 rounded border border-amber-250/20 dark:border-amber-900/10">
+                                {language === 'ar' ? 'بيان قديم/مستورد' : 'Historical/Imported'}
+                              </span>
+                            )}
 
                             {/* Transaction Type label */}
                             <span
@@ -1727,7 +2074,12 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                           </div>
 
                           {tx.notes && (
-                            <p className="text-xs text-slate-500 dark:text-slate-400 max-w-xl line-clamp-2">
+                            <p 
+                              onClick={() => setExpandedNotesTxIds(prev => ({ ...prev, [tx.id]: !prev[tx.id] }))}
+                              className={`text-xs text-slate-500 dark:text-slate-400 max-w-xl cursor-pointer hover:text-slate-700 dark:hover:text-slate-200 transition-colors duration-150 ${expandedNotesTxIds[tx.id] ? "" : "line-clamp-2"}`} 
+                              dir="auto"
+                              title={language === "ar" ? "اضغط للتكبير/_التصغير" : "Click to expand/collapse"}
+                            >
                               {tx.notes}
                             </p>
                           )}
@@ -1889,7 +2241,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                                         • {comment.createdAt instanceof Date ? comment.createdAt.toLocaleString(language === "ar" ? "ar-LY" : "en-US", { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' }) : ""}
                                       </span>
                                     </div>
-                                    <p className="text-xs text-slate-650 dark:text-slate-300 break-words whitespace-pre-wrap">
+                                    <p className="text-xs text-slate-650 dark:text-slate-300 break-words whitespace-pre-wrap" dir="auto">
                                       {comment.text}
                                     </p>
                                   </div>
@@ -1930,6 +2282,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                               onChange={(e) => setNewCommentText(e.target.value)}
                               placeholder={language === "ar" ? "أكتب تعليقك أو ملاحظتك هنا..." : "Add your commentary or internal note here..."}
                               className="flex-1 min-w-0 px-4 py-2.5 text-xs bg-white dark:bg-slate-900 border border-slate-150 dark:border-slate-800/85 rounded-xl text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-brand-teal/40"
+                              dir="auto"
                             />
                             <button
                               type="submit"
@@ -2089,6 +2442,134 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                 >
                   {language === "ar" ? "إغلاق المعاينة" : "Close Preview"}
                 </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* 6. Overdraft Warning / Wallet Split Modal */}
+      <AnimatePresence>
+        {overdraftModalOpen && overdraftData && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => {
+                setOverdraftModalOpen(false);
+                setOverdraftData(null);
+              }}
+              className="absolute inset-0 bg-slate-950/70 backdrop-blur-md cursor-pointer"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="glass-modal max-w-md w-full rounded-3xl overflow-hidden p-6 z-10 relative bg-white dark:bg-slate-900 shadow-2xl flex flex-col gap-4 border border-rose-500/20"
+            >
+              <div className="flex items-center gap-3 pb-4 border-b border-rose-100 dark:border-rose-500/20">
+                <div className="w-10 h-10 rounded-full bg-rose-100 dark:bg-rose-900/30 text-rose-500 flex items-center justify-center flex-shrink-0">
+                  <AlertTriangle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-rose-600 dark:text-rose-400">
+                    {language === "ar" ? "رصيد غير كافٍ - تقسيم المعاملة" : "Insufficient Balance - Split Transaction"}
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 font-medium leading-tight">
+                    {language === "ar" 
+                      ? "المحفظة المختارة لا تغطي كامل المبلغ." 
+                      : "Selected wallet does not cover the full amount."}
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-4 py-2">
+                <div className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800">
+                  <p className="text-xs text-slate-600 dark:text-slate-300">
+                    {language === "ar" 
+                      ? `محفظة "${overdraftData.originalWallet.name}" رصيدها الحالي ${overdraftData.currentBalance.toLocaleString()} ${currency} والمعاملة تتطلب ${overdraftData.numericAmount.toLocaleString()} ${currency}.` 
+                      : `"${overdraftData.originalWallet.name}" currently has ${overdraftData.currentBalance.toLocaleString()} ${currency}, but the transaction requires ${overdraftData.numericAmount.toLocaleString()} ${currency}.`
+                    }
+                  </p>
+                  <div className="mt-3 flex items-center justify-between font-bold text-sm">
+                    <span className="text-slate-500">{language === "ar" ? "المبلغ المتبقي المطلوب:" : "Remaining amount needed:"}</span>
+                    <span className="text-rose-600 dark:text-rose-400">
+                      {overdraftData.remainingAmount.toLocaleString()} {currency}
+                    </span>
+                  </div>
+                </div>
+
+                {overdraftData.availableWallets.length > 0 ? (
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-slate-500 dark:text-slate-400">
+                      {language === "ar" 
+                        ? (overdraftData.currentBalance > 0 ? "اختر محفظة بديلة لتغطية الباقي" : "اختر محفظة بديلة لدفع كامل المبلغ") 
+                        : (overdraftData.currentBalance > 0 ? "Select an alternative wallet for the rest" : "Select an alternative wallet for the entire amount")}
+                    </label>
+                    <div className="space-y-2 overflow-y-auto max-h-40 pe-1">
+                      {overdraftData.availableWallets.map(w => (
+                        <button
+                          key={w.id}
+                          onClick={() => setSelectedAlternativeWalletId(w.id)}
+                          className={`w-full flex items-center justify-between p-3 rounded-xl border text-left cursor-pointer transition-all ${
+                            selectedAlternativeWalletId === w.id
+                              ? "border-brand-teal bg-brand-teal/5 dark:bg-brand-teal/10"
+                              : "border-slate-200 dark:border-slate-800 hover:border-brand-teal/50"
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <Wallet className={`w-4 h-4 ${selectedAlternativeWalletId === w.id ? "text-brand-teal" : "text-slate-400"}`} />
+                            <span className="text-sm font-bold text-slate-800 dark:text-white">{w.name}</span>
+                          </div>
+                          <span className="text-xs font-mono font-bold text-slate-500">
+                            {getWalletCurrentBalance(w).toLocaleString()} {w.currency}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-3 bg-amber-50 dark:bg-amber-950/20 rounded-xl border border-amber-200 dark:border-amber-800/50">
+                    <p className="text-xs text-amber-700 dark:text-amber-400">
+                      {language === "ar" 
+                        ? "لا توجد محافظ أخرى كافية لتغطية المبلغ. المتابعة ستجعل الرصيد سالباً." 
+                        : "No other wallets have enough balance to cover this. Proceeding will result in a negative balance."}
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex flex-col sm:flex-row justify-end gap-2 pt-4 border-t border-slate-100 dark:border-slate-800/40">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOverdraftModalOpen(false);
+                    setOverdraftData(null);
+                  }}
+                  className="px-4 py-2 text-xs font-bold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors cursor-pointer"
+                >
+                  {language === "ar" ? "إلغاء" : "Cancel"}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleForceProceed}
+                  className="px-4 py-2 text-rose-600 bg-rose-50 hover:bg-rose-100 dark:text-rose-400 dark:bg-rose-950/30 dark:hover:bg-rose-900/40 text-xs font-bold rounded-xl transition-all cursor-pointer"
+                >
+                  {language === "ar" ? "المتابعة بالرصيد السالب" : "Proceed (Negative)"}
+                </button>
+
+                {overdraftData.availableWallets.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleOverdraftProceed}
+                    className="px-4 py-2 bg-brand-teal text-white text-xs font-bold rounded-xl shadow-lg shadow-brand-teal/20 hover:opacity-90 transition-all cursor-pointer"
+                  >
+                    {language === "ar" 
+                      ? (overdraftData.currentBalance > 0 ? "تقسيم وتسجيل المعاملة" : "دفع من محفظة بديلة") 
+                      : (overdraftData.currentBalance > 0 ? "Split & Record" : "Pay from Alternative")}
+                  </button>
+                )}
               </div>
             </motion.div>
           </div>

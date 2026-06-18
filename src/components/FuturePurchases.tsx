@@ -146,6 +146,8 @@ export const FuturePurchases: React.FC = () => {
   const [convertingItem, setConvertingItem] = useState<any | null>(null);
   const [actualPrice, setActualPrice] = useState('');
   const [actualDate, setActualDate] = useState(new Date().toISOString().split('T')[0]);
+  // Notes expand state by item ID
+  const [expandedNotesIds, setExpandedNotesIds] = useState<Record<string, boolean>>({});
 
   // Sorters / Filters
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
@@ -789,7 +791,11 @@ export const FuturePurchases: React.FC = () => {
                   </h3>
 
                   {item.notes && (
-                    <p className="text-xs text-slate-400 dark:text-slate-500 line-clamp-2">
+                    <p 
+                      onClick={() => setExpandedNotesIds(prev => ({ ...prev, [item.id]: !prev[item.id] }))}
+                      className={`text-xs text-slate-400 dark:text-slate-500 cursor-pointer hover:text-slate-600 dark:hover:text-slate-305 transition-colors duration-150 ${expandedNotesIds[item.id] ? "" : "line-clamp-2"}`}
+                      title={language === "ar" ? "اضغط للتوسيع / الطي" : "Click to expand/collapse"}
+                    >
                       {item.notes}
                     </p>
                   )}

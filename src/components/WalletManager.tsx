@@ -9,11 +9,18 @@ import {
   ArrowDownLeft,
   Eye,
   EyeOff,
+  ArrowRightLeft,
+  Layers,
+  X
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { ConfirmModal } from "./ConfirmModal";
 
-export const WalletManager: React.FC = () => {
+interface WalletManagerProps {
+  setCurrentTab?: (tab: string) => void;
+}
+
+export const WalletManager: React.FC<WalletManagerProps> = ({ setCurrentTab }) => {
   const {
     language,
     wallets,
@@ -23,8 +30,16 @@ export const WalletManager: React.FC = () => {
     deleteWallet,
     incomes,
     expenses,
+    addExpense,
+    addIncome,
+    categories,
+    addCategory,
+    selectedWalletFilter,
+    setSelectedWalletFilter
   } = useApp();
   const [showAddForm, setShowAddForm] = useState(false);
+  const [showTransferForm, setShowTransferForm] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [name, setName] = useState("");
@@ -72,6 +87,114 @@ export const WalletManager: React.FC = () => {
     { id: "amber", hex: "#f59e0b" },
   ];
 
+  // Transfer states
+  const [fromWalletId, setFromWalletId] = useState("");
+  const [toWalletId, setToWalletId] = useState("");
+  const [transferAmount, setTransferAmount] = useState("");
+  const [transferDate, setTransferDate] = useState(new Date().toISOString().split("T")[0]);
+  const [transferTime, setTransferTime] = useState(() => {
+    const now = new Date();
+    const hours = String(now.getHours()).padStart(2, "0");
+    const minutes = String(now.getMinutes()).padStart(2, "0");
+    return `${hours}:${minutes}`;
+  });
+  const [transferNotes, setTransferNotes] = useState("");
+  const [transferError, setTransferError] = useState("");
+
+  const resetTransferForm = () => {
+    setFromWalletId("");
+    setToWalletId("");
+    setTransferAmount("");
+    setTransferDate(new Date().toISOString().split("T")[0]);
+    setTransferTime(() => {
+      const now = new Date();
+      const hours = String(now.getHours()).padStart(2, "0");
+      const minutes = String(now.getMinutes()).padStart(2, "0");
+      return `${hours}:${minutes}`;
+    });
+    setTransferNotes("");
+    setTransferError("");
+    setShowTransferForm(false);
+  };
+
+  const getOrCreateTransferCategory = async () => {
+    let transferCat = categories.find(c => c.name.includes("تحويل") || c.name.includes("Transfer"));
+    if (transferCat) return transferCat.id;
+
+    const newId = await addCategory(
+        language === 'ar' ? 'تحويل بين المحافظ / Transfer' : 'Transfer / تحويل بين المحافظ',
+        'expense', 
+        'sky',
+        'ArrowRightLeft'
+    );
+    return newId;
+  };
+
+  const handleTransferSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setTransferError("");
+    if (!fromWalletId || !toWalletId || !transferDate || !transferTime) return;
+
+    if (fromWalletId === toWalletId) {
+      setTransferError(language === 'ar' ? 'لا يمكن التحويل لنفس المحفظة' : 'Cannot transfer to the same wallet.');
+      return;
+    }
+
+    const fromWallet = wallets.find(w => w.id === fromWalletId);
+    const toWallet = wallets.find(w => w.id === toWalletId);
+
+    if (!fromWallet || !toWallet) return;
+    if (fromWallet.currency !== toWallet.currency) {
+      setTransferError(language === 'ar' ? 'يجب أن تكون المحفظتان بنفس العملة. يرجى الموازنة يدوياً أولاً.' : 'Both wallets must have the same currency.');
+      return;
+    }
+
+    const stats = calculateWalletStats(fromWallet);
+    
+    // Determine transfer amount
+    let numAmount: number;
+    if (transferAmount.trim() === "") {
+      // Transfer whole balance
+      numAmount = stats.currentBal;
+    } else {
+      numAmount = parseFloat(transferAmount);
+    }
+
+    if (isNaN(numAmount) || numAmount <= 0) {
+      setTransferError(
+        language === 'ar' 
+          ? 'المبلغ غير صالح، أو رصيد المحفظة المصدر فارغ / سالب.' 
+          : 'Invalid amount or source wallet balance is empty/negative.'
+      );
+      return;
+    }
+
+    if (stats.currentBal < numAmount) {
+      setTransferError(t.insufficientBalance || 'Insufficient balance.');
+      return;
+    }
+
+    try {
+      const catId = await getOrCreateTransferCategory();
+      const titleExp = language === 'ar' ? `تحويل مالي إلى ${toWallet.name}` : `Transfer to ${toWallet.name}`;
+      const titleInc = language === 'ar' ? `تحويل مالي قادم من ${fromWallet.name}` : `Transfer from ${fromWallet.name}`;
+      
+      const fullDate = `${transferDate}T${transferTime}`;
+
+      await addExpense(
+        numAmount, fromWallet.currency, titleExp, fullDate, catId, transferNotes, "", "medium", fromWallet.id, false
+      );
+      await addIncome(
+        numAmount, toWallet.currency, titleInc, fullDate, catId, transferNotes, "", "medium", toWallet.id, false, "", false
+      );
+
+      resetTransferForm();
+    } catch (e) {
+      console.error(e);
+      setTransferError(t.transferError || 'Error transferring.');
+    }
+  };
+
   const resetForm = () => {
     setEditingId(null);
     setName("");
@@ -118,7 +241,7 @@ export const WalletManager: React.FC = () => {
   // Calculate current balance for a wallet
   const calculateWalletStats = (wallet: any) => {
     const wIncomes = incomes.filter(
-      (inc) => inc.walletId === wallet.id && inc.currency === wallet.currency,
+      (inc) => inc.walletId === wallet.id && inc.currency === wallet.currency && !inc.isOpening,
     );
     const wExpenses = expenses.filter(
       (exp) => exp.walletId === wallet.id && exp.currency === wallet.currency,
@@ -155,18 +278,185 @@ export const WalletManager: React.FC = () => {
           </p>
         </div>
 
-        {!showAddForm && (
-          <button
-            onClick={() => setShowAddForm(true)}
-            className="w-full md:w-auto px-5 py-3 bg-brand-teal hover:bg-brand-teal/90 text-brand-slate font-extrabold text-xs rounded-2xl shadow-lg shadow-brand-teal/20 flex items-center justify-center gap-2 cursor-pointer transition-all duration-300 hover:scale-[1.02]"
-          >
-            <Plus className="w-4 h-4 text-brand-slate stroke-[3]" />
-            <span>
-              {language === "ar" ? "إضافة محفظة جديدة" : "Add New Wallet"}
-            </span>
-          </button>
-        )}
+        <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
+          {!showTransferForm && !showAddForm && (
+            <button
+               onClick={() => setShowArchived(true)}
+               className="w-full md:w-auto px-5 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-300 font-extrabold text-xs rounded-2xl shadow-lg flex items-center justify-center gap-2 cursor-pointer transition-all duration-300 hover:scale-[1.02]"
+               title={language === "ar" ? "المحافظ المؤرشفة" : "Archived Wallets"}
+            >
+               <Layers className="w-4 h-4 stroke-[3]" />
+               <span className="hidden sm:inline">
+                 {language === "ar" ? "الأرشيف" : "Archive"}
+               </span>
+            </button>
+          )}
+
+          {!showTransferForm && (
+            <button
+               onClick={() => { setShowTransferForm(true); setShowAddForm(false); }}
+               className="w-full md:w-auto px-5 py-3 bg-slate-800 hover:bg-slate-900 text-white dark:bg-white dark:hover:bg-slate-200 dark:text-slate-900 font-extrabold text-xs rounded-2xl shadow-lg flex items-center justify-center gap-2 cursor-pointer transition-all duration-300 hover:scale-[1.02]"
+            >
+               <ArrowRightLeft className="w-4 h-4 stroke-[3]" />
+               <span>{t.transferMoney}</span>
+            </button>
+          )}
+
+          {!showAddForm && (
+            <button
+              onClick={() => { setShowAddForm(true); setShowTransferForm(false); }}
+              className="w-full md:w-auto px-5 py-3 bg-brand-teal hover:bg-brand-teal/90 text-brand-slate font-extrabold text-xs rounded-2xl shadow-lg flex items-center justify-center gap-2 cursor-pointer transition-all duration-300 hover:scale-[1.02]"
+            >
+              <Plus className="w-4 h-4 text-brand-slate stroke-[3]" />
+              <span>
+                {language === "ar" ? "إضافة محفظة جديدة" : "Add New Wallet"}
+              </span>
+            </button>
+          )}
+        </div>
       </div>
+
+      <AnimatePresence>
+        {showTransferForm && (
+          <motion.div
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="glass-card p-6 rounded-3xl space-y-5 border-l-4 border-l-sky-500"
+          >
+            <h3 className="font-black text-lg text-slate-800 dark:text-white flex items-center gap-2">
+               <ArrowRightLeft className="w-5 h-5 text-sky-500" />
+               {t.transferMoney}
+            </h3>
+            {transferError && (
+              <div className="bg-rose-50 dark:bg-rose-900/30 text-rose-600 dark:text-rose-400 p-3 rounded-xl text-xs font-bold border border-rose-200 dark:border-rose-800/50">
+                {transferError}
+              </div>
+            )}
+            <form onSubmit={handleTransferSubmit} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-bold text-slate-500 dark:text-slate-400">
+                    {t.fromWallet}
+                  </label>
+                  <select
+                    required
+                    value={fromWalletId}
+                    onChange={(e) => setFromWalletId(e.target.value)}
+                    className="glass-input px-3 py-2.5 text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-sky-500/50 dark:text-white dark:bg-slate-900"
+                  >
+                    <option value="" disabled>{language === 'ar' ? 'اختر محفظة...' : 'Select wallet...'}</option>
+                    {wallets.map(w => {
+                      const stats = calculateWalletStats(w);
+                      const symbol = w.currency === 'LYD' ? (language === 'ar' ? 'د.ل' : 'LYD') : '$';
+                      return (
+                        <option key={w.id} value={w.id}>
+                          {w.name} — ({stats.currentBal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {symbol})
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-bold text-slate-500 dark:text-slate-400">
+                    {t.toWallet}
+                  </label>
+                  <select
+                    required
+                    value={toWalletId}
+                    onChange={(e) => setToWalletId(e.target.value)}
+                    className="glass-input px-3 py-2.5 text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-sky-500/50 dark:text-white dark:bg-slate-900"
+                  >
+                    <option value="" disabled>{language === 'ar' ? 'اختر محفظة...' : 'Select wallet...'}</option>
+                    {wallets.map(w => {
+                      const stats = calculateWalletStats(w);
+                      const symbol = w.currency === 'LYD' ? (language === 'ar' ? 'د.ل' : 'LYD') : '$';
+                      return (
+                        <option key={w.id} value={w.id}>
+                          {w.name} — ({stats.currentBal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {symbol})
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-bold text-slate-500 dark:text-slate-400">
+                    {t.transferAmount}
+                  </label>
+                  <input
+                    type="number"
+                    step="any"
+                    value={transferAmount}
+                    onChange={(e) => setTransferAmount(e.target.value)}
+                    placeholder={t.transferAmountPlaceholder || "Leave empty to transfer full balance"}
+                    className="glass-input px-3 py-2 text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-sky-500/50 dark:text-white placeholder:text-slate-400/70"
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-xs font-bold text-slate-500 dark:text-slate-400">
+                        {t.transferDate}
+                      </label>
+                      <input
+                        type="date"
+                        required
+                        value={transferDate}
+                        onChange={(e) => setTransferDate(e.target.value)}
+                        className="glass-input px-2 py-2 text-xs rounded-xl focus:outline-none focus:ring-2 focus:ring-sky-500/50 dark:text-white text-left"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-xs font-bold text-slate-500 dark:text-slate-400">
+                        {t.transferTime}
+                      </label>
+                      <input
+                        type="time"
+                        required
+                        value={transferTime}
+                        onChange={(e) => setTransferTime(e.target.value)}
+                        className="glass-input px-2 py-2 text-xs rounded-xl focus:outline-none focus:ring-2 focus:ring-sky-500/50 dark:text-white text-left"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-1.5 sm:col-span-2">
+                  <label className="text-xs font-bold text-slate-500 dark:text-slate-400">
+                    {t.transferNotes}
+                  </label>
+                  <input
+                    type="text"
+                    value={transferNotes}
+                    onChange={(e) => setTransferNotes(e.target.value)}
+                    placeholder={language === 'ar' ? 'سبب التحويل أو ملاحظات (اختياري)' : 'Reason or notes (Optional)'}
+                    className="glass-input px-3 py-2 text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-sky-500/50 dark:text-white"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={resetTransferForm}
+                  className="px-5 py-3 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-extrabold text-xs rounded-xl cursor-pointer transition-colors"
+                >
+                  {t.cancel}
+                </button>
+                <button
+                  type="submit"
+                  className="px-8 py-3 bg-sky-500 hover:bg-sky-600 text-white font-extrabold text-xs rounded-xl cursor-pointer transition-all shadow-md"
+                >
+                  {t.save}
+                </button>
+              </div>
+            </form>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Add Form */}
       <AnimatePresence>
@@ -263,165 +553,248 @@ export const WalletManager: React.FC = () => {
       </AnimatePresence>
 
       {/* Wallets Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 pt-2">
-        {wallets.length === 0 && !showAddForm ? (
-          <div className="col-span-full py-16 text-center text-slate-500 dark:text-slate-400">
-            <Wallet className="w-12 h-12 mx-auto mb-4 opacity-20" />
-            <p className="font-bold">
-              {language === "ar"
-                ? "لم تقم بتهيئة أي محافظ بعد"
-                : "No wallets configured yet"}
-            </p>
-          </div>
-        ) : (
-          wallets.map((wallet) => {
-            const stats = calculateWalletStats(wallet);
-            const isNegative = stats.currentBal < 0;
-            const bgClass = `bg-${wallet.color}-100 dark:bg-${wallet.color}-950/30 text-${wallet.color}-600 dark:text-${wallet.color}-400`;
+      {(() => {
+        const walletsWithStats = wallets.map((w) => ({ wallet: w, stats: calculateWalletStats(w) }));
+        const activeWallets = walletsWithStats.filter((w) => w.stats.currentBal !== 0);
+        const archivedWallets = walletsWithStats.filter((w) => w.stats.currentBal === 0);
 
-            return (
-              <div
-                key={wallet.id}
-                className={`glass-card rounded-3xl p-5 flex flex-col justify-between relative overflow-hidden group cursor-pointer hover:shadow-xl transition-all ${wallet.isHidden ? "opacity-60 grayscale-[30%]" : ""}`}
-                onClick={() => handleEditClick(wallet)} // User asked to click wallet to configure it, so we trigger edit mode
-              >
-                <div className="flex justify-between items-start mb-4">
-                  <div className="flex items-center gap-3">
-                    <div
-                      className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-extrabold shadow-inner relative"
-                      style={{
-                        backgroundColor:
-                          colors.find((c) => c.id === wallet.color)?.hex ||
-                          "#64748b",
-                      }}
-                    >
-                      <Wallet className="w-5 h-5" />
-                      {wallet.isHidden && (
-                        <div className="absolute -top-1 -right-1 bg-slate-800 text-white rounded-full p-0.5">
-                          <EyeOff className="w-2.5 h-2.5" />
+        const renderWalletCard = ({ wallet, stats }: { wallet: any; stats: any }) => {
+          const isNegative = stats.currentBal < 0;
+          const bgClass = `bg-${wallet.color}-100 dark:bg-${wallet.color}-950/30 text-${wallet.color}-600 dark:text-${wallet.color}-400`;
+
+          return (
+            <div
+              key={wallet.id}
+              className={`glass-card rounded-3xl p-5 flex flex-col justify-between relative overflow-hidden group cursor-pointer hover:shadow-xl transition-all ${wallet.isHidden ? "opacity-60 grayscale-[30%]" : ""}`}
+              onClick={() => handleEditClick(wallet)} // User asked to click wallet to configure it, so we trigger edit mode
+            >
+              <div className="flex justify-between items-start mb-4">
+                <div className="flex items-center gap-3">
+                  <div
+                    className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-extrabold shadow-inner relative"
+                    style={{
+                      backgroundColor:
+                        colors.find((c) => c.id === wallet.color)?.hex ||
+                        "#64748b",
+                    }}
+                  >
+                    <Wallet className="w-5 h-5" />
+                    {wallet.isHidden && (
+                      <div className="absolute -top-1 -right-1 bg-slate-800 text-white rounded-full p-0.5">
+                        <EyeOff className="w-2.5 h-2.5" />
+                      </div>
+                    )}
+                  </div>
+                  <div>
+                    <h3 className="font-extrabold text-sm text-slate-900 dark:text-white capitalize truncate max-w-[140px]">
+                      {wallet.name}
+                    </h3>
+                    <p className="text-[10px] text-slate-400 font-bold uppercase mapping-widest flex items-center gap-1 mt-0.5">
+                      {language === "ar" ? "الافتتاحي: " : "Initial: "}
+                      {wallet.initialBalance.toLocaleString()}{" "}
+                      {wallet.currency}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1 bg-slate-100/60 dark:bg-slate-800/60 px-1.5 py-1 rounded-xl relative z-10 border border-slate-200/20 shadow-xs">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedWalletFilter(wallet.id);
+                      if (setCurrentTab) {
+                        setCurrentTab('transactions');
+                      }
+                    }}
+                    className="p-1 text-slate-500 hover:text-emerald-500 dark:text-slate-400 dark:hover:text-emerald-400 rounded-lg cursor-pointer transition-colors"
+                    title={language === "ar" ? "عرض معاملات هذه المحفظة فقط" : "View Only This Wallet's Transactions"}
+                  >
+                    <Layers className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      await updateWallet(
+                        wallet.id,
+                        wallet.name,
+                        wallet.initialBalance,
+                        wallet.currency,
+                        wallet.color || "slate",
+                        wallet.icon || "wallet",
+                        !wallet.isHidden
+                      );
+                    }}
+                    className="p-1 text-slate-500 hover:text-brand-teal dark:text-slate-400 dark:hover:text-brand-teal rounded-lg cursor-pointer transition-colors"
+                    title={language === "ar" ? "إخفاء / إظهار من الداشبورد" : "Toggle Dashboard Visibility"}
+                  >
+                    {wallet.isHidden ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleEditClick(wallet);
+                    }}
+                    className="p-1 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-white rounded-lg cursor-pointer transition-colors"
+                  >
+                    <Edit2 className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      showConfirm(
+                        language === "ar" ? "حذف المحفظة" : "Delete Wallet",
+                        language === "ar"
+                          ? `هل أنت متأكد من حذف هذه المحفظة "${wallet.name}" نهائياً؟ سيتم إلغاء ارتباطها بمصاريفك ومواردك ولكن لن تحذف المعاملات التاريخية المرتبطة بها.`
+                          : `Are you sure you want to delete this wallet "${wallet.name}" permanently? This will remove the wallet, but associated transactions will be kept.`,
+                        async () => {
+                          await deleteWallet(wallet.id);
+                        },
+                        'danger'
+                      );
+                    }}
+                    className="p-1 text-rose-400 hover:text-rose-600 rounded-lg cursor-pointer transition-colors"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-2">
+                <p className="text-[10px] text-slate-500 dark:text-slate-400 font-bold mb-1">
+                  {language === "ar"
+                    ? "الرصيد المتاح (الصافي)"
+                    : "Current Available Balance"}
+                </p>
+                <div className="flex items-end gap-2">
+                  <span
+                    className={`text-2xl font-black ${isNegative ? "text-rose-500" : "text-slate-800 dark:text-white"}`}
+                  >
+                    {stats.currentBal.toLocaleString(undefined, {
+                      minimumFractionDigits: 2,
+                    })}
+                  </span>
+                  <span className="text-xs font-bold text-slate-400 mb-1">
+                    {wallet.currency}
+                  </span>
+                </div>
+
+                {/* Summary of Inflows and Outflows */}
+                <div className="mt-3 flex gap-3 text-[10px] font-bold">
+                  <div className="flex items-center gap-1 text-emerald-500">
+                    <ArrowUpRight className="w-3 h-3" />
+                    {stats.totalIncomes.toLocaleString()}
+                  </div>
+                  <div className="flex items-center gap-1 text-rose-500">
+                    <ArrowDownLeft className="w-3 h-3" />
+                    {stats.totalExpenses.toLocaleString()}
+                  </div>
+                </div>
+
+                {/* Visual Bar relative to initial balance */}
+                <div className="mt-2 pt-2 flex items-center gap-2 border-t border-slate-100 dark:border-slate-800/50">
+                  {stats.diff > 0 ? (
+                    <ArrowUpRight className="w-3.5 h-3.5 text-emerald-500" />
+                  ) : stats.diff < 0 ? (
+                    <ArrowDownLeft className="w-3.5 h-3.5 text-rose-500" />
+                  ) : (
+                    <div className="w-3.5 h-3.5 rounded-full border-2 border-slate-300" />
+                  )}
+                  <span
+                    className={`text-[10px] font-bold ${stats.diff > 0 ? "text-emerald-500" : stats.diff < 0 ? "text-rose-500" : "text-slate-400"}`}
+                  >
+                    {stats.diff > 0 && "+"}
+                    {stats.diff.toLocaleString(undefined, {
+                      minimumFractionDigits: 2,
+                    })}{" "}
+                    {wallet.currency}
+                    <span className="text-slate-400 font-medium ml-1">
+                      ({language === "ar" ? "التغيير الإجمالي" : "Net flow"})
+                    </span>
+                  </span>
+                </div>
+              </div>
+            </div>
+          );
+        };
+
+        return (
+          <div className="space-y-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 pt-2">
+              {activeWallets.length === 0 && archivedWallets.length === 0 && !showAddForm ? (
+                <div className="col-span-full py-16 text-center text-slate-500 dark:text-slate-400">
+                  <Wallet className="w-12 h-12 mx-auto mb-4 opacity-20" />
+                  <p className="font-bold">
+                    {language === "ar"
+                      ? "لم تقم بتهيئة أي محافظ بعد"
+                      : "No wallets configured yet"}
+                  </p>
+                </div>
+              ) : activeWallets.length === 0 && archivedWallets.length > 0 && !showAddForm ? (
+                <div className="col-span-full py-8 text-center text-slate-500 dark:text-slate-400">
+                  <p className="font-bold">
+                    {language === "ar"
+                      ? "جميع المحافظ مؤرشفة (فارغة)"
+                      : "All wallets are archived (empty)"}
+                  </p>
+                </div>
+              ) : (
+                activeWallets.map(renderWalletCard)
+              )}
+            </div>
+
+            <AnimatePresence>
+              {showArchived && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center px-4 sm:px-6">
+                  <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    onClick={() => setShowArchived(false)}
+                    className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+                  />
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                    className="relative w-full max-w-4xl max-h-[85vh] bg-white dark:bg-slate-900 rounded-3xl shadow-2xl overflow-hidden flex flex-col"
+                  >
+                    <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-900/50">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-slate-200 dark:bg-slate-800 flex items-center justify-center text-slate-500 dark:text-slate-400">
+                          <Layers className="w-5 h-5" />
+                        </div>
+                        <h3 className="text-xl font-black text-slate-800 dark:text-white">
+                          {language === "ar" ? "المحافظ المؤرشفة (فارغة)" : "Archived Wallets (Empty)"}
+                        </h3>
+                      </div>
+                      <button
+                        onClick={() => setShowArchived(false)}
+                        className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-full transition-colors"
+                      >
+                        <X className="w-5 h-5" />
+                      </button>
+                    </div>
+
+                    <div className="p-6 overflow-y-auto">
+                      {archivedWallets.length === 0 ? (
+                        <div className="py-12 text-center text-slate-500 dark:text-slate-400">
+                          <p className="font-bold">
+                            {language === "ar" ? "لا توجد محافظ مؤرشفة" : "No archived wallets"}
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                          {archivedWallets.map(renderWalletCard)}
                         </div>
                       )}
                     </div>
-                    <div>
-                      <h3 className="font-extrabold text-sm text-slate-900 dark:text-white capitalize truncate max-w-[140px]">
-                        {wallet.name}
-                      </h3>
-                      <p className="text-[10px] text-slate-400 font-bold uppercase mapping-widest flex items-center gap-1 mt-0.5">
-                        {language === "ar" ? "الافتتاحي: " : "Initial: "}
-                        {wallet.initialBalance.toLocaleString()}{" "}
-                        {wallet.currency}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-1 bg-slate-100/60 dark:bg-slate-800/60 px-1.5 py-1 rounded-xl relative z-10 border border-slate-200/20 shadow-xs">
-                    <button
-                      onClick={async (e) => {
-                        e.stopPropagation();
-                        await updateWallet(
-                          wallet.id,
-                          wallet.name,
-                          wallet.initialBalance,
-                          wallet.currency,
-                          wallet.color || "slate",
-                          wallet.icon || "wallet",
-                          !wallet.isHidden
-                        );
-                      }}
-                      className="p-1 text-slate-500 hover:text-brand-teal dark:text-slate-400 dark:hover:text-brand-teal rounded-lg cursor-pointer transition-colors"
-                      title={language === "ar" ? "إخفاء / إظهار من الداشبورد" : "Toggle Dashboard Visibility"}
-                    >
-                      {wallet.isHidden ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleEditClick(wallet);
-                      }}
-                      className="p-1 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-white rounded-lg cursor-pointer transition-colors"
-                    >
-                      <Edit2 className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        showConfirm(
-                          language === "ar" ? "حذف المحفظة" : "Delete Wallet",
-                          language === "ar"
-                            ? `هل أنت متأكد من حذف هذه المحفظة "${wallet.name}" نهائياً؟ سيتم إلغاء ارتباطها بمصاريفك ومواردك ولكن لن تحذف المعاملات التاريخية المرتبطة بها.`
-                            : `Are you sure you want to delete this wallet "${wallet.name}" permanently? This will remove the wallet, but associated transactions will be kept.`,
-                          async () => {
-                            await deleteWallet(wallet.id);
-                          },
-                          'danger'
-                        );
-                      }}
-                      className="p-1 text-rose-400 hover:text-rose-600 rounded-lg cursor-pointer transition-colors"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
+                  </motion.div>
                 </div>
-
-                <div className="mt-2">
-                  <p className="text-[10px] text-slate-500 dark:text-slate-400 font-bold mb-1">
-                    {language === "ar"
-                      ? "الرصيد المتاح (الصافي)"
-                      : "Current Available Balance"}
-                  </p>
-                  <div className="flex items-end gap-2">
-                    <span
-                      className={`text-2xl font-black ${isNegative ? "text-rose-500" : "text-slate-800 dark:text-white"}`}
-                    >
-                      {stats.currentBal.toLocaleString(undefined, {
-                        minimumFractionDigits: 2,
-                      })}
-                    </span>
-                    <span className="text-xs font-bold text-slate-400 mb-1">
-                      {wallet.currency}
-                    </span>
-                  </div>
-
-                  {/* Summary of Inflows and Outflows */}
-                  <div className="mt-3 flex gap-3 text-[10px] font-bold">
-                    <div className="flex items-center gap-1 text-emerald-500">
-                      <ArrowUpRight className="w-3 h-3" />
-                      {stats.totalIncomes.toLocaleString()}
-                    </div>
-                    <div className="flex items-center gap-1 text-rose-500">
-                      <ArrowDownLeft className="w-3 h-3" />
-                      {stats.totalExpenses.toLocaleString()}
-                    </div>
-                  </div>
-
-                  {/* Visual Bar relative to initial balance */}
-                  <div className="mt-2 pt-2 flex items-center gap-2 border-t border-slate-100 dark:border-slate-800/50">
-                    {stats.diff > 0 ? (
-                      <ArrowUpRight className="w-3.5 h-3.5 text-emerald-500" />
-                    ) : stats.diff < 0 ? (
-                      <ArrowDownLeft className="w-3.5 h-3.5 text-rose-500" />
-                    ) : (
-                      <div className="w-3.5 h-3.5 rounded-full border-2 border-slate-300" />
-                    )}
-                    <span
-                      className={`text-[10px] font-bold ${stats.diff > 0 ? "text-emerald-500" : stats.diff < 0 ? "text-rose-500" : "text-slate-400"}`}
-                    >
-                      {stats.diff > 0 && "+"}
-                      {stats.diff.toLocaleString(undefined, {
-                        minimumFractionDigits: 2,
-                      })}{" "}
-                      {wallet.currency}
-                      <span className="text-slate-400 font-medium ml-1">
-                        ({language === "ar" ? "التغيير الإجمالي" : "Net flow"})
-                      </span>
-                    </span>
-                  </div>
-                </div>
-              </div>
-            );
-          })
-        )}
-      </div>
+              )}
+            </AnimatePresence>
+          </div>
+        );
+      })()}
 
       <ConfirmModal
         isOpen={confirmModalState.isOpen}

@@ -552,7 +552,7 @@ export const SavingsGroups: React.FC = () => {
                     </div>
 
                     <div className="space-y-1">
-                      <h3 className="font-extrabold text-sm sm:text-base text-slate-900 dark:text-white leading-tight">
+                      <h3 className="font-extrabold text-sm sm:text-base text-slate-900 dark:text-white leading-tight" dir="auto">
                         {group.name}
                       </h3>
                       <p className="text-[11px] text-slate-400">
