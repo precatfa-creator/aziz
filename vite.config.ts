@@ -6,6 +6,9 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
+    // Vercel's Supabase Marketplace integration injects NEXT_PUBLIC_-prefixed
+    // vars; expose those to the client bundle alongside Vite's own VITE_ prefix.
+    envPrefix: ['VITE_', 'NEXT_PUBLIC_'],
     plugins: [
       react(), 
       tailwindcss(),

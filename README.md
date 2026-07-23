@@ -1,20 +1,19 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# عزيز | Aziz — Personal Finance
 
-# Run and deploy your AI Studio app
+React + Vite frontend, Supabase (Postgres + Auth) backend, deployed on Vercel.
+`api/` holds the Gemini-backed serverless functions.
 
-This contains everything you need to run your app locally.
+## Run locally
 
-View your app in AI Studio: https://ai.studio/apps/cfac7153-c795-47f3-bd4a-e22a567b8295
+**Prerequisites:** Node.js, a linked Vercel project (`vercel link`), Supabase provisioned via the Vercel Marketplace (`vercel integration add supabase`).
 
-## Run Locally
+1. Install dependencies: `npm install`
+2. Pull env vars: `vercel env pull .env.local`
+3. Apply `supabase/migrations/0001_init.sql` to your Supabase project
+4. Run the app: `npm run dev`
 
-**Prerequisites:**  Node.js
+## Auth
 
-
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+Google OAuth only, via Supabase Auth. Configure the Google provider in the
+Supabase dashboard (Authentication → Providers → Google) with a redirect URI
+of `https://<project-ref>.supabase.co/auth/v1/callback`.

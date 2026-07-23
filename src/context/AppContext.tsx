@@ -4,29 +4,8 @@
  */
 
 import React, { createContext, useContext, useState, useEffect } from "react";
-import {
-  onAuthStateChanged,
-  signOut as firebaseSignOut,
-  User as FirebaseUser,
-  signInWithPopup,
-  GoogleAuthProvider,
-} from "firebase/auth";
-import {
-  doc,
-  setDoc,
-  getDoc,
-  collection,
-  onSnapshot,
-  query,
-  where,
-  addDoc,
-  updateDoc,
-  deleteDoc,
-  Timestamp,
-  serverTimestamp,
-  deleteField,
-} from "firebase/firestore";
-import { auth, db, handleFirestoreError, OperationType } from "../firebase";
+import type { User as SupabaseUser } from "@supabase/supabase-js";
+import { supabase } from "../supabase";
 import {
   UserProfile,
   Category,
@@ -42,8 +21,193 @@ import {
 } from "../types";
 import { translations } from "../translations";
 
+function logSupabaseError(error: unknown, context: string) {
+  console.error(`Supabase error [${context}]:`, error);
+}
+
+// ---------------------------------------------------------------------------
+// Row -> app-type mappers. Postgres snake_case -> the camelCase shapes the
+// rest of the app already expects (unchanged from the Firestore version).
+// ---------------------------------------------------------------------------
+
+function mapProfile(row: any): UserProfile {
+  return {
+    uid: row.id,
+    name: row.name,
+    email: row.email,
+    preferredLanguage: row.preferred_language,
+    preferredCurrency: row.preferred_currency,
+    exchangeRateUSD_LYD: Number(row.exchange_rate_usd_lyd),
+    defaultExpenseWalletId: row.default_expense_wallet_id || undefined,
+    createdAt: new Date(row.created_at),
+    updatedAt: new Date(row.updated_at),
+  };
+}
+
+function mapCategory(row: any): Category {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    name: row.name,
+    type: row.type,
+    color: row.color,
+    icon: row.icon,
+    isArchived: !!row.is_archived,
+    parentId: row.parent_id || null,
+    createdAt: new Date(row.created_at),
+  };
+}
+
+function mapIncome(row: any): Income {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    amount: Number(row.amount),
+    currency: row.currency,
+    title: row.title,
+    date: row.date,
+    categoryId: row.category_id,
+    notes: row.notes || "",
+    createdAt: new Date(row.created_at),
+    updatedAt: new Date(row.updated_at),
+    walletId: row.wallet_id || "",
+    priority: row.priority || "medium",
+    imageUrl: row.image_url || "",
+    isHistorical: !!row.is_historical,
+    categoryName: row.category_name || "",
+    isOpening: !!row.is_opening,
+  };
+}
+
+function mapExpense(row: any): Expense {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    amount: row.is_refunded ? 0 : Number(row.amount),
+    originalAmount:
+      row.original_amount !== null && row.original_amount !== undefined
+        ? Number(row.original_amount)
+        : Number(row.amount),
+    isRefunded: !!row.is_refunded,
+    refundedAt: row.refunded_at || undefined,
+    isDue: !!row.is_due,
+    currency: row.currency,
+    title: row.title,
+    date: row.date,
+    categoryId: row.category_id,
+    notes: row.notes || "",
+    createdAt: new Date(row.created_at),
+    updatedAt: new Date(row.updated_at),
+    walletId: row.wallet_id || "",
+    priority: row.priority || "medium",
+    imageUrl: row.image_url || "",
+    isHistorical: !!row.is_historical,
+    categoryName: row.category_name || "",
+  };
+}
+
+function mapFuturePurchase(row: any): FuturePurchase {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    itemName: row.item_name,
+    expectedPrice: Number(row.expected_price),
+    currency: row.currency,
+    expectedDate: row.expected_date || "",
+    priority: row.priority,
+    categoryId: row.category_id || "",
+    notes: row.notes || "",
+    isPurchased: !!row.is_purchased,
+    matchedExpenseId: row.matched_expense_id || "",
+    createdAt: new Date(row.created_at),
+    updatedAt: new Date(row.updated_at),
+  };
+}
+
+function mapSavingsGroup(row: any): SavingsGroup {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    name: row.name,
+    currency: row.currency,
+    totalAmount: Number(row.total_amount),
+    numMembers: Number(row.num_members),
+    paymentPerMember: Number(row.payment_per_member),
+    paymentCycle: row.payment_cycle,
+    startDate: row.start_date,
+    members: (row.members || []).map((m: any) => ({
+      id: m.id,
+      name: m.name,
+      phone: m.phone || "",
+      notes: m.notes || "",
+      isReceived: !!m.isReceived,
+      receiveCycleIndex: Number(m.receiveCycleIndex ?? -1),
+      paidCycles: m.paidCycles || [],
+    })),
+    receivingOrder: row.receiving_order || [],
+    isArchived: !!row.is_archived,
+    createdAt: new Date(row.created_at),
+    updatedAt: new Date(row.updated_at),
+  };
+}
+
+function mapNotification(row: any): JamiyaNotification {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    titleAr: row.title_ar,
+    titleEn: row.title_en,
+    messageAr: row.message_ar,
+    messageEn: row.message_en,
+    type: row.type,
+    date: new Date(row.date),
+    isRead: !!row.is_read,
+    createdAt: new Date(row.created_at),
+  };
+}
+
+function mapWallet(row: any): Wallet {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    name: row.name,
+    initialBalance: Number(row.initial_balance),
+    currency: row.currency,
+    color: row.color || "slate",
+    icon: row.icon || "Wallet",
+    isHidden: row.is_hidden,
+    createdAt: new Date(row.created_at),
+    updatedAt: new Date(row.updated_at),
+  };
+}
+
+function mapComment(row: any): TransactionComment {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    transactionId: row.transaction_id,
+    transactionType: row.transaction_type,
+    userName: row.user_name || "",
+    userEmail: row.user_email || "",
+    text: row.text || "",
+    createdAt: new Date(row.created_at),
+  };
+}
+
+function mapTrash(row: any): TrashItem {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    deletedAt: new Date(row.deleted_at),
+    deletedBy: row.deleted_by || "",
+    originalId: row.original_id,
+    originalType: row.original_type,
+    originalData: row.original_data,
+  };
+}
+
 interface AppContextProps {
-  user: FirebaseUser | null;
+  user: SupabaseUser | null;
   profile: UserProfile | null;
   loading: boolean;
   language: "ar" | "en";
@@ -72,7 +236,9 @@ interface AppContextProps {
   deleteComment: (id: string) => Promise<void>;
 
   // Auth Functions
-  loginWithGoogle: () => Promise<void>;
+  loginWithPassword: (email: string, password: string) => Promise<void>;
+  loginWithPasskey: () => Promise<void>;
+  registerPasskey: () => Promise<void>;
   logout: () => Promise<void>;
 
   // Preferences Update
@@ -289,7 +455,7 @@ const AppContext = createContext<AppContextProps | undefined>(undefined);
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
-  const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [user, setUser] = useState<SupabaseUser | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
 
@@ -361,560 +527,177 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     localStorage.setItem("aziz_hide_historical", val ? "true" : "false");
   };
 
-  // Seeding Default Base Categories when user triggers first signup
-  const seedDefaultCategories = async (uid: string) => {
-    const path = "categories";
-    const presets = [
-      // Income
-      {
-        name: "راتب / Salary",
-        type: "income",
-        color: "emerald",
-        icon: "Wallet",
-      },
-      {
-        name: "عمل إضافي أو مستقل / Side Hustle",
-        type: "income",
-        color: "teal",
-        icon: "Coins",
-      },
-      {
-        name: "استثمارات وعوائد / Investments",
-        type: "income",
-        color: "indigo",
-        icon: "TrendingUp",
-      },
-      {
-        name: "مدخرات أو هدايا / Other Savings",
-        type: "income",
-        color: "cyan",
-        icon: "Gift",
-      },
+  // Fetch every table once (no realtime — see migration plan for why) and
+  // populate local state. Sort orders mirror the old onSnapshot listeners.
+  const fetchAllData = async () => {
+    const [
+      categoriesRes,
+      incomesRes,
+      expensesRes,
+      purchasesRes,
+      groupsRes,
+      notifyRes,
+      walletsRes,
+      commentsRes,
+      trashRes,
+    ] = await Promise.all([
+      supabase.from("categories").select("*"),
+      supabase.from("incomes").select("*"),
+      supabase.from("expenses").select("*"),
+      supabase.from("future_purchases").select("*"),
+      supabase.from("savings_groups").select("*"),
+      supabase.from("notifications").select("*"),
+      supabase.from("wallets").select("*"),
+      supabase.from("comments").select("*"),
+      supabase.from("trash").select("*"),
+    ]);
 
-      // Expenses
-      {
-        name: "إيجار وسكن / Rent & Housing",
-        type: "expense",
-        color: "rose",
-        icon: "Home",
-      },
-      {
-        name: "تموين ومواد غذائية / Groceries & Food",
-        type: "expense",
-        color: "amber",
-        icon: "ShoppingBag",
-      },
-      {
-        name: "فواتير وخدمات / Bills & Utilities",
-        type: "expense",
-        color: "sky",
-        icon: "Zap",
-      },
-      {
-        name: "مواصلات ووقود / Fuel & Cars",
-        type: "expense",
-        color: "orange",
-        icon: "Car",
-      },
-      {
-        name: "علاج وصحة / Medical & Healthcare",
-        type: "expense",
-        color: "red",
-        icon: "Heart",
-      },
-      {
-        name: "ترفيه وعائلة / Recreation & Family",
-        type: "expense",
-        color: "purple",
-        icon: "Smile",
-      },
-      {
-        name: "دراسة وتدريب / Studies & Training",
-        type: "expense",
-        color: "violet",
-        icon: "BookOpen",
-      },
-      {
-        name: "نفقات أخرى / Other Expenses",
-        type: "expense",
-        color: "slate",
-        icon: "BadgeAlert",
-      },
+    if (categoriesRes.error) logSupabaseError(categoriesRes.error, "categories/list");
+    else setCategories((categoriesRes.data || []).map(mapCategory));
 
-      // Wishlist Purchases Planning
-      {
-        name: "إلكترونيات وهواتف / Electronics & Phones",
-        type: "purchase",
-        color: "indigo",
-        icon: "Smartphone",
-      },
-      {
-        name: "سيارات وصيانة / Vehicles & Auto",
-        type: "purchase",
-        color: "amber",
-        icon: "Key",
-      },
-      {
-        name: "منزل وأثاث / Home & Furniture",
-        type: "purchase",
-        color: "emerald",
-        icon: "Bed",
-      },
-      {
-        name: "سفر وتجوال / Travel & Trips",
-        type: "purchase",
-        color: "purple",
-        icon: "Compass",
-      },
-      {
-        name: "أخرى / Other Purchases",
-        type: "purchase",
-        color: "slate",
-        icon: "Box",
-      },
-    ];
+    if (incomesRes.error) logSupabaseError(incomesRes.error, "incomes/list");
+    else setIncomes((incomesRes.data || []).map(mapIncome).sort((x, y) => y.date.localeCompare(x.date)));
 
-    try {
-      for (const p of presets) {
-        const docId = `${uid}_${p.type}_${p.color}_${Math.random().toString(36).substring(2, 7)}`;
-        await setDoc(doc(db, path, docId), {
-          id: docId,
-          userId: uid,
-          name: p.name,
-          type: p.type,
-          color: p.color,
-          icon: p.icon,
-          isArchived: false,
-          createdAt: serverTimestamp(),
-        });
-      }
-    } catch (e) {
-      handleFirestoreError(e, OperationType.WRITE, path);
-    }
+    if (expensesRes.error) logSupabaseError(expensesRes.error, "expenses/list");
+    else setExpenses((expensesRes.data || []).map(mapExpense).sort((x, y) => y.date.localeCompare(x.date)));
+
+    if (purchasesRes.error) logSupabaseError(purchasesRes.error, "future_purchases/list");
+    else setPlannedPurchases((purchasesRes.data || []).map(mapFuturePurchase));
+
+    if (groupsRes.error) logSupabaseError(groupsRes.error, "savings_groups/list");
+    else setSavingsGroups((groupsRes.data || []).map(mapSavingsGroup));
+
+    if (notifyRes.error) logSupabaseError(notifyRes.error, "notifications/list");
+    else
+      setNotifications(
+        (notifyRes.data || [])
+          .map(mapNotification)
+          .sort((x, y) => y.createdAt.getTime() - x.createdAt.getTime()),
+      );
+
+    if (walletsRes.error) logSupabaseError(walletsRes.error, "wallets/list");
+    else setWallets((walletsRes.data || []).map(mapWallet));
+
+    if (commentsRes.error) logSupabaseError(commentsRes.error, "comments/list");
+    else
+      setComments(
+        (commentsRes.data || [])
+          .map(mapComment)
+          .sort((x, y) => x.createdAt.getTime() - y.createdAt.getTime()),
+      );
+
+    if (trashRes.error) logSupabaseError(trashRes.error, "trash/list");
+    else
+      setTrashItems(
+        (trashRes.data || [])
+          .map(mapTrash)
+          .sort((x, y) => y.deletedAt.getTime() - x.deletedAt.getTime()),
+      );
   };
 
-  // Auth Subscription
+  const refetchOne = async <T,>(
+    table: string,
+    mapper: (row: any) => T,
+    setter: (items: T[]) => void,
+    sort?: (a: T, b: T) => number,
+  ) => {
+    const { data, error } = await supabase.from(table).select("*");
+    if (error) {
+      logSupabaseError(error, `${table}/refetch`);
+      return;
+    }
+    const items = (data || []).map(mapper);
+    setter(sort ? items.sort(sort) : items);
+  };
+
+  const loadProfileAndData = async (uid: string) => {
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", uid)
+      .single();
+    if (error) {
+      logSupabaseError(error, "profiles/get");
+    } else if (data) {
+      const loadedProfile = mapProfile(data);
+      setProfile(loadedProfile);
+      setLanguage(loadedProfile.preferredLanguage);
+      setCurrency(loadedProfile.preferredCurrency);
+      setExchangeRate(loadedProfile.exchangeRateUSD_LYD);
+    }
+    await fetchAllData();
+  };
+
+  const clearAllData = () => {
+    setProfile(null);
+    setCategories([]);
+    setIncomes([]);
+    setExpenses([]);
+    setPlannedPurchases([]);
+    setSavingsGroups([]);
+    setNotifications([]);
+    setWallets([]);
+    setComments([]);
+    setTrashItems([]);
+  };
+
+  // Auth bootstrap + subscription
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      setLoading(true);
-      if (firebaseUser) {
-        setUser(firebaseUser);
+    let active = true;
 
-        // Fetch or create customer profile
-        const userDocRef = doc(db, "users", firebaseUser.uid);
-        try {
-          const docSnap = await getDoc(userDocRef);
-
-          if (docSnap.exists()) {
-            const data = docSnap.data();
-            const loadedProfile: UserProfile = {
-              uid: data.uid,
-              name: data.name,
-              email: data.email,
-              preferredLanguage: data.preferredLanguage || "ar",
-              preferredCurrency: data.preferredCurrency || "LYD",
-              exchangeRateUSD_LYD: data.exchangeRateUSD_LYD || 6.15,
-              defaultExpenseWalletId: data.defaultExpenseWalletId,
-              createdAt: data.createdAt?.toDate() || new Date(),
-              updatedAt: data.updatedAt?.toDate() || new Date(),
-            };
-            setProfile(loadedProfile);
-            setLanguage(loadedProfile.preferredLanguage);
-            setCurrency(loadedProfile.preferredCurrency);
-            setExchangeRate(loadedProfile.exchangeRateUSD_LYD);
-          } else {
-            // Profile does not exist yet. Seed new user profile
-            const freshProfile: UserProfile = {
-              uid: firebaseUser.uid,
-              name: firebaseUser.displayName || "مستخدم عزيز",
-              email: firebaseUser.email || "",
-              preferredLanguage: "ar",
-              preferredCurrency: "LYD",
-              exchangeRateUSD_LYD: 6.15,
-              createdAt: new Date(),
-              updatedAt: new Date(),
-            };
-
-            await setDoc(userDocRef, {
-              uid: freshProfile.uid,
-              name: freshProfile.name,
-              email: freshProfile.email,
-              preferredLanguage: freshProfile.preferredLanguage,
-              preferredCurrency: freshProfile.preferredCurrency,
-              exchangeRateUSD_LYD: freshProfile.exchangeRateUSD_LYD,
-              createdAt: serverTimestamp(),
-              updatedAt: serverTimestamp(),
-            });
-
-            setProfile(freshProfile);
-
-            // Seed base system categories immediately for instant usability
-            await seedDefaultCategories(firebaseUser.uid);
-          }
-        } catch (error) {
-          handleFirestoreError(
-            error,
-            OperationType.GET,
-            `users/${firebaseUser.uid}`,
-          );
-        }
-      } else {
-        setUser(null);
-        setProfile(null);
-        // Clear lists
-        setCategories([]);
-        setIncomes([]);
-        setExpenses([]);
-        setPlannedPurchases([]);
-        setSavingsGroups([]);
-        setNotifications([]);
-        setWallets([]);
-        setTrashItems([]);
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (!active) return;
+      if (session?.user) {
+        setUser(session.user);
+        await loadProfileAndData(session.user.id);
       }
       setLoading(false);
     });
 
-    return () => unsubscribe();
-  }, []);
-
-  // Listen to User Core Lists
-  useEffect(() => {
-    if (!user) return;
-
-    const uid = user.uid;
-
-    // A. Listen categories
-    const qCategories = query(
-      collection(db, "categories"),
-      where("userId", "==", uid),
-    );
-    const unsubCategories = onSnapshot(
-      qCategories,
-      (snap) => {
-        const items: Category[] = [];
-        snap.forEach((d) => {
-          const raw = d.data();
-          items.push({
-            id: raw.id,
-            userId: raw.userId,
-            name: raw.name,
-            type: raw.type,
-            color: raw.color,
-            icon: raw.icon,
-            isArchived: !!raw.isArchived,
-            parentId: raw.parentId || null,
-            createdAt: raw.createdAt?.toDate() || new Date(),
-          });
-        });
-        setCategories(items);
-      },
-      (err) => {
-        handleFirestoreError(err, OperationType.LIST, "categories");
-      },
-    );
-
-    // B. Listen Incomes
-    const qIncomes = query(
-      collection(db, "incomes"),
-      where("userId", "==", uid),
-    );
-    const unsubIncomes = onSnapshot(
-      qIncomes,
-      (snap) => {
-        const items: Income[] = [];
-        snap.forEach((d) => {
-          const raw = d.data();
-          items.push({
-            id: raw.id,
-            userId: raw.userId,
-            amount: Number(raw.amount),
-            currency: raw.currency,
-            title: raw.title,
-            date: raw.date,
-            categoryId: raw.categoryId,
-            notes: raw.notes || "",
-            createdAt: raw.createdAt?.toDate() || new Date(),
-            updatedAt: raw.updatedAt?.toDate() || new Date(),
-            walletId: raw.walletId || "",
-            priority: raw.priority || "medium",
-            imageUrl: raw.imageUrl || "",
-            isHistorical: !!raw.isHistorical,
-            categoryName: raw.categoryName || "",
-            isOpening: !!raw.isOpening,
-          });
-        });
-        setIncomes(items.sort((x, y) => y.date.localeCompare(x.date)));
-      },
-      (err) => {
-        handleFirestoreError(err, OperationType.LIST, "incomes");
-      },
-    );
-
-    // C. Listen Expenses
-    const qExpenses = query(
-      collection(db, "expenses"),
-      where("userId", "==", uid),
-    );
-    const unsubExpenses = onSnapshot(
-      qExpenses,
-      (snap) => {
-        const items: Expense[] = [];
-        snap.forEach((d) => {
-          const raw = d.data();
-          items.push({
-            id: raw.id,
-            userId: raw.userId,
-            amount: raw.isRefunded ? 0 : Number(raw.amount),
-            originalAmount: raw.originalAmount !== undefined ? Number(raw.originalAmount) : Number(raw.amount),
-            isRefunded: !!raw.isRefunded,
-            refundedAt: raw.refundedAt || undefined,
-            isDue: !!raw.isDue,
-            currency: raw.currency,
-            title: raw.title,
-            date: raw.date,
-            categoryId: raw.categoryId,
-            notes: raw.notes || "",
-            createdAt: raw.createdAt?.toDate() || new Date(),
-            updatedAt: raw.updatedAt?.toDate() || new Date(),
-            walletId: raw.walletId || "",
-            priority: raw.priority || "medium",
-            imageUrl: raw.imageUrl || "",
-            isHistorical: !!raw.isHistorical,
-            categoryName: raw.categoryName || "",
-          });
-        });
-        setExpenses(items.sort((x, y) => y.date.localeCompare(x.date)));
-      },
-      (err) => {
-        handleFirestoreError(err, OperationType.LIST, "expenses");
-      },
-    );
-
-    // D. Listen Wishlist Planned Purchases
-    const qPurchases = query(
-      collection(db, "futurePurchases"),
-      where("userId", "==", uid),
-    );
-    const unsubPurchases = onSnapshot(
-      qPurchases,
-      (snap) => {
-        const items: FuturePurchase[] = [];
-        snap.forEach((d) => {
-          const raw = d.data();
-          items.push({
-            id: raw.id,
-            userId: raw.userId,
-            itemName: raw.itemName,
-            expectedPrice: Number(raw.expectedPrice),
-            currency: raw.currency,
-            expectedDate: raw.expectedDate || "",
-            priority: raw.priority,
-            categoryId: raw.categoryId || "",
-            notes: raw.notes || "",
-            isPurchased: !!raw.isPurchased,
-            matchedExpenseId: raw.matchedExpenseId || "",
-            createdAt: raw.createdAt?.toDate() || new Date(),
-            updatedAt: raw.updatedAt?.toDate() || new Date(),
-          });
-        });
-        setPlannedPurchases(items);
-      },
-      (err) => {
-        handleFirestoreError(err, OperationType.LIST, "futurePurchases");
-      },
-    );
-
-    // E. Listen Rotating Jamiya Savings Groups
-    const qGroups = query(
-      collection(db, "savingsGroups"),
-      where("userId", "==", uid),
-    );
-    const unsubGroups = onSnapshot(
-      qGroups,
-      (snap) => {
-        const items: SavingsGroup[] = [];
-        snap.forEach((d) => {
-          const raw = d.data();
-          // Convert dates in nested payment histories inside members if necessary
-          items.push({
-            id: raw.id,
-            userId: raw.userId,
-            name: raw.name,
-            currency: raw.currency,
-            totalAmount: Number(raw.totalAmount),
-            numMembers: Number(raw.numMembers),
-            paymentPerMember: Number(raw.paymentPerMember),
-            paymentCycle: raw.paymentCycle,
-            startDate: raw.startDate,
-            members: (raw.members || []).map((m: any) => ({
-              id: m.id,
-              name: m.name,
-              phone: m.phone || "",
-              notes: m.notes || "",
-              isReceived: !!m.isReceived,
-              receiveCycleIndex: Number(m.receiveCycleIndex ?? -1),
-              paidCycles: m.paidCycles || [], // array of cycle indexes
-            })),
-            receivingOrder: raw.receivingOrder || [],
-            isArchived: !!raw.isArchived,
-            createdAt: raw.createdAt?.toDate() || new Date(),
-            updatedAt: raw.updatedAt?.toDate() || new Date(),
-          });
-        });
-        setSavingsGroups(items);
-      },
-      (err) => {
-        handleFirestoreError(err, OperationType.LIST, "savingsGroups");
-      },
-    );
-
-    // F. Listen In-App Notifications
-    const qNotify = query(
-      collection(db, "notifications"),
-      where("userId", "==", uid),
-    );
-    const unsubNotify = onSnapshot(
-      qNotify,
-      (snap) => {
-        const items: JamiyaNotification[] = [];
-        snap.forEach((d) => {
-          const raw = d.data();
-          items.push({
-            id: raw.id,
-            userId: raw.userId,
-            titleAr: raw.titleAr,
-            titleEn: raw.titleEn,
-            messageAr: raw.messageAr,
-            messageEn: raw.messageEn,
-            type: raw.type,
-            date: raw.date?.toDate() || new Date(),
-            isRead: !!raw.isRead,
-            createdAt: raw.createdAt?.toDate() || new Date(),
-          });
-        });
-        setNotifications(
-          items.sort((x, y) => y.createdAt.getTime() - x.createdAt.getTime()),
-        );
-      },
-      (err) => {
-        handleFirestoreError(err, OperationType.LIST, "notifications");
-      },
-    );
-
-    // G. Listen Wallets
-    const qWallets = query(
-      collection(db, "wallets"),
-      where("userId", "==", uid),
-    );
-    const unsubWallets = onSnapshot(
-      qWallets,
-      (snap) => {
-        const items: Wallet[] = [];
-        snap.forEach((d) => {
-          const raw = d.data();
-          items.push({
-            id: raw.id,
-            userId: raw.userId,
-            name: raw.name,
-            initialBalance: Number(raw.initialBalance),
-            currency: raw.currency,
-            color: raw.color || "slate",
-            icon: raw.icon || "Wallet",
-            isHidden: raw.isHidden,
-            createdAt: raw.createdAt?.toDate() || new Date(),
-            updatedAt: raw.updatedAt?.toDate() || new Date(),
-          });
-        });
-        setWallets(items);
-      },
-      (err) => {
-        handleFirestoreError(err, OperationType.LIST, "wallets");
-      },
-    );
-
-    // H. Listen Comments
-    const qComments = query(
-      collection(db, "comments"),
-      where("userId", "==", uid),
-    );
-    const unsubComments = onSnapshot(
-      qComments,
-      (snap) => {
-        const items: TransactionComment[] = [];
-        snap.forEach((d) => {
-          const raw = d.data();
-          items.push({
-            id: raw.id,
-            userId: raw.userId,
-            transactionId: raw.transactionId,
-            transactionType: raw.transactionType,
-            userName: raw.userName || "",
-            userEmail: raw.userEmail || "",
-            text: raw.text || "",
-            createdAt: raw.createdAt?.toDate() || new Date(),
-          });
-        });
-        setComments(items.sort((x, y) => x.createdAt.getTime() - y.createdAt.getTime()));
-      },
-      (err) => {
-        handleFirestoreError(err, OperationType.LIST, "comments");
-      },
-    );
-
-    // I. Listen Trash Items
-    const qTrash = query(
-      collection(db, "trash"),
-      where("userId", "==", uid),
-    );
-    const unsubTrash = onSnapshot(
-      qTrash,
-      (snap) => {
-        const items: TrashItem[] = [];
-        snap.forEach((d) => {
-          const raw = d.data();
-          items.push({
-            id: raw.id,
-            userId: raw.userId,
-            deletedAt: raw.deletedAt?.toDate() || new Date(),
-            deletedBy: raw.deletedBy || "",
-            originalId: raw.originalId,
-            originalType: raw.originalType,
-            originalData: raw.originalData,
-          });
-        });
-        setTrashItems(items.sort((x, y) => y.deletedAt.getTime() - x.deletedAt.getTime()));
-      },
-      (err) => {
-        handleFirestoreError(err, OperationType.LIST, "trash");
+    const { data: authListener } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
+        if (event === "SIGNED_IN" && session?.user) {
+          setLoading(true);
+          setUser(session.user);
+          await loadProfileAndData(session.user.id);
+          setLoading(false);
+        } else if (event === "SIGNED_OUT") {
+          setUser(null);
+          clearAllData();
+        }
       },
     );
 
     return () => {
-      unsubCategories();
-      unsubIncomes();
-      unsubExpenses();
-      unsubPurchases();
-      unsubGroups();
-      unsubNotify();
-      unsubWallets();
-      unsubComments();
-      unsubTrash();
+      active = false;
+      authListener.subscription.unsubscribe();
     };
-  }, [user]);
+  }, []);
 
   // Auth Operations
-  const loginWithGoogle = async () => {
-    try {
-      const provider = new GoogleAuthProvider();
-      await signInWithPopup(auth, provider);
-    } catch (e) {
-      console.error("Core Sign-In error:", e);
-      throw e;
-    }
+  const loginWithPassword = async (email: string, password: string) => {
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) throw error;
+  };
+
+  // WebAuthn passkey ("finger touch") sign-in — requires Passkeys enabled on
+  // the Supabase project (Dashboard -> Authentication -> Passkeys). Throws
+  // Supabase's own descriptive error otherwise, surfaced to the caller as-is.
+  const loginWithPasskey = async () => {
+    const { error } = await supabase.auth.signInWithPasskey();
+    if (error) throw error;
+  };
+
+  // Registers a passkey for the current device against the already-signed-in
+  // user (password login happens first, then the user opts into fingerprint
+  // unlock for that device).
+  const registerPasskey = async () => {
+    const { error } = await supabase.auth.registerPasskey();
+    if (error) throw error;
   };
 
   const logout = async () => {
-    await firebaseSignOut(auth);
+    await supabase.auth.signOut();
   };
 
   // Preference Updates
@@ -924,15 +707,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     rate: number,
   ) => {
     if (!user) return;
-    const path = `users/${user.uid}`;
     try {
-      const userRef = doc(db, "users", user.uid);
-      await updateDoc(userRef, {
-        preferredLanguage: lang,
-        preferredCurrency: curr,
-        exchangeRateUSD_LYD: rate,
-        updatedAt: serverTimestamp(),
-      });
+      const { error } = await supabase
+        .from("profiles")
+        .update({
+          preferred_language: lang,
+          preferred_currency: curr,
+          exchange_rate_usd_lyd: rate,
+        })
+        .eq("id", user.id);
+      if (error) throw error;
       setLanguage(lang);
       setCurrency(curr);
       setExchangeRate(rate);
@@ -946,32 +730,34 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
         });
       }
     } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, path);
+      logSupabaseError(e, `profiles/${user.id}`);
     }
   };
 
   const updateProfile = async (data: { name: string }) => {
     if (!user) return;
     try {
-      await updateDoc(doc(db, "users", user.uid), {
-        name: data.name,
-        updatedAt: serverTimestamp(),
-      });
+      const { error } = await supabase
+        .from("profiles")
+        .update({ name: data.name })
+        .eq("id", user.id);
+      if (error) throw error;
       if (profile) {
         setProfile({ ...profile, name: data.name, updatedAt: new Date() });
       }
     } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, `users/${user.uid}`);
+      logSupabaseError(e, `profiles/${user.id}`);
     }
   };
 
   const setDefaultExpenseWallet = async (walletId: string) => {
     if (!user) return;
     try {
-      await updateDoc(doc(db, "users", user.uid), {
-        defaultExpenseWalletId: walletId || deleteField(),
-        updatedAt: serverTimestamp(),
-      });
+      const { error } = await supabase
+        .from("profiles")
+        .update({ default_expense_wallet_id: walletId || null })
+        .eq("id", user.id);
+      if (error) throw error;
       if (profile) {
         setProfile({
           ...profile,
@@ -980,23 +766,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
         });
       }
     } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, `users/${user.uid}`);
+      logSupabaseError(e, `profiles/${user.id}`);
     }
   };
 
   const changeLanguage = async (lang: "ar" | "en") => {
     setLanguage(lang);
     if (user) {
-      await updateDoc(doc(db, "users", user.uid), {
-        preferredLanguage: lang,
-        updatedAt: serverTimestamp(),
-      });
-      if (profile) {
-        setProfile({
-          ...profile,
-          preferredLanguage: lang,
-          updatedAt: new Date(),
-        });
+      const { error } = await supabase
+        .from("profiles")
+        .update({ preferred_language: lang })
+        .eq("id", user.id);
+      if (error) logSupabaseError(error, `profiles/${user.id}`);
+      else if (profile) {
+        setProfile({ ...profile, preferredLanguage: lang, updatedAt: new Date() });
       }
     }
   };
@@ -1004,16 +787,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
   const changeCurrency = async (curr: "LYD" | "USD") => {
     setCurrency(curr);
     if (user) {
-      await updateDoc(doc(db, "users", user.uid), {
-        preferredCurrency: curr,
-        updatedAt: serverTimestamp(),
-      });
-      if (profile) {
-        setProfile({
-          ...profile,
-          preferredCurrency: curr,
-          updatedAt: new Date(),
-        });
+      const { error } = await supabase
+        .from("profiles")
+        .update({ preferred_currency: curr })
+        .eq("id", user.id);
+      if (error) logSupabaseError(error, `profiles/${user.id}`);
+      else if (profile) {
+        setProfile({ ...profile, preferredCurrency: curr, updatedAt: new Date() });
       }
     }
   };
@@ -1021,16 +801,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
   const changeExchangeRate = async (rate: number) => {
     setExchangeRate(rate);
     if (user) {
-      await updateDoc(doc(db, "users", user.uid), {
-        exchangeRateUSD_LYD: rate,
-        updatedAt: serverTimestamp(),
-      });
-      if (profile) {
-        setProfile({
-          ...profile,
-          exchangeRateUSD_LYD: rate,
-          updatedAt: new Date(),
-        });
+      const { error } = await supabase
+        .from("profiles")
+        .update({ exchange_rate_usd_lyd: rate })
+        .eq("id", user.id);
+      if (error) logSupabaseError(error, `profiles/${user.id}`);
+      else if (profile) {
+        setProfile({ ...profile, exchangeRateUSD_LYD: rate, updatedAt: new Date() });
       }
     }
   };
@@ -1044,37 +821,44 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     parentId?: string | null,
   ): Promise<string> => {
     if (!user) throw new Error("Unauthorized");
-    const path = "categories";
-    const id = `${user.uid}_${Math.random().toString(36).substring(2, 9)}`;
-    try {
-      await setDoc(doc(db, path, id), {
-        id,
-        userId: user.uid,
+    const { data, error } = await supabase
+      .from("categories")
+      .insert({
+        user_id: user.id,
         name,
         type,
         color,
         icon,
-        isArchived: false,
-        parentId: parentId || null,
-        createdAt: serverTimestamp(),
-      });
-      return id;
-    } catch (e) {
-      handleFirestoreError(e, OperationType.CREATE, path);
+        is_archived: false,
+        parent_id: parentId || null,
+      })
+      .select()
+      .single();
+    if (error) {
+      logSupabaseError(error, "categories/create");
+      throw error;
     }
+    const created = mapCategory(data);
+    setCategories((prev) => [...prev, created]);
+    return created.id;
   };
 
   const archiveCategory = async (id: string, isArchived: boolean) => {
-    const path = `categories/${id}`;
     try {
-      await updateDoc(doc(db, "categories", id), { isArchived });
+      const { error } = await supabase
+        .from("categories")
+        .update({ is_archived: isArchived })
+        .eq("id", id);
+      if (error) throw error;
+      setCategories((prev) =>
+        prev.map((c) => (c.id === id ? { ...c, isArchived } : c)),
+      );
     } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, path);
+      logSupabaseError(e, `categories/${id}`);
     }
   };
 
   const deleteCategory = async (id: string) => {
-    const path = `categories/${id}`;
     // Check if category has dependent incomes or expenses
     const usedInIncomes = incomes.some((inc) => inc.categoryId === id);
     const usedInExpenses = expenses.some((exp) => exp.categoryId === id);
@@ -1082,9 +866,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
       throw new Error(t.cannotDeleteUsed);
     }
     try {
-      await deleteDoc(doc(db, "categories", id));
+      const { error } = await supabase.from("categories").delete().eq("id", id);
+      if (error) throw error;
+      setCategories((prev) => prev.filter((c) => c.id !== id));
     } catch (e) {
-      handleFirestoreError(e, OperationType.DELETE, path);
+      logSupabaseError(e, `categories/${id}`);
     }
   };
 
@@ -1097,19 +883,52 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     isArchived: boolean,
     parentId?: string | null,
   ) => {
-    const path = `categories/${id}`;
     try {
-      await updateDoc(doc(db, "categories", id), {
-        name,
-        type,
-        color,
-        icon,
-        isArchived,
-        parentId: parentId || null,
-        updatedAt: serverTimestamp(),
-      });
+      const { error } = await supabase
+        .from("categories")
+        .update({ name, type, color, icon, is_archived: isArchived, parent_id: parentId || null })
+        .eq("id", id);
+      if (error) throw error;
+      setCategories((prev) =>
+        prev.map((c) =>
+          c.id === id
+            ? { ...c, name, type, color, icon, isArchived, parentId: parentId || null }
+            : c,
+        ),
+      );
     } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, path);
+      logSupabaseError(e, `categories/${id}`);
+    }
+  };
+
+  // NOTIFICATION MANAGEMENT (declared early — used by many mutation functions below)
+  const addNotificationArEn = async (
+    titleAr: string,
+    titleEn: string,
+    messageAr: string,
+    messageEn: string,
+    type: "general" | "saving_group" | "purchase" | "budget",
+  ) => {
+    if (!user) return;
+    try {
+      const { data, error } = await supabase
+        .from("notifications")
+        .insert({
+          user_id: user.id,
+          title_ar: titleAr,
+          title_en: titleEn,
+          message_ar: messageAr,
+          message_en: messageEn,
+          type,
+          is_read: false,
+        })
+        .select()
+        .single();
+      if (error) throw error;
+      const created = mapNotification(data);
+      setNotifications((prev) => [created, ...prev]);
+    } catch (e) {
+      logSupabaseError(e, "notifications/create");
     }
   };
 
@@ -1129,34 +948,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     isOpening?: boolean,
   ) => {
     if (!user) return;
-    const path = "incomes";
-    const id = `inc_${Math.random().toString(36).substring(2, 9)}`;
-    const payload: Omit<Income, "createdAt" | "updatedAt"> & {
-      createdAt: any;
-      updatedAt: any;
-      isOpening?: boolean;
-    } = {
-      id,
-      userId: user.uid,
-      amount,
-      currency,
-      title,
-      date,
-      categoryId,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    };
-    if (notes) payload.notes = notes;
-    if (imageUrl) payload.imageUrl = imageUrl;
-    if (priority) payload.priority = priority;
-    if (walletId) payload.walletId = walletId;
-    if (isHistorical !== undefined) payload.isHistorical = isHistorical;
-    if (categoryName !== undefined) payload.categoryName = categoryName;
-    if (isOpening !== undefined) payload.isOpening = isOpening;
     try {
-      await setDoc(doc(db, "incomes", id), payload);
+      const { data, error } = await supabase
+        .from("incomes")
+        .insert({
+          user_id: user.id,
+          amount,
+          currency,
+          title,
+          date,
+          category_id: categoryId,
+          notes: notes || null,
+          image_url: imageUrl || null,
+          priority: priority || null,
+          wallet_id: walletId || null,
+          is_historical: isHistorical ?? null,
+          category_name: categoryName ?? null,
+          is_opening: isOpening ?? null,
+        })
+        .select()
+        .single();
+      if (error) throw error;
+      const created = mapIncome(data);
+      setIncomes((prev) => [created, ...prev].sort((x, y) => y.date.localeCompare(x.date)));
     } catch (e) {
-      handleFirestoreError(e, OperationType.CREATE, path);
+      logSupabaseError(e, "incomes/create");
     }
   };
 
@@ -1172,70 +988,58 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     priority?: "low" | "medium" | "high",
     walletId?: string,
   ) => {
-    const path = `incomes/${id}`;
-    const payload: Record<string, any> = {
-      amount,
-      currency,
-      title,
-      date,
-      categoryId,
-      updatedAt: serverTimestamp(),
-    };
-    if (notes !== undefined) payload.notes = notes;
-    if (imageUrl !== undefined) payload.imageUrl = imageUrl;
-    if (priority !== undefined) payload.priority = priority;
-    if (walletId !== undefined) payload.walletId = walletId;
     try {
-      await updateDoc(doc(db, "incomes", id), payload);
+      const { data, error } = await supabase
+        .from("incomes")
+        .update({
+          amount,
+          currency,
+          title,
+          date,
+          category_id: categoryId,
+          notes: notes ?? null,
+          image_url: imageUrl ?? null,
+          priority: priority ?? null,
+          wallet_id: walletId ?? null,
+        })
+        .eq("id", id)
+        .select()
+        .single();
+      if (error) throw error;
+      const updated = mapIncome(data);
+      setIncomes((prev) =>
+        prev.map((i) => (i.id === id ? updated : i)).sort((x, y) => y.date.localeCompare(x.date)),
+      );
     } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, path);
+      logSupabaseError(e, `incomes/${id}`);
     }
   };
 
   const deleteIncome = async (id: string) => {
-    const path = `incomes/${id}`;
     if (!user) return;
     try {
-      const item = incomes.find(i => i.id === id);
+      const item = incomes.find((i) => i.id === id);
       if (!item) return;
 
-      const trashId = `trash_${id}`;
-      await setDoc(doc(db, "trash", trashId), {
-        id: trashId,
-        userId: user.uid,
-        deletedAt: serverTimestamp(),
-        deletedBy: user.email || "User",
-        originalId: id,
-        originalType: "income",
-        originalData: {
-          id: item.id,
-          userId: item.userId,
-          amount: item.amount,
-          currency: item.currency,
-          title: item.title,
-          date: item.date,
-          categoryId: item.categoryId,
-          notes: item.notes || "",
-          walletId: item.walletId || "",
-          priority: item.priority || "medium",
-          imageUrl: item.imageUrl || "",
-          isHistorical: !!item.isHistorical,
-          categoryName: item.categoryName || "",
-          isOpening: !!item.isOpening,
-        }
+      const { error } = await supabase.rpc("move_to_trash", {
+        p_type: "income",
+        p_id: id,
+        p_deleted_by: user.email || "User",
       });
+      if (error) throw error;
 
-      await deleteDoc(doc(db, "incomes", id));
+      setIncomes((prev) => prev.filter((i) => i.id !== id));
+      await refetchOne("trash", mapTrash, setTrashItems, (a, b) => b.deletedAt.getTime() - a.deletedAt.getTime());
 
       await addNotificationArEn(
         "تم نقل عنصر إلى السلة",
         "Moved to Trash",
         `تم نقل الوارد المالي "${item.title}" إلى سلة المحذوفات. متاح للاستعادة لمدة 3 أيام.`,
         `Successfully moved income "${item.title}" to Trash. It remains recoverable for 3 days.`,
-        "general"
+        "general",
       );
     } catch (e) {
-      handleFirestoreError(e, OperationType.DELETE, path);
+      logSupabaseError(e, `incomes/${id}`);
     }
   };
 
@@ -1254,45 +1058,42 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     categoryName?: string,
   ): Promise<string> => {
     if (!user) throw new Error("Unauthorized");
-    const path = "expenses";
-    const id = `exp_${Math.random().toString(36).substring(2, 9)}`;
-    const payload: Omit<Expense, "createdAt" | "updatedAt"> & {
-      createdAt: any;
-      updatedAt: any;
-    } = {
-      id,
-      userId: user.uid,
-      amount,
-      currency,
-      title,
-      date,
-      categoryId,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    };
-    if (notes) payload.notes = notes;
-    if (imageUrl) payload.imageUrl = imageUrl;
-    if (priority) payload.priority = priority;
-    if (walletId) payload.walletId = walletId;
-    if (isHistorical !== undefined) payload.isHistorical = isHistorical;
-    if (categoryName !== undefined) payload.categoryName = categoryName;
-    try {
-      await setDoc(doc(db, "expenses", id), payload);
-
-      // Budget Exceeded Reminders Alert Trigger check
-      if (amount >= 1000) {
-        await addNotificationArEn(
-          "تنبيه مصروف مرتفع",
-          "High Expense Alert",
-          `تم تسجيل مصروف بقيمة عالية: ${amount} ${currency === "LYD" ? "د.ل" : "$"} لـ "${title}"`,
-          `A substantial expense was logged: ${amount} ${currency} for "${title}"`,
-          "budget",
-        );
-      }
-      return id;
-    } catch (e) {
-      handleFirestoreError(e, OperationType.CREATE, path);
+    const { data, error } = await supabase
+      .from("expenses")
+      .insert({
+        user_id: user.id,
+        amount,
+        currency,
+        title,
+        date,
+        category_id: categoryId,
+        notes: notes || null,
+        image_url: imageUrl || null,
+        priority: priority || null,
+        wallet_id: walletId || null,
+        is_historical: isHistorical ?? null,
+        category_name: categoryName ?? null,
+      })
+      .select()
+      .single();
+    if (error) {
+      logSupabaseError(error, "expenses/create");
+      throw error;
     }
+    const created = mapExpense(data);
+    setExpenses((prev) => [created, ...prev].sort((x, y) => y.date.localeCompare(x.date)));
+
+    // Budget Exceeded Reminders Alert Trigger check
+    if (amount >= 1000) {
+      await addNotificationArEn(
+        "تنبيه مصروف مرتفع",
+        "High Expense Alert",
+        `تم تسجيل مصروف بقيمة عالية: ${amount} ${currency === "LYD" ? "د.ل" : "$"} لـ "${title}"`,
+        `A substantial expense was logged: ${amount} ${currency} for "${title}"`,
+        "budget",
+      );
+    }
+    return created.id;
   };
 
   const updateExpense = async (
@@ -1307,143 +1108,152 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     priority?: "low" | "medium" | "high",
     walletId?: string,
   ) => {
-    const path = `expenses/${id}`;
-    const payload: Record<string, any> = {
-      amount,
-      currency,
-      title,
-      date,
-      categoryId,
-      updatedAt: serverTimestamp(),
-    };
-    if (notes !== undefined) payload.notes = notes;
-    if (imageUrl !== undefined) payload.imageUrl = imageUrl;
-    if (priority !== undefined) payload.priority = priority;
-    if (walletId !== undefined) payload.walletId = walletId;
     try {
-      await updateDoc(doc(db, "expenses", id), payload);
+      const { data, error } = await supabase
+        .from("expenses")
+        .update({
+          amount,
+          currency,
+          title,
+          date,
+          category_id: categoryId,
+          notes: notes ?? null,
+          image_url: imageUrl ?? null,
+          priority: priority ?? null,
+          wallet_id: walletId ?? null,
+        })
+        .eq("id", id)
+        .select()
+        .single();
+      if (error) throw error;
+      const updated = mapExpense(data);
+      setExpenses((prev) =>
+        prev.map((e) => (e.id === id ? updated : e)).sort((x, y) => y.date.localeCompare(x.date)),
+      );
     } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, path);
+      logSupabaseError(e, `expenses/${id}`);
     }
   };
 
   const deleteExpense = async (id: string) => {
-    const path = `expenses/${id}`;
     if (!user) return;
     try {
-      const item = expenses.find(e => e.id === id);
+      const item = expenses.find((e) => e.id === id);
       if (!item) return;
 
-      const trashId = `trash_${id}`;
-      await setDoc(doc(db, "trash", trashId), {
-        id: trashId,
-        userId: user.uid,
-        deletedAt: serverTimestamp(),
-        deletedBy: user.email || "User",
-        originalId: id,
-        originalType: "expense",
-        originalData: {
-          id: item.id,
-          userId: item.userId,
-          amount: item.originalAmount || item.amount,
-          isRefunded: item.isRefunded,
-          currency: item.currency,
-          title: item.title,
-          date: item.date,
-          categoryId: item.categoryId,
-          notes: item.notes || "",
-          walletId: item.walletId || "",
-          priority: item.priority || "medium",
-          imageUrl: item.imageUrl || "",
-          isHistorical: !!item.isHistorical,
-          categoryName: item.categoryName || "",
-        }
+      const { error } = await supabase.rpc("move_to_trash", {
+        p_type: "expense",
+        p_id: id,
+        p_deleted_by: user.email || "User",
       });
+      if (error) throw error;
 
-      await deleteDoc(doc(db, "expenses", id));
+      setExpenses((prev) => prev.filter((e) => e.id !== id));
+      await refetchOne("trash", mapTrash, setTrashItems, (a, b) => b.deletedAt.getTime() - a.deletedAt.getTime());
 
       await addNotificationArEn(
         "تم نقل عنصر إلى السلة",
         "Moved to Trash",
         `تم نقل المصروف المالي "${item.title}" إلى سلة المحذوفات. متاح للاستعادة لمدة 3 أيام.`,
         `Successfully moved expense "${item.title}" to Trash. It remains recoverable for 3 days.`,
-        "general"
+        "general",
       );
     } catch (e) {
-      handleFirestoreError(e, OperationType.DELETE, path);
+      logSupabaseError(e, `expenses/${id}`);
     }
   };
 
   const toggleExpenseRefund = async (id: string, isRefunded: boolean) => {
-    const path = `expenses/${id}`;
     try {
-      const docRef = doc(db, "expenses", id);
       if (!isRefunded) {
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          const hasOriginalAmount = data.originalAmount !== undefined;
-          if (hasOriginalAmount) {
-            await updateDoc(docRef, {
-              amount: Number(data.originalAmount),
-              originalAmount: deleteField(),
-              isRefunded: false,
-              isDue: true,
-              refundedAt: null,
-              updatedAt: serverTimestamp(),
-            });
-            return;
-          }
+        const { data: current, error: readError } = await supabase
+          .from("expenses")
+          .select("original_amount")
+          .eq("id", id)
+          .single();
+        if (readError) throw readError;
+        if (current && current.original_amount !== null) {
+          const { data, error } = await supabase
+            .from("expenses")
+            .update({
+              amount: Number(current.original_amount),
+              original_amount: null,
+              is_refunded: false,
+              is_due: true,
+              refunded_at: null,
+            })
+            .eq("id", id)
+            .select()
+            .single();
+          if (error) throw error;
+          const updated = mapExpense(data);
+          setExpenses((prev) => prev.map((e) => (e.id === id ? updated : e)));
+          return;
         }
       }
-      await updateDoc(docRef, {
-        isRefunded,
-        refundedAt: isRefunded ? new Date().toISOString() : null,
-        updatedAt: serverTimestamp(),
-      });
+      const { data, error } = await supabase
+        .from("expenses")
+        .update({
+          is_refunded: isRefunded,
+          refunded_at: isRefunded ? new Date().toISOString() : null,
+        })
+        .eq("id", id)
+        .select()
+        .single();
+      if (error) throw error;
+      const updated = mapExpense(data);
+      setExpenses((prev) => prev.map((e) => (e.id === id ? updated : e)));
     } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, path);
+      logSupabaseError(e, `expenses/${id}`);
     }
   };
 
   const toggleExpenseDue = async (id: string, isDue: boolean) => {
-    const path = `expenses/${id}`;
     try {
-      await updateDoc(doc(db, "expenses", id), {
-        isDue,
-        updatedAt: serverTimestamp(),
-      });
+      const { data, error } = await supabase
+        .from("expenses")
+        .update({ is_due: isDue })
+        .eq("id", id)
+        .select()
+        .single();
+      if (error) throw error;
+      const updated = mapExpense(data);
+      setExpenses((prev) => prev.map((e) => (e.id === id ? updated : e)));
     } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, path);
+      logSupabaseError(e, `expenses/${id}`);
     }
   };
 
   const recoverDue = async (id: string, paidAmount: number) => {
-    const path = `expenses/${id}`;
-    const exp = expenses.find(e => e.id === id);
+    const exp = expenses.find((e) => e.id === id);
     if (!exp) return;
-    
+
     const currentAmount = exp.amount;
     const originalAmount = exp.originalAmount || currentAmount;
-    
     const newAmount = Math.max(0, currentAmount - paidAmount);
-    
+
     const payload: Record<string, any> = {
       amount: newAmount,
-      originalAmount: originalAmount,
-      updatedAt: serverTimestamp(),
+      original_amount: originalAmount,
     };
-    
     if (newAmount <= 0) {
-      payload.isDue = false;
-      payload.isRefunded = true;
-      payload.refundedAt = new Date().toISOString();
+      payload.is_due = false;
+      payload.is_refunded = true;
+      payload.refunded_at = new Date().toISOString();
     }
-    
+
     try {
-      await updateDoc(doc(db, "expenses", id), payload);
+      const { data, error } = await supabase
+        .from("expenses")
+        .update(payload)
+        .eq("id", id)
+        .select()
+        .single();
+      if (error) throw error;
+      const updated = mapExpense(data);
+      setExpenses((prev) => prev.map((e) => (e.id === id ? updated : e)));
     } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, path);
+      logSupabaseError(e, `expenses/${id}`);
     }
   };
 
@@ -1458,27 +1268,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     notes?: string,
   ) => {
     if (!user) return;
-    const path = "futurePurchases";
-    const id = `fp_${Math.random().toString(36).substring(2, 9)}`;
-    const payload: Record<string, any> = {
-      id,
-      userId: user.uid,
-      itemName,
-      expectedPrice,
-      currency,
-      priority,
-      isPurchased: false,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    };
-    if (expectedDate) payload.expectedDate = expectedDate;
-    if (categoryId) payload.categoryId = categoryId;
-    if (notes) payload.notes = notes;
-
     try {
-      await setDoc(doc(db, "futurePurchases", id), payload);
+      const { data, error } = await supabase
+        .from("future_purchases")
+        .insert({
+          user_id: user.id,
+          item_name: itemName,
+          expected_price: expectedPrice,
+          currency,
+          priority,
+          is_purchased: false,
+          expected_date: expectedDate || null,
+          category_id: categoryId || null,
+          notes: notes || null,
+        })
+        .select()
+        .single();
+      if (error) throw error;
+      setPlannedPurchases((prev) => [...prev, mapFuturePurchase(data)]);
     } catch (e) {
-      handleFirestoreError(e, OperationType.CREATE, path);
+      logSupabaseError(e, "future_purchases/create");
     }
   };
 
@@ -1492,37 +1301,42 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     categoryId?: string,
     notes?: string,
   ) => {
-    const path = `futurePurchases/${id}`;
-    const payload: Record<string, any> = {
-      itemName,
-      expectedPrice,
-      currency,
-      priority,
-      updatedAt: serverTimestamp(),
-    };
-    if (expectedDate !== undefined) payload.expectedDate = expectedDate;
-    if (categoryId !== undefined) payload.categoryId = categoryId;
-    if (notes !== undefined) payload.notes = notes;
-
     try {
-      await updateDoc(doc(db, "futurePurchases", id), payload);
+      const { data, error } = await supabase
+        .from("future_purchases")
+        .update({
+          item_name: itemName,
+          expected_price: expectedPrice,
+          currency,
+          priority,
+          expected_date: expectedDate ?? null,
+          category_id: categoryId ?? null,
+          notes: notes ?? null,
+        })
+        .eq("id", id)
+        .select()
+        .single();
+      if (error) throw error;
+      const updated = mapFuturePurchase(data);
+      setPlannedPurchases((prev) => prev.map((p) => (p.id === id ? updated : p)));
     } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, path);
+      logSupabaseError(e, `future_purchases/${id}`);
     }
   };
 
-  const purchaseWishlistItemChange = async (
-    id: string,
-    isPurchased: boolean,
-  ) => {
-    const path = `futurePurchases/${id}`;
+  const purchaseWishlistItemChange = async (id: string, isPurchased: boolean) => {
     try {
-      await updateDoc(doc(db, "futurePurchases", id), {
-        isPurchased,
-        updatedAt: serverTimestamp(),
-      });
+      const { data, error } = await supabase
+        .from("future_purchases")
+        .update({ is_purchased: isPurchased })
+        .eq("id", id)
+        .select()
+        .single();
+      if (error) throw error;
+      const updated = mapFuturePurchase(data);
+      setPlannedPurchases((prev) => prev.map((p) => (p.id === id ? updated : p)));
     } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, path);
+      logSupabaseError(e, `future_purchases/${id}`);
     }
   };
 
@@ -1534,7 +1348,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     notes?: string,
   ) => {
     if (!user) return;
-    const path = `futurePurchases/${purchaseId}`;
     try {
       // 1. Fetch current purchase object for its title
       const targetPurchase = plannedPurchases.find((p) => p.id === purchaseId);
@@ -1552,11 +1365,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
       );
 
       // 3. Mark the planned purchase as completed with reference ID
-      await updateDoc(doc(db, "futurePurchases", purchaseId), {
-        isPurchased: true,
-        matchedExpenseId: expId,
-        updatedAt: serverTimestamp(),
-      });
+      const { data, error } = await supabase
+        .from("future_purchases")
+        .update({ is_purchased: true, matched_expense_id: expId })
+        .eq("id", purchaseId)
+        .select()
+        .single();
+      if (error) throw error;
+      const updated = mapFuturePurchase(data);
+      setPlannedPurchases((prev) => prev.map((p) => (p.id === purchaseId ? updated : p)));
 
       // 4. Trigger alert
       await addNotificationArEn(
@@ -1567,51 +1384,35 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
         "purchase",
       );
     } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, path);
+      logSupabaseError(e, `future_purchases/${purchaseId}`);
     }
   };
 
   const deleteFuturePurchase = async (id: string) => {
-    const path = `futurePurchases/${id}`;
     if (!user) return;
     try {
-      const item = plannedPurchases.find(p => p.id === id);
+      const item = plannedPurchases.find((p) => p.id === id);
       if (!item) return;
 
-      const trashId = `trash_${id}`;
-      await setDoc(doc(db, "trash", trashId), {
-        id: trashId,
-        userId: user.uid,
-        deletedAt: serverTimestamp(),
-        deletedBy: user.email || "User",
-        originalId: id,
-        originalType: "future_purchase",
-        originalData: {
-          id: item.id,
-          userId: item.userId,
-          itemName: item.itemName,
-          expectedPrice: item.expectedPrice,
-          currency: item.currency,
-          expectedDate: item.expectedDate || "",
-          priority: item.priority,
-          categoryId: item.categoryId || "",
-          notes: item.notes || "",
-          isPurchased: !!item.isPurchased,
-          matchedExpenseId: item.matchedExpenseId || "",
-        }
+      const { error } = await supabase.rpc("move_to_trash", {
+        p_type: "future_purchase",
+        p_id: id,
+        p_deleted_by: user.email || "User",
       });
+      if (error) throw error;
 
-      await deleteDoc(doc(db, "futurePurchases", id));
+      setPlannedPurchases((prev) => prev.filter((p) => p.id !== id));
+      await refetchOne("trash", mapTrash, setTrashItems, (a, b) => b.deletedAt.getTime() - a.deletedAt.getTime());
 
       await addNotificationArEn(
         "تم نقل غرض مخطط إلى السلة",
         "Moved to Trash",
         `تم نقل الشراء المخطط "${item.itemName}" إلى سلة المحذوفات. متاح للاستعادة لمدة 3 أيام.`,
         `Successfully moved planned purchase "${item.itemName}" to Trash. It remains recoverable for 3 days.`,
-        "general"
+        "general",
       );
     } catch (e) {
-      handleFirestoreError(e, OperationType.DELETE, path);
+      logSupabaseError(e, `future_purchases/${id}`);
     }
   };
 
@@ -1630,41 +1431,41 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     receivingOrder: string[],
   ) => {
     if (!user) return;
-    const path = "savingsGroups";
-    const id = `jam_${Math.random().toString(36).substring(2, 9)}`;
     const paymentPerMember = totalAmount / numMembers;
 
-    // Structure mapped members list with arrays
-    const finalMembers: SavingsGroupMember[] = membersIn.map((m, idx) => {
+    const finalMembers = membersIn.map((m) => {
       const recIndex = receivingOrder.indexOf(m.id);
       return {
         id: m.id,
         name: m.name,
         phone: m.phone || "",
         notes: m.notes || "",
-        isReceived: recIndex === 0, // initially, if receivingOrder index 0, they might receive on first cycle
+        isReceived: recIndex === 0,
         receiveCycleIndex: recIndex,
-        paidCycles: [] as number[], // paid cycle indexes
-      } as any;
+        paidCycles: [] as number[],
+      };
     });
 
     try {
-      await setDoc(doc(db, "savingsGroups", id), {
-        id,
-        userId: user.uid,
-        name,
-        currency,
-        totalAmount,
-        numMembers,
-        paymentPerMember,
-        paymentCycle,
-        startDate,
-        members: finalMembers,
-        receivingOrder,
-        isArchived: false,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
+      const { data, error } = await supabase
+        .from("savings_groups")
+        .insert({
+          user_id: user.id,
+          name,
+          currency,
+          total_amount: totalAmount,
+          num_members: numMembers,
+          payment_per_member: paymentPerMember,
+          payment_cycle: paymentCycle,
+          start_date: startDate,
+          members: finalMembers,
+          receiving_order: receivingOrder,
+          is_archived: false,
+        })
+        .select()
+        .single();
+      if (error) throw error;
+      setSavingsGroups((prev) => [...prev, mapSavingsGroup(data)]);
 
       await addNotificationArEn(
         `تأسيس جمعية جديدة: ${name}`,
@@ -1674,7 +1475,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
         "saving_group",
       );
     } catch (e) {
-      handleFirestoreError(e, OperationType.CREATE, path);
+      logSupabaseError(e, "savings_groups/create");
     }
   };
 
@@ -1690,24 +1491,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     receivingOrder: string[],
     isArchived: boolean,
   ) => {
-    const path = `savingsGroups/${id}`;
     const paymentPerMember = totalAmount / numMembers;
     try {
-      await updateDoc(doc(db, "savingsGroups", id), {
-        name,
-        currency,
-        totalAmount,
-        numMembers,
-        paymentPerMember,
-        paymentCycle,
-        startDate,
-        members: updatedMembers,
-        receivingOrder,
-        isArchived,
-        updatedAt: serverTimestamp(),
-      });
+      const { data, error } = await supabase
+        .from("savings_groups")
+        .update({
+          name,
+          currency,
+          total_amount: totalAmount,
+          num_members: numMembers,
+          payment_per_member: paymentPerMember,
+          payment_cycle: paymentCycle,
+          start_date: startDate,
+          members: updatedMembers,
+          receiving_order: receivingOrder,
+          is_archived: isArchived,
+        })
+        .eq("id", id)
+        .select()
+        .single();
+      if (error) throw error;
+      const updated = mapSavingsGroup(data);
+      setSavingsGroups((prev) => prev.map((g) => (g.id === id ? updated : g)));
     } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, path);
+      logSupabaseError(e, `savings_groups/${id}`);
     }
   };
 
@@ -1716,37 +1523,35 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     memberId: string,
     cycleIndex: number,
   ) => {
-    const path = `savingsGroups/${groupId}`;
     try {
       const group = savingsGroups.find((g) => g.id === groupId);
       if (!group) return;
 
       const updatedMembers = group.members.map((m) => {
         if (m.id === memberId) {
-          const currentPaid: number[] = (m as any).paidCycles || [];
+          const currentPaid: number[] = m.paidCycles || [];
           const exists = currentPaid.includes(cycleIndex);
           const nextPaid = exists
             ? currentPaid.filter((c) => c !== cycleIndex)
             : [...currentPaid, cycleIndex];
-          return {
-            ...m,
-            paidCycles: nextPaid,
-          };
+          return { ...m, paidCycles: nextPaid };
         }
         return m;
       });
 
-      await updateDoc(doc(db, "savingsGroups", groupId), {
-        members: updatedMembers,
-        updatedAt: serverTimestamp(),
-      });
+      const { data, error } = await supabase
+        .from("savings_groups")
+        .update({ members: updatedMembers })
+        .eq("id", groupId)
+        .select()
+        .single();
+      if (error) throw error;
+      const updated = mapSavingsGroup(data);
+      setSavingsGroups((prev) => prev.map((g) => (g.id === groupId ? updated : g)));
 
-      // Optional trigger alert if they marked it as paid
       const targetMember = group.members.find((m) => m.id === memberId);
       if (targetMember) {
-        const wasUnpaid = !((targetMember as any).paidCycles || []).includes(
-          cycleIndex,
-        );
+        const wasUnpaid = !(targetMember.paidCycles || []).includes(cycleIndex);
         if (wasUnpaid) {
           await addNotificationArEn(
             `استلام سهم من ${targetMember.name}`,
@@ -1758,7 +1563,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
         }
       }
     } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, path);
+      logSupabaseError(e, `savings_groups/${groupId}`);
     }
   };
 
@@ -1768,26 +1573,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     isReceived: boolean,
     cycleIndex: number,
   ) => {
-    const path = `savingsGroups/${groupId}`;
     try {
       const group = savingsGroups.find((g) => g.id === groupId);
       if (!group) return;
 
-      const updatedMembers = group.members.map((m) => {
-        if (m.id === memberId) {
-          return {
-            ...m,
-            isReceived,
-            receiveCycleIndex: cycleIndex,
-          };
-        }
-        return m;
-      });
+      const updatedMembers = group.members.map((m) =>
+        m.id === memberId ? { ...m, isReceived, receiveCycleIndex: cycleIndex } : m,
+      );
 
-      await updateDoc(doc(db, "savingsGroups", groupId), {
-        members: updatedMembers,
-        updatedAt: serverTimestamp(),
-      });
+      const { data, error } = await supabase
+        .from("savings_groups")
+        .update({ members: updatedMembers })
+        .eq("id", groupId)
+        .select()
+        .single();
+      if (error) throw error;
+      const updated = mapSavingsGroup(data);
+      setSavingsGroups((prev) => prev.map((g) => (g.id === groupId ? updated : g)));
 
       if (isReceived) {
         const targetMember = group.members.find((m) => m.id === memberId);
@@ -1802,114 +1604,75 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
         }
       }
     } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, path);
+      logSupabaseError(e, `savings_groups/${groupId}`);
     }
   };
 
   const archiveSavingsGroup = async (id: string, isArchived: boolean) => {
-    const path = `savingsGroups/${id}`;
     try {
-      await updateDoc(doc(db, "savingsGroups", id), {
-        isArchived,
-        updatedAt: serverTimestamp(),
-      });
+      const { data, error } = await supabase
+        .from("savings_groups")
+        .update({ is_archived: isArchived })
+        .eq("id", id)
+        .select()
+        .single();
+      if (error) throw error;
+      const updated = mapSavingsGroup(data);
+      setSavingsGroups((prev) => prev.map((g) => (g.id === id ? updated : g)));
     } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, path);
+      logSupabaseError(e, `savings_groups/${id}`);
     }
   };
 
   const deleteSavingsGroup = async (id: string) => {
-    const path = `savingsGroups/${id}`;
     if (!user) return;
     try {
-      const item = savingsGroups.find(g => g.id === id);
+      const item = savingsGroups.find((g) => g.id === id);
       if (!item) return;
 
-      const trashId = `trash_${id}`;
-      await setDoc(doc(db, "trash", trashId), {
-        id: trashId,
-        userId: user.uid,
-        deletedAt: serverTimestamp(),
-        deletedBy: user.email || "User",
-        originalId: id,
-        originalType: "savings_group",
-        originalData: {
-          id: item.id,
-          userId: item.userId,
-          name: item.name,
-          currency: item.currency,
-          totalAmount: item.totalAmount,
-          numMembers: item.numMembers,
-          paymentPerMember: item.paymentPerMember,
-          paymentCycle: item.paymentCycle,
-          startDate: item.startDate,
-          members: item.members,
-          receivingOrder: item.receivingOrder,
-          isArchived: !!item.isArchived,
-        }
+      const { error } = await supabase.rpc("move_to_trash", {
+        p_type: "savings_group",
+        p_id: id,
+        p_deleted_by: user.email || "User",
       });
+      if (error) throw error;
 
-      await deleteDoc(doc(db, "savingsGroups", id));
+      setSavingsGroups((prev) => prev.filter((g) => g.id !== id));
+      await refetchOne("trash", mapTrash, setTrashItems, (a, b) => b.deletedAt.getTime() - a.deletedAt.getTime());
 
       await addNotificationArEn(
         "تم نقل الجمعية إلى السلة",
         "Moved to Trash",
         `تم نقل الجمعية المشتركة "${item.name}" إلى سلة المحذوفات ورصيدها. متاح للاستعادة لمدة 3 أيام.`,
         `Successfully moved Savings Group "${item.name}" to Trash. It remains recoverable for 3 days.`,
-        "general"
+        "general",
       );
     } catch (e) {
-      handleFirestoreError(e, OperationType.DELETE, path);
-    }
-  };
-
-  // NOTIFICATION MANAGEMENT
-  const addNotificationArEn = async (
-    titleAr: string,
-    titleEn: string,
-    messageAr: string,
-    messageEn: string,
-    type: "general" | "saving_group" | "purchase" | "budget",
-  ) => {
-    if (!user) return;
-    const path = "notifications";
-    const id = `notif_${Math.random().toString(36).substring(2, 9)}`;
-    try {
-      await setDoc(doc(db, "notifications", id), {
-        id,
-        userId: user.uid,
-        titleAr,
-        titleEn,
-        messageAr,
-        messageEn,
-        type,
-        date: Timestamp.now(),
-        isRead: false,
-        createdAt: serverTimestamp(),
-      });
-    } catch (e) {
-      handleFirestoreError(e, OperationType.CREATE, path);
+      logSupabaseError(e, `savings_groups/${id}`);
     }
   };
 
   const markNotificationRead = async (id: string) => {
-    const path = `notifications/${id}`;
     try {
-      await updateDoc(doc(db, "notifications", id), { isRead: true });
+      const { error } = await supabase
+        .from("notifications")
+        .update({ is_read: true })
+        .eq("id", id);
+      if (error) throw error;
+      setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, isRead: true } : n)));
     } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, path);
+      logSupabaseError(e, `notifications/${id}`);
     }
   };
 
   const clearAllNotifications = async () => {
     if (!user) return;
-    // Walk over and delete all user notifications or mark all read
-    for (const n of notifications) {
-      try {
-        await deleteDoc(doc(db, "notifications", n.id));
-      } catch (e) {
-        console.error("Failed notification deletion", e);
-      }
+    try {
+      const { error } = await supabase.from("notifications").delete().eq("user_id", user.id);
+      if (error) throw error;
+      setNotifications([]);
+    } catch (e) {
+      logSupabaseError(e, "notifications/clear");
     }
   };
 
@@ -1920,63 +1683,52 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     text: string,
   ) => {
     if (!user) return;
-    const path = "comments";
-    const id = `com_${Math.random().toString(36).substring(2, 9)}`;
-    const payload = {
-      id,
-      userId: user.uid,
-      transactionId,
-      transactionType,
-      userName: user.displayName || user.email?.split("@")[0] || "User",
-      userEmail: user.email || "",
-      text,
-      createdAt: serverTimestamp(),
-    };
     try {
-      await setDoc(doc(db, "comments", id), payload);
+      const { data, error } = await supabase
+        .from("comments")
+        .insert({
+          user_id: user.id,
+          transaction_id: transactionId,
+          transaction_type: transactionType,
+          user_name: user.user_metadata?.full_name || user.email?.split("@")[0] || "User",
+          user_email: user.email || "",
+          text,
+        })
+        .select()
+        .single();
+      if (error) throw error;
+      const created = mapComment(data);
+      setComments((prev) => [...prev, created].sort((x, y) => x.createdAt.getTime() - y.createdAt.getTime()));
     } catch (e) {
-      handleFirestoreError(e, OperationType.CREATE, path);
+      logSupabaseError(e, "comments/create");
     }
   };
 
   const deleteComment = async (id: string) => {
-    const path = `comments/${id}`;
     if (!user) return;
     try {
-      const item = comments.find(c => c.id === id);
+      const item = comments.find((c) => c.id === id);
       if (!item) return;
 
-      const trashId = `trash_${id}`;
-      await setDoc(doc(db, "trash", trashId), {
-        id: trashId,
-        userId: user.uid,
-        deletedAt: serverTimestamp(),
-        deletedBy: user.email || "User",
-        originalId: id,
-        originalType: "comment",
-        originalData: {
-          id: item.id,
-          userId: item.userId,
-          transactionId: item.transactionId,
-          transactionType: item.transactionType,
-          userName: item.userName,
-          userEmail: item.userEmail,
-          text: item.text,
-          createdAt: item.createdAt instanceof Date ? item.createdAt.toISOString() : (item.createdAt || ""),
-        }
+      const { error } = await supabase.rpc("move_to_trash", {
+        p_type: "comment",
+        p_id: id,
+        p_deleted_by: user.email || "User",
       });
+      if (error) throw error;
 
-      await deleteDoc(doc(db, "comments", id));
+      setComments((prev) => prev.filter((c) => c.id !== id));
+      await refetchOne("trash", mapTrash, setTrashItems, (a, b) => b.deletedAt.getTime() - a.deletedAt.getTime());
 
       await addNotificationArEn(
         "تم نقل التعليق إلى السلة",
         "Comment Moved to Trash",
         `تم نقل تعليق العنصر بكاتبه "${item.userName}" إلى سلة المحذوفات. متاح للاستعادة خلال 3 أيام.`,
         `Successfully moved comment by "${item.userName}" to Trash. It remains recoverable for 3 days.`,
-        "general"
+        "general",
       );
     } catch (e) {
-      handleFirestoreError(e, OperationType.DELETE, path);
+      logSupabaseError(e, `comments/${id}`);
     }
   };
 
@@ -1989,25 +1741,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     icon: string,
   ): Promise<string> => {
     if (!user) throw new Error("Unauthorized");
-    const path = "wallets";
-    const id = `wal_${Math.random().toString(36).substring(2, 9)}`;
-    try {
-      await setDoc(doc(db, "wallets", id), {
-        id,
-        userId: user.uid,
+    const { data, error } = await supabase
+      .from("wallets")
+      .insert({
+        user_id: user.id,
         name,
-        initialBalance,
+        initial_balance: initialBalance,
         currency,
         color,
         icon,
-        isHidden: false,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-      return id;
-    } catch (e) {
-      handleFirestoreError(e, OperationType.CREATE, path);
+        is_hidden: false,
+      })
+      .select()
+      .single();
+    if (error) {
+      logSupabaseError(error, "wallets/create");
+      throw error;
     }
+    const created = mapWallet(data);
+    setWallets((prev) => [...prev, created]);
+    return created.id;
   };
 
   const updateWallet = async (
@@ -2019,131 +1772,117 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     icon: string,
     isHidden?: boolean,
   ) => {
-    const path = `wallets/${id}`;
     try {
-      const updates: any = {
+      const updates: Record<string, any> = {
         name,
-        initialBalance,
+        initial_balance: initialBalance,
         currency,
         color,
         icon,
-        updatedAt: serverTimestamp(),
       };
-      if (isHidden !== undefined) {
-          updates.isHidden = isHidden;
-      }
-      await updateDoc(doc(db, "wallets", id), updates);
+      if (isHidden !== undefined) updates.is_hidden = isHidden;
+      const { data, error } = await supabase
+        .from("wallets")
+        .update(updates)
+        .eq("id", id)
+        .select()
+        .single();
+      if (error) throw error;
+      const updated = mapWallet(data);
+      setWallets((prev) => prev.map((w) => (w.id === id ? updated : w)));
     } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, path);
+      logSupabaseError(e, `wallets/${id}`);
     }
   };
 
   const deleteWallet = async (id: string) => {
-    const path = `wallets/${id}`;
     if (!user) return;
     try {
-      const item = wallets.find(w => w.id === id);
+      const item = wallets.find((w) => w.id === id);
       if (!item) return;
 
-      const trashId = `trash_${id}`;
-      await setDoc(doc(db, "trash", trashId), {
-        id: trashId,
-        userId: user.uid,
-        deletedAt: serverTimestamp(),
-        deletedBy: user.email || "User",
-        originalId: id,
-        originalType: "wallet",
-        originalData: {
-          id: item.id,
-          userId: item.userId,
-          name: item.name,
-          initialBalance: item.initialBalance,
-          currency: item.currency,
-          color: item.color,
-          icon: item.icon,
-          isHidden: !!item.isHidden,
-          createdAt: item.createdAt instanceof Date ? item.createdAt.toISOString() : (item.createdAt || ""),
-        }
+      const { error } = await supabase.rpc("move_to_trash", {
+        p_type: "wallet",
+        p_id: id,
+        p_deleted_by: user.email || "User",
       });
+      if (error) throw error;
 
-      await deleteDoc(doc(db, "wallets", id));
+      setWallets((prev) => prev.filter((w) => w.id !== id));
+      await refetchOne("trash", mapTrash, setTrashItems, (a, b) => b.deletedAt.getTime() - a.deletedAt.getTime());
 
       await addNotificationArEn(
         "تم نقل المحفظة إلى السلة",
         "Wallet Moved to Trash",
         `تم نقل المحفظة المالية "${item.name}" إلى سلة المحذوفات. متاح للاستعادة خلال 3 أيام.`,
         `Successfully moved wallet "${item.name}" to Trash. It remains recoverable for 3 days.`,
-        "general"
+        "general",
       );
     } catch (e) {
-      handleFirestoreError(e, OperationType.DELETE, path);
+      logSupabaseError(e, `wallets/${id}`);
     }
   };
 
   // TRASH MANAGEMENT PIPELINE
+  const sourceTableFor = (originalType: TrashItem["originalType"]) =>
+    originalType === "income"
+      ? { table: "incomes", mapper: mapIncome, setter: setIncomes as (v: any[]) => void, sort: (a: Income, b: Income) => b.date.localeCompare(a.date) }
+      : originalType === "expense"
+        ? { table: "expenses", mapper: mapExpense, setter: setExpenses as (v: any[]) => void, sort: (a: Expense, b: Expense) => b.date.localeCompare(a.date) }
+        : originalType === "future_purchase"
+          ? { table: "future_purchases", mapper: mapFuturePurchase, setter: setPlannedPurchases as (v: any[]) => void, sort: undefined }
+          : originalType === "savings_group"
+            ? { table: "savings_groups", mapper: mapSavingsGroup, setter: setSavingsGroups as (v: any[]) => void, sort: undefined }
+            : originalType === "wallet"
+              ? { table: "wallets", mapper: mapWallet, setter: setWallets as (v: any[]) => void, sort: undefined }
+              : { table: "comments", mapper: mapComment, setter: setComments as (v: any[]) => void, sort: (a: TransactionComment, b: TransactionComment) => a.createdAt.getTime() - b.createdAt.getTime() };
+
   const restoreTrashItem = async (id: string) => {
-    const path = `trash/${id}`;
     if (!user) return;
     try {
       const trashItem = trashItems.find((itm) => itm.id === id);
       if (!trashItem) return;
 
-      const destCollection = 
-        trashItem.originalType === 'income' ? 'incomes' :
-        trashItem.originalType === 'expense' ? 'expenses' :
-        trashItem.originalType === 'future_purchase' ? 'futurePurchases' :
-        trashItem.originalType === 'savings_group' ? 'savingsGroups' :
-        trashItem.originalType === 'wallet' ? 'wallets' :
-        'comments';
+      const { error } = await supabase.rpc("restore_from_trash", { p_trash_id: id });
+      if (error) throw error;
 
-      const destDocRef = doc(db, destCollection, trashItem.originalId);
+      const dest = sourceTableFor(trashItem.originalType);
+      await refetchOne(dest.table, dest.mapper, dest.setter, dest.sort as any);
+      await refetchOne("trash", mapTrash, setTrashItems, (a, b) => b.deletedAt.getTime() - a.deletedAt.getTime());
 
-      const payload = {
-        ...trashItem.originalData,
-        createdAt: trashItem.originalData.createdAt 
-          ? new Date(trashItem.originalData.createdAt) 
-          : serverTimestamp(),
-        updatedAt: serverTimestamp()
-      };
-
-      await setDoc(destDocRef, payload);
-      await deleteDoc(doc(db, "trash", id));
-
-      const titleToShow = trashItem.originalData.name || trashItem.originalData.title || trashItem.originalData.itemName || (trashItem.originalType === 'comment' ? (language === 'ar' ? 'تعليق' : 'Comment') : '');
+      const titleToShow =
+        trashItem.originalData.name ||
+        trashItem.originalData.title ||
+        trashItem.originalData.itemName ||
+        (trashItem.originalType === "comment" ? (language === "ar" ? "تعليق" : "Comment") : "");
 
       await addNotificationArEn(
         "تم استعادة عنصر بنجاح!",
         "Item Restored Successfully!",
         `تم استعادة العنصر "${titleToShow}" إلى سجلاته ودمجه في الحسابات الفورية للأرصدة بنجاح!`,
         `Successfully restored "${titleToShow}" back into ledger indexes.`,
-        "general"
+        "general",
       );
     } catch (e) {
-      handleFirestoreError(e, OperationType.DELETE, path);
+      logSupabaseError(e, `trash/${id}`);
     }
   };
 
   const permanentlyDeleteTrashItem = async (id: string) => {
-    const path = `trash/${id}`;
     if (!user) return;
     try {
       const trashItem = trashItems.find((itm) => itm.id === id);
       if (!trashItem) return;
 
-      await deleteDoc(doc(db, "trash", id));
+      const { error } = await supabase.rpc("permanently_delete_trash", { p_trash_id: id });
+      if (error) throw error;
 
+      setTrashItems((prev) => prev.filter((t) => t.id !== id));
       if (trashItem.originalType === "income" || trashItem.originalType === "expense") {
-        const dependentComments = comments.filter(c => c.transactionId === trashItem.originalId);
-        for (const comment of dependentComments) {
-          try {
-            await deleteDoc(doc(db, "comments", comment.id));
-          } catch (commErr) {
-            console.error("Failed to delete dependent comment:", commErr);
-          }
-        }
+        await refetchOne("comments", mapComment, setComments, (a, b) => a.createdAt.getTime() - b.createdAt.getTime());
       }
     } catch (e) {
-      handleFirestoreError(e, OperationType.DELETE, path);
+      logSupabaseError(e, `trash/${id}`);
     }
   };
 
@@ -2151,26 +1890,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     if (!user) return;
     const now = new Date();
     const threeDaysMs = 3 * 24 * 60 * 60 * 1000;
-    const expiredItems = trashItems.filter((item) => {
-      const deletedTime = item.deletedAt.getTime();
-      return (now.getTime() - deletedTime) > threeDaysMs;
-    });
+    const expiredItems = trashItems.filter(
+      (item) => now.getTime() - item.deletedAt.getTime() > threeDaysMs,
+    );
 
     if (expiredItems.length > 0) {
       console.log(`Starting scheduled auto-cleanup of ${expiredItems.length} expired trash items...`);
+      let hadIncomeOrExpense = false;
       for (const item of expiredItems) {
         try {
-          await deleteDoc(doc(db, "trash", item.id));
-
+          const { error } = await supabase.rpc("permanently_delete_trash", { p_trash_id: item.id });
+          if (error) throw error;
           if (item.originalType === "income" || item.originalType === "expense") {
-            const dependentComments = comments.filter(c => c.transactionId === item.originalId);
-            for (const comment of dependentComments) {
-              await deleteDoc(doc(db, "comments", comment.id));
-            }
+            hadIncomeOrExpense = true;
           }
         } catch (err) {
           console.error(`Scheduled automatic cleanup failed for trash item ${item.id}:`, err);
         }
+      }
+
+      await refetchOne("trash", mapTrash, setTrashItems, (a, b) => b.deletedAt.getTime() - a.deletedAt.getTime());
+      if (hadIncomeOrExpense) {
+        await refetchOne("comments", mapComment, setComments, (a, b) => a.createdAt.getTime() - b.createdAt.getTime());
       }
 
       await addNotificationArEn(
@@ -2178,7 +1919,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
         "Automated Trash Purge",
         `تم تنظيف عدد ${expiredItems.length} من العناصر التالفة والمحذوفة التي انقضت مهلة استعادتها (3 أيام).`,
         `Successfully purged ${expiredItems.length} expired trash items older than 3 days automatically.`,
-        "general"
+        "general",
       );
     }
   };
@@ -2208,7 +1949,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
         addComment,
         deleteComment,
 
-        loginWithGoogle,
+        loginWithPassword,
+        loginWithPasskey,
+        registerPasskey,
         logout,
 
         updatePreferences,

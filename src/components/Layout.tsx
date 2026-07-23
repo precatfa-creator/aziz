@@ -99,7 +99,7 @@ export const Layout: React.FC = () => {
 
   const unreadCount = notifications ? notifications.filter(n => !n.isRead).length : 0;
 
-  // 1. Interactive heartbeat loader while Firebase is fetching user sessions
+  // 1. Interactive heartbeat loader while Supabase is fetching the user session
   if (loading) {
     return (
       <div className="min-h-screen w-full flex flex-col justify-center items-center bg-slate-50 dark:bg-slate-950 font-sans gap-4 animate-fade-in text-center p-6">

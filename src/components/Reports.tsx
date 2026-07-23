@@ -5,6 +5,7 @@
 
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
+import { authHeader } from '../supabase';
 import { 
   BarChart3, 
   Download, 
@@ -149,7 +150,7 @@ export const Reports: React.FC = () => {
     try {
       const response = await fetch('/api/ai/advise', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
         body: JSON.stringify({
           incomes: incomes.filter(i => i.currency === activeCurrency),
           expenses: expenses.filter(e => e.currency === activeCurrency),

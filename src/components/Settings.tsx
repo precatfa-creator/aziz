@@ -5,6 +5,7 @@
 
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
+import { authHeader } from '../supabase';
 import { 
   Settings as SettingsIcon, 
   Languages, 
@@ -21,7 +22,8 @@ import {
   AlertTriangle,
   X,
   Sun,
-  Moon
+  Moon,
+  Fingerprint
 } from 'lucide-react';
 import { ConfirmModal } from './ConfirmModal';
 import { read, utils } from 'xlsx';
@@ -50,6 +52,7 @@ export const Settings: React.FC = () => {
     profile, 
     updateProfile, 
     setDefaultExpenseWallet,
+    registerPasskey,
     logout,
     categories,
     addCategory,
@@ -61,6 +64,17 @@ export const Settings: React.FC = () => {
   // Profile Form State
   const [profileName, setProfileName] = useState(profile?.name || '');
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [passkeyMessage, setPasskeyMessage] = useState('');
+
+  const handleRegisterPasskey = async () => {
+    setPasskeyMessage('');
+    try {
+      await registerPasskey();
+      setPasskeyMessage(language === 'ar' ? 'تم تفعيل الدخول بالبصمة على هذا الجهاز!' : 'Fingerprint sign-in enabled on this device!');
+    } catch (err: any) {
+      setPasskeyMessage(err.message || (language === 'ar' ? 'فشل تفعيل البصمة' : 'Failed to enable fingerprint sign-in'));
+    }
+  };
 
   // Historical Import States
   const [isImportOpen, setIsImportOpen] = useState(false);
@@ -281,6 +295,7 @@ export const Settings: React.FC = () => {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          ...(await authHeader()),
         },
         body: JSON.stringify({
           text: importText,
@@ -898,11 +913,11 @@ export const Settings: React.FC = () => {
             <div className="space-y-2 text-xs text-slate-500">
               <div className="flex justify-between">
                 <span>Database Client:</span>
-                <span className="font-bold text-slate-700 dark:text-slate-300">Firestore (Rules v2)</span>
+                <span className="font-bold text-slate-700 dark:text-slate-300">Supabase (Postgres + RLS)</span>
               </div>
               <div className="flex justify-between">
                 <span>Auth Provider:</span>
-                <span className="font-bold text-slate-700 dark:text-slate-300">Firebase Native auth</span>
+                <span className="font-bold text-slate-700 dark:text-slate-300">Supabase Auth (Email + Passkey)</span>
               </div>
               <div className="flex justify-between">
                 <span>Secure Isolation:</span>
@@ -911,6 +926,17 @@ export const Settings: React.FC = () => {
             </div>
 
             <div className="flex flex-col gap-3">
+              <button
+                onClick={handleRegisterPasskey}
+                className="w-full py-3 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 font-bold text-xs rounded-xl flex items-center justify-center gap-2 cursor-pointer transition-transform shadow-xs"
+              >
+                <Fingerprint className="w-4 h-4" />
+                <span>{language === 'ar' ? 'تفعيل الدخول بالبصمة لهذا الجهاز' : 'Enable Fingerprint Sign-In for this device'}</span>
+              </button>
+              {passkeyMessage && (
+                <p className="text-[10px] text-center font-bold text-slate-500 dark:text-slate-400">{passkeyMessage}</p>
+              )}
+
               <button
                 onClick={handleClearCache}
                 className="w-full py-3 bg-slate-200 hover:bg-slate-300 text-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 cursor-pointer transition-transform shadow-xs"
