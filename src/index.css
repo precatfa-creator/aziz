@@ -1,0 +1,136 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Tajawal:wght@300;400;500;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", "Tajawal", sans-serif;
+  --font-arabic: "Tajawal", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+  --color-brand-slate: #4A4466;
+  --color-brand-teal: #6EADBC;
+  --color-brand-green: #9FCBAD;
+  --color-brand-lime: #F1F7D4;
+}
+
+html, body, #root {
+  overflow-x: hidden;
+  max-width: 100vw;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: #f1f5f9;
+  background-image: 
+    radial-gradient(at 0% 0%, rgba(110, 173, 188, 0.15) 0px, transparent 50%),
+    radial-gradient(at 100% 0%, rgba(159, 203, 173, 0.15) 0px, transparent 50%),
+    radial-gradient(at 50% 100%, rgba(241, 247, 212, 0.2) 0px, transparent 50%);
+  background-attachment: fixed;
+  color: #0f172a;
+}
+
+.dark body {
+  background-color: #0b0f19;
+  background-image: 
+    radial-gradient(at 0% 0%, rgba(74, 68, 102, 0.3) 0px, transparent 50%),
+    radial-gradient(at 100% 100%, rgba(110, 173, 188, 0.1) 0px, transparent 50%);
+  background-attachment: fixed;
+  color: #f1f5f9;
+}
+
+/* Glassmorphism 2.0 core panels */
+.glass-card {
+  background: rgba(255, 255, 255, 0.65);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  box-shadow: 
+    0 4px 30px rgba(74, 68, 102, 0.05),
+    inset 0 1px 1px rgba(255, 255, 255, 0.7);
+}
+
+.dark .glass-card {
+  background: rgba(74, 68, 102, 0.15);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 
+    0 4px 30px rgba(0, 0, 0, 0.2),
+    inset 0 1px 1px rgba(255, 255, 255, 0.05);
+}
+
+.glass-modal {
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(25px);
+  -webkit-backdrop-filter: blur(25px);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  box-shadow: 
+    0 20px 50px rgba(0, 0, 0, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+.dark .glass-modal {
+  background: rgba(18, 24, 38, 0.8);
+  backdrop-filter: blur(25px);
+  -webkit-backdrop-filter: blur(25px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 
+    0 20px 50px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.glass-input {
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(74, 68, 102, 0.12);
+  backdrop-filter: blur(5px);
+}
+
+.dark .glass-input {
+  background: rgba(74, 68, 102, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(5px);
+}
+
+/* Custom scrollbar styling */
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: #334155;
+}
+
+/* Flip animations and utilities for RTL/LTR */
+.rtl-flip {
+  transform: scaleX(-1);
+}
+
+/* Beautiful custom soft animation effects */
+@keyframes pulseGlow {
+  0%, 100% {
+    box-shadow: 0 0 15px rgba(16, 185, 129, 0.2);
+  }
+  50% {
+    box-shadow: 0 0 25px rgba(16, 185, 129, 0.4);
+  }
+}
+
+.pulse-emerald {
+  animation: pulseGlow 3s infinite ease-in-out;
+}

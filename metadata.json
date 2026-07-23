@@ -1,0 +1,6 @@
+{
+  "name": "Aziz | عزيز",
+  "description": "A modern personal finance application designed for Libya & Arab world. Tracks income, expenses, rotating savings groups (الجمعيات), future purchases, and reviews detailed financial reports in both Arabic and English with dynamic RTL/LTR language support.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
