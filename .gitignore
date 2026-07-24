@@ -13,3 +13,6 @@ coverage/
 .agents/
 .claude/
 skills-lock.json
+
+# user data export, not repo content
+aziz_backup_*.json

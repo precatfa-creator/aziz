@@ -5,7 +5,8 @@
 
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { authHeader } from '../supabase';
+import { authHeader, supabase } from '../supabase';
+import { restoreBackup, type AzizBackup } from '../lib/restoreBackup';
 import { 
   Settings as SettingsIcon, 
   Languages, 
@@ -23,7 +24,8 @@ import {
   X,
   Sun,
   Moon,
-  Fingerprint
+  Fingerprint,
+  DatabaseBackup
 } from 'lucide-react';
 import { ConfirmModal } from './ConfirmModal';
 import { read, utils } from 'xlsx';
@@ -53,6 +55,7 @@ export const Settings: React.FC = () => {
     updateProfile, 
     setDefaultExpenseWallet,
     registerPasskey,
+    user,
     logout,
     categories,
     addCategory,
@@ -65,6 +68,53 @@ export const Settings: React.FC = () => {
   const [profileName, setProfileName] = useState(profile?.name || '');
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [passkeyMessage, setPasskeyMessage] = useState('');
+  const [restoreMessage, setRestoreMessage] = useState('');
+  const [isRestoring, setIsRestoring] = useState(false);
+  const restoreInputRef = React.useRef<HTMLInputElement>(null);
+
+  // Restore from an old-app JSON export. Destructive: clears current data first
+  // (confirmed via dialog), then loads the backup. Reloads the page afterwards
+  // so the AppContext bootstrap re-fetches everything cleanly.
+  const handleRestoreFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // allow re-selecting the same file later
+    if (!file || !user) return;
+
+    let backup: AzizBackup;
+    try {
+      backup = JSON.parse(await file.text());
+    } catch {
+      setRestoreMessage(language === 'ar' ? 'ملف غير صالح — تعذّر قراءة JSON.' : 'Invalid file — could not parse JSON.');
+      return;
+    }
+    const counts = `${backup.wallets?.length || 0} ${language === 'ar' ? 'محفظة' : 'wallets'}, ${backup.incomes?.length || 0} ${language === 'ar' ? 'دخل' : 'incomes'}, ${backup.expenses?.length || 0} ${language === 'ar' ? 'مصروف' : 'expenses'}`;
+
+    showConfirm(
+      language === 'ar' ? 'استعادة نسخة احتياطية' : 'Restore Backup',
+      language === 'ar'
+        ? `سيتم حذف كل بياناتك الحالية واستبدالها بمحتوى الملف (${counts}). لا يمكن التراجع. متابعة؟`
+        : `This will delete all your current data and replace it with the file's contents (${counts}). This cannot be undone. Continue?`,
+      async () => {
+        setIsRestoring(true);
+        setRestoreMessage('');
+        try {
+          const r = await restoreBackup(backup, user.id, supabase);
+          setRestoreMessage(
+            language === 'ar'
+              ? `تمت الاستعادة: ${r.wallets} محفظة، ${r.categories} تصنيف، ${r.incomes} دخل، ${r.expenses} مصروف. جاري إعادة التحميل...`
+              : `Restored: ${r.wallets} wallets, ${r.categories} categories, ${r.incomes} incomes, ${r.expenses} expenses. Reloading...`,
+          );
+          setTimeout(() => window.location.reload(), 1500);
+        } catch (err: any) {
+          setRestoreMessage((language === 'ar' ? 'فشلت الاستعادة: ' : 'Restore failed: ') + (err.message || err));
+        } finally {
+          setIsRestoring(false);
+        }
+      },
+      'danger',
+      language === 'ar' ? 'حذف واستعادة' : 'Wipe & Restore',
+    );
+  };
 
   const handleRegisterPasskey = async () => {
     setPasskeyMessage('');
@@ -935,6 +985,25 @@ export const Settings: React.FC = () => {
               </button>
               {passkeyMessage && (
                 <p className="text-[10px] text-center font-bold text-slate-500 dark:text-slate-400">{passkeyMessage}</p>
+              )}
+
+              <input
+                ref={restoreInputRef}
+                type="file"
+                accept="application/json,.json"
+                onChange={handleRestoreFile}
+                className="hidden"
+              />
+              <button
+                onClick={() => restoreInputRef.current?.click()}
+                disabled={isRestoring}
+                className="w-full py-3 bg-indigo-500/10 hover:bg-indigo-500/20 disabled:opacity-60 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20 font-bold text-xs rounded-xl flex items-center justify-center gap-2 cursor-pointer transition-transform shadow-xs"
+              >
+                <DatabaseBackup className="w-4 h-4" />
+                <span>{isRestoring ? (language === 'ar' ? 'جارٍ الاستعادة...' : 'Restoring...') : (language === 'ar' ? 'استعادة نسخة احتياطية (JSON)' : 'Restore from Backup (JSON)')}</span>
+              </button>
+              {restoreMessage && (
+                <p className="text-[10px] text-center font-bold text-slate-500 dark:text-slate-400 leading-relaxed">{restoreMessage}</p>
               )}
 
               <button
