@@ -80,7 +80,7 @@ export default defineConfig(({ mode }) => {
           navigateFallbackDenylist: [/^\/api\//]
         },
         manifest: {
-          name: 'The Finance Engine',
+          name: 'Aziz',
           short_name: 'Aziz',
           description: 'Personal Finance Expert App',
           theme_color: '#0f172a',
