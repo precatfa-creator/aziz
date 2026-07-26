@@ -1921,6 +1921,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   };
 
+  // Run the 3-day purge once the trash rows are actually in state. It can't be
+  // called from loadProfileAndData: setTrashItems hasn't landed yet in that
+  // async flow, so it would read an empty list and silently no-op. The ref
+  // keeps it to one run per session — the cleanup refetches trash, which would
+  // otherwise re-trigger this effect.
+  const cleanupRan = React.useRef(false);
+  useEffect(() => {
+    if (loading || !user || cleanupRan.current) return;
+    cleanupRan.current = true;
+    cleanupExpiredTrashItems();
+  }, [loading, user, trashItems]);
+
   return (
     <AppContext.Provider
       value={{
