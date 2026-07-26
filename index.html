@@ -6,10 +6,14 @@
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="theme-color" content="#0f172a" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>The Finance Engine</title>
+    <title>Aziz</title>
     <style>
       /* Boot loader: lives inside #root so React's first render wipes it.
-         Inline on purpose — it must paint before the JS bundle downloads. */
+         Inline on purpose — it must paint before the JS bundle downloads.
+
+         Netflix-intro style: the logo is sliced into vertical strips that rise
+         and assemble, a light bar sweeps across the finished mark, then the
+         progress track loops for as long as loading actually takes. */
       #boot {
         position: fixed;
         inset: 0;
@@ -17,19 +21,55 @@
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        gap: 1.5rem;
+        gap: 1.75rem;
         background: #f8fafc;
         font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
       }
       .dark #boot { background: #020617; }
-      #boot img {
-        width: 5rem;
-        height: 5rem;
-        object-fit: contain;
-        animation: bootPop 0.6s cubic-bezier(0.22, 1, 0.36, 1),
-                   bootBreathe 2.4s 0.6s ease-in-out infinite;
+
+      #boot .mark {
+        position: relative;
+        display: flex;
+        width: 7rem;
+        height: 7rem;
+        overflow: hidden;
       }
-      .dark #boot img { filter: invert(1); }
+      #boot .strip {
+        flex: 1 1 10%;
+        background-image: url(/logo-mark.png);
+        background-size: 1000% 100%;
+        background-repeat: no-repeat;
+        transform-origin: 50% 100%;
+        animation: bootStrip 0.85s cubic-bezier(0.16, 1, 0.3, 1) both;
+      }
+      .dark #boot .strip { filter: invert(1); }
+      /* Slice n of 10, each delayed so the mark builds left-to-right. */
+      #boot .strip:nth-child(1)  { background-position:   0%    0; animation-delay: 0.00s; }
+      #boot .strip:nth-child(2)  { background-position:  11.11% 0; animation-delay: 0.05s; }
+      #boot .strip:nth-child(3)  { background-position:  22.22% 0; animation-delay: 0.10s; }
+      #boot .strip:nth-child(4)  { background-position:  33.33% 0; animation-delay: 0.15s; }
+      #boot .strip:nth-child(5)  { background-position:  44.44% 0; animation-delay: 0.20s; }
+      #boot .strip:nth-child(6)  { background-position:  55.56% 0; animation-delay: 0.25s; }
+      #boot .strip:nth-child(7)  { background-position:  66.67% 0; animation-delay: 0.30s; }
+      #boot .strip:nth-child(8)  { background-position:  77.78% 0; animation-delay: 0.35s; }
+      #boot .strip:nth-child(9)  { background-position:  88.89% 0; animation-delay: 0.40s; }
+      #boot .strip:nth-child(10) { background-position: 100%    0; animation-delay: 0.45s; }
+
+      /* Light bar sweeping across the assembled mark, once. */
+      #boot .mark::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(
+          100deg,
+          transparent 35%,
+          rgba(16, 185, 129, 0.55) 50%,
+          transparent 65%
+        );
+        transform: translateX(-100%);
+        animation: bootGleam 1s 0.75s cubic-bezier(0.65, 0, 0.35, 1) both;
+      }
+
       #boot .track {
         position: relative;
         width: 11rem;
@@ -37,6 +77,8 @@
         border-radius: 3px;
         overflow: hidden;
         background: rgba(100, 116, 139, 0.2);
+        opacity: 0;
+        animation: bootFadeIn 0.5s 1.1s ease-out forwards;
       }
       #boot .track::after {
         content: "";
@@ -53,21 +95,32 @@
         font-size: 0.75rem;
         letter-spacing: 0.35em;
         color: #94a3b8;
+        opacity: 0;
+        animation: bootFadeIn 0.6s 0.95s ease-out forwards;
       }
-      @keyframes bootPop {
-        from { opacity: 0; transform: scale(0.7); }
-        to { opacity: 1; transform: scale(1); }
+
+      @keyframes bootStrip {
+        0%   { transform: scaleY(0.04) translateY(18%); opacity: 0; }
+        55%  { transform: scaleY(1.08) translateY(0);   opacity: 1; }
+        100% { transform: scaleY(1)    translateY(0);   opacity: 1; }
       }
-      @keyframes bootBreathe {
-        0%, 100% { transform: scale(1); }
-        50% { transform: scale(1.06); }
+      @keyframes bootGleam {
+        to { transform: translateX(100%); }
+      }
+      @keyframes bootFadeIn {
+        to { opacity: 1; }
       }
       @keyframes bootSweep {
         from { transform: translateX(-120%); }
-        to { transform: translateX(360%); }
+        to   { transform: translateX(360%); }
       }
+
+      /* Assembly is decorative; skip straight to the assembled mark. */
       @media (prefers-reduced-motion: reduce) {
-        #boot img, #boot .track::after { animation-duration: 0.01ms; animation-iteration-count: 1; }
+        #boot .strip { animation: none; }
+        #boot .mark::after { animation: none; opacity: 0; }
+        #boot .track, #boot p { opacity: 1; animation: none; }
+        #boot .track::after { animation-duration: 0.01ms; animation-iteration-count: 1; }
       }
     </style>
     <script>
@@ -80,7 +133,18 @@
   <body>
     <div id="root">
       <div id="boot">
-        <img src="/logo-mark.png" alt="Aziz" />
+        <div class="mark" role="img" aria-label="Aziz">
+          <div class="strip"></div>
+          <div class="strip"></div>
+          <div class="strip"></div>
+          <div class="strip"></div>
+          <div class="strip"></div>
+          <div class="strip"></div>
+          <div class="strip"></div>
+          <div class="strip"></div>
+          <div class="strip"></div>
+          <div class="strip"></div>
+        </div>
         <div class="track"></div>
         <p>AZIZ</p>
       </div>
