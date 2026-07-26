@@ -163,10 +163,14 @@ body {
   to { transform: translateX(360%); }
 }
 
+/* Every strip is the whole logo at full size, clipped to its own tenth, so the
+   slices meet exactly and the RTL page can't reverse them (clip-path is
+   physical, a flex row is not). */
 .loader-strip {
-  flex: 1 1 10%;
+  position: absolute;
+  inset: 0;
   background-image: url(/logo-mark.png);
-  background-size: 1000% 100%;
+  background-size: 100% 100%;
   background-repeat: no-repeat;
   transform-origin: 50% 100%;
   animation: bootStrip 0.85s cubic-bezier(0.16, 1, 0.3, 1) both;

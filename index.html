@@ -29,31 +29,33 @@
 
       #boot .mark {
         position: relative;
-        display: flex;
         width: 7rem;
         height: 7rem;
-        overflow: hidden;
       }
+      /* Every strip is the whole logo at full size, clipped to its own tenth.
+         Identical rendering in each layer means the slices meet exactly — no
+         sub-pixel seams — and clip-path is physical, so the RTL page can't
+         reverse the order the way a flex row would. */
       #boot .strip {
-        flex: 1 1 10%;
+        position: absolute;
+        inset: 0;
         background-image: url(/logo-mark.png);
-        background-size: 1000% 100%;
+        background-size: 100% 100%;
         background-repeat: no-repeat;
         transform-origin: 50% 100%;
         animation: bootStrip 0.85s cubic-bezier(0.16, 1, 0.3, 1) both;
       }
       .dark #boot .strip { filter: invert(1); }
-      /* Slice n of 10, each delayed so the mark builds left-to-right. */
-      #boot .strip:nth-child(1)  { background-position:   0%    0; animation-delay: 0.00s; }
-      #boot .strip:nth-child(2)  { background-position:  11.11% 0; animation-delay: 0.05s; }
-      #boot .strip:nth-child(3)  { background-position:  22.22% 0; animation-delay: 0.10s; }
-      #boot .strip:nth-child(4)  { background-position:  33.33% 0; animation-delay: 0.15s; }
-      #boot .strip:nth-child(5)  { background-position:  44.44% 0; animation-delay: 0.20s; }
-      #boot .strip:nth-child(6)  { background-position:  55.56% 0; animation-delay: 0.25s; }
-      #boot .strip:nth-child(7)  { background-position:  66.67% 0; animation-delay: 0.30s; }
-      #boot .strip:nth-child(8)  { background-position:  77.78% 0; animation-delay: 0.35s; }
-      #boot .strip:nth-child(9)  { background-position:  88.89% 0; animation-delay: 0.40s; }
-      #boot .strip:nth-child(10) { background-position: 100%    0; animation-delay: 0.45s; }
+      #boot .strip:nth-child(1)  { clip-path: inset(0 90% 0  0%); animation-delay: 0.00s; }
+      #boot .strip:nth-child(2)  { clip-path: inset(0 80% 0 10%); animation-delay: 0.05s; }
+      #boot .strip:nth-child(3)  { clip-path: inset(0 70% 0 20%); animation-delay: 0.10s; }
+      #boot .strip:nth-child(4)  { clip-path: inset(0 60% 0 30%); animation-delay: 0.15s; }
+      #boot .strip:nth-child(5)  { clip-path: inset(0 50% 0 40%); animation-delay: 0.20s; }
+      #boot .strip:nth-child(6)  { clip-path: inset(0 40% 0 50%); animation-delay: 0.25s; }
+      #boot .strip:nth-child(7)  { clip-path: inset(0 30% 0 60%); animation-delay: 0.30s; }
+      #boot .strip:nth-child(8)  { clip-path: inset(0 20% 0 70%); animation-delay: 0.35s; }
+      #boot .strip:nth-child(9)  { clip-path: inset(0 10% 0 80%); animation-delay: 0.40s; }
+      #boot .strip:nth-child(10) { clip-path: inset(0  0% 0 90%); animation-delay: 0.45s; }
 
       /* Light bar sweeping across the assembled mark, once. */
       #boot .mark::after {
