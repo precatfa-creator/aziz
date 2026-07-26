@@ -10,7 +10,7 @@ import {
   ShoppingBag, 
   Users, 
   Tags, 
-  Sparkles, 
+  FileText, 
   Settings as SettingsIcon, 
   Layers,
   Wallet,
@@ -57,7 +57,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, setCurrentTab }) =
     { id: 'dashboard', label: t.dashboard, icon: BarChart3 },
     { id: 'transactions', label: language === 'ar' ? 'العمليات' : 'Ledger', icon: Layers },
     { id: 'categories', label: t.categories, icon: Tags },
-    { id: 'reports', label: t.reports, icon: Sparkles },
+    { id: 'reports', label: t.reports, icon: FileText },
     { id: 'settings', label: t.settings, icon: SettingsIcon },
   ];
 

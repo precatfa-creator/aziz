@@ -11,6 +11,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 export interface AzizBackup {
   app?: string;
   version?: string;
+  exportedAt?: string;
   profile?: { name?: string; email?: string; defaultExpenseWalletId?: string };
   preferences?: { language?: 'ar' | 'en'; currency?: 'LYD' | 'USD'; exchangeRate?: number; theme?: 'light' | 'dark' };
   wallets?: any[];

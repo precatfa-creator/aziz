@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
-import { Plus, Search, Calendar, Trash2, Edit2, X, CreditCard, Tag, Sparkles } from 'lucide-react';
+import { Plus, Search, Calendar, Trash2, Edit2, X, CreditCard, Tag } from 'lucide-react';
 import { ConfirmModal } from './ConfirmModal';
 
 export const ExpenseManager: React.FC = () => {

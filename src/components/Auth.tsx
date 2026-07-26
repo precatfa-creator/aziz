@@ -412,7 +412,7 @@ export const Auth: React.FC = () => {
           
           {/* Brand Logo */}
           <div className="flex items-center gap-2 cursor-pointer" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
-            <img src="/logo-192x192.png" alt="Aziz Logo" className="w-10 h-10 rounded-2xl shadow-md object-cover bg-white" />
+            <img src="/logo-mark.png" alt="Aziz Logo" className="w-10 h-10 object-contain dark:invert" />
             <span className="font-extrabold text-xl text-slate-900 dark:text-white transition-colors tracking-tight flex items-center gap-1.5 font-sans">
               <span>{language === 'ar' ? 'عزيز' : 'Aziz'}</span>
               <span className="text-emerald-500 font-bold">|</span>

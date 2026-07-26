@@ -14,7 +14,6 @@ import {
   X,
   CreditCard,
   Tag,
-  Sparkles,
   Wallet,
   ArrowUpRight,
   ArrowDownLeft,

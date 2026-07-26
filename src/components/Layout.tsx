@@ -102,12 +102,15 @@ export const Layout: React.FC = () => {
   // 1. Interactive heartbeat loader while Supabase is fetching the user session
   if (loading) {
     return (
-      <div className="min-h-screen w-full flex flex-col justify-center items-center bg-slate-50 dark:bg-slate-950 font-sans gap-4 animate-fade-in text-center p-6">
-        <div className="w-16 h-16 rounded-2xl flex items-center justify-center animate-bounce shadow-xl shadow-emerald-500/10 overflow-hidden bg-white">
-          <img src="/logo-192x192.png" alt="Logo" className="w-full h-full object-cover" />
-        </div>
+      <div className="min-h-screen w-full flex flex-col justify-center items-center bg-slate-50 dark:bg-slate-950 font-sans gap-6 text-center p-6">
+        <img
+          src="/logo-mark.png"
+          alt="Aziz"
+          className="w-20 h-20 object-contain dark:invert loader-breathe"
+        />
+        <div className="relative w-44 h-[3px] rounded-full overflow-hidden bg-slate-400/20 loader-sweep" />
         <div className="space-y-1">
-          <h2 className="font-exrabold text-base text-slate-800 dark:text-slate-100">
+          <h2 className="font-extrabold text-base text-slate-800 dark:text-slate-100">
             {language === 'ar' ? 'تحميل البيانات بأمان...' : 'Securing local records...'}
           </h2>
           <p className="text-xs text-slate-400">
@@ -163,11 +166,16 @@ export const Layout: React.FC = () => {
       <ProductTour />
       {/* Floating Minimal Header */}
       <header className="sticky top-0 z-40 bg-white/60 dark:bg-slate-950/60 backdrop-blur-md border-b border-white/40 dark:border-slate-800/60 px-4 sm:px-8 py-3.5 flex items-center justify-between shadow-xs">
-         <div className="flex items-center gap-3">
-           <img 
-             src="/logo-192x192.png" 
-             alt="App Logo" 
-             className="w-9 h-9 rounded-xl shadow-md object-cover bg-white" 
+         <button
+           type="button"
+           onClick={() => setCurrentTab('dashboard')}
+           className="flex items-center gap-3 text-start cursor-pointer"
+           aria-label={language === 'ar' ? 'الصفحة الرئيسية' : 'Go to dashboard'}
+         >
+           <img
+             src="/logo-mark.png"
+             alt="App Logo"
+             className="w-9 h-9 object-contain dark:invert"
            />
            <div>
              <h1 className="font-black text-sm text-slate-900 dark:text-white leading-tight">
@@ -177,7 +185,7 @@ export const Layout: React.FC = () => {
                {language === 'ar' ? 'الرفيق المالي' : 'Finance Engine'}
              </p>
            </div>
-         </div>
+         </button>
          
          <div className="flex items-center gap-3 sm:gap-4">
             {/* Theme Switcher */}

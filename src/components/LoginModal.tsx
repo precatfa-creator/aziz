@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Lock, X, Fingerprint, Mail, KeyRound } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import { PASSKEY_ENABLED } from '../lib/features';
 
 interface LoginModalProps {
   isOpen: boolean;
@@ -140,20 +141,24 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose }) => {
             </button>
           </form>
 
-          <div className="flex items-center gap-2 w-full text-[10px] text-slate-400 font-bold">
-            <div className="flex-1 h-px bg-slate-150 dark:bg-slate-800" />
-            <span>{text.or}</span>
-            <div className="flex-1 h-px bg-slate-150 dark:bg-slate-800" />
-          </div>
+          {PASSKEY_ENABLED && (
+            <>
+              <div className="flex items-center gap-2 w-full text-[10px] text-slate-400 font-bold">
+                <div className="flex-1 h-px bg-slate-150 dark:bg-slate-800" />
+                <span>{text.or}</span>
+                <div className="flex-1 h-px bg-slate-150 dark:bg-slate-800" />
+              </div>
 
-          <button
-            onClick={handlePasskey}
-            disabled={loading}
-            className="w-full py-3 flex items-center justify-center gap-2 bg-slate-100 hover:bg-slate-200/80 dark:bg-slate-800 dark:hover:bg-slate-750 disabled:opacity-60 text-slate-700 dark:text-slate-200 font-black text-sm rounded-2xl transition-all cursor-pointer"
-          >
-            <Fingerprint className="w-4 h-4" />
-            {text.fingerprint}
-          </button>
+              <button
+                onClick={handlePasskey}
+                disabled={loading}
+                className="w-full py-3 flex items-center justify-center gap-2 bg-slate-100 hover:bg-slate-200/80 dark:bg-slate-800 dark:hover:bg-slate-750 disabled:opacity-60 text-slate-700 dark:text-slate-200 font-black text-sm rounded-2xl transition-all cursor-pointer"
+              >
+                <Fingerprint className="w-4 h-4" />
+                {text.fingerprint}
+              </button>
+            </>
+          )}
         </motion.div>
       </div>
     </AnimatePresence>

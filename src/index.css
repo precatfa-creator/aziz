@@ -139,3 +139,37 @@ body {
 .pulse-emerald {
   animation: pulseGlow 3s infinite ease-in-out;
 }
+
+/* Loader: same look as the inline #boot loader in index.html, so the handover
+   from pre-React markup to the React loading branch is seamless. */
+@keyframes bootBreathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.06); }
+}
+
+@keyframes bootSweep {
+  from { transform: translateX(-120%); }
+  to { transform: translateX(360%); }
+}
+
+.loader-breathe {
+  animation: bootBreathe 2.4s ease-in-out infinite;
+}
+
+.loader-sweep::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 45%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, transparent, #10b981, #34d399, transparent);
+  animation: bootSweep 1.1s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loader-breathe, .loader-sweep::after {
+    animation-duration: 0.01ms;
+    animation-iteration-count: 1;
+  }
+}

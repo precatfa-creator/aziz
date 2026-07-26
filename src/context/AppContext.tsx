@@ -463,7 +463,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
   const [language, setLanguage] = useState<"ar" | "en">("ar");
   const [currency, setCurrency] = useState<"LYD" | "USD">("LYD");
   const [exchangeRate, setExchangeRate] = useState<number>(6.15); // Default Libya-friendly standard (1 USD = 6.15 Lyd)
-  const [theme, setTheme] = useState<"light" | "dark">("light");
+  // Initialised from localStorage so the first sync effect agrees with the
+  // pre-paint script in index.html — otherwise dark users get a light flash.
+  const [theme, setTheme] = useState<"light" | "dark">(
+    () => (localStorage.getItem("aziz_theme") as "light" | "dark") || "light",
+  );
 
   // Database lists
   const [categories, setCategories] = useState<Category[]>([]);
@@ -497,17 +501,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
       document.documentElement.classList.remove("dark");
     }
   }, [theme]);
-
-  // Read local theme fallback on start
-  useEffect(() => {
-    const savedTheme = localStorage.getItem("aziz_theme") as
-      | "light"
-      | "dark"
-      | null;
-    if (savedTheme) {
-      setTheme(savedTheme);
-    }
-  }, []);
 
   const toggleTheme = () => {
     const nextTheme = theme === "light" ? "dark" : "light";
@@ -611,11 +604,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   const loadProfileAndData = async (uid: string) => {
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("id", uid)
-      .single();
+    // Profile and table data are independent — fire both together so the
+    // loading screen costs one round trip instead of two.
+    const [{ data, error }] = await Promise.all([
+      supabase.from("profiles").select("*").eq("id", uid).single(),
+      fetchAllData(),
+    ]);
     if (error) {
       logSupabaseError(error, "profiles/get");
     } else if (data) {
@@ -625,7 +619,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
       setCurrency(loadedProfile.preferredCurrency);
       setExchangeRate(loadedProfile.exchangeRateUSD_LYD);
     }
-    await fetchAllData();
   };
 
   const clearAllData = () => {
@@ -645,14 +638,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
   useEffect(() => {
     let active = true;
 
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      if (!active) return;
-      if (session?.user) {
-        setUser(session.user);
-        await loadProfileAndData(session.user.id);
-      }
-      setLoading(false);
-    });
+    supabase.auth
+      .getSession()
+      .then(async ({ data: { session } }) => {
+        if (!active) return;
+        if (session?.user) {
+          setUser(session.user);
+          await loadProfileAndData(session.user.id);
+        }
+      })
+      // A throw anywhere above used to leave the loader spinning forever.
+      .catch((err) => console.error("Auth bootstrap failed:", err))
+      .finally(() => setLoading(false));
 
     const { data: authListener } = supabase.auth.onAuthStateChange(
       async (event, session) => {
