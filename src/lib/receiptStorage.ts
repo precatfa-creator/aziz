@@ -21,20 +21,6 @@ export const RECEIPTS_BUCKET = 'receipts';
 /** Signed URLs are short-lived by default; an hour outlives any form session. */
 const SIGNED_URL_TTL_SECONDS = 3600;
 
-/**
- * Renders the whole canvas to a JPEG blob. Deliberately not toDataURL: Base64
- * is a third larger and doubles peak memory, which matters on the phone that
- * just took the photo.
- */
-export const canvasToJpegBlob = (canvas: HTMLCanvasElement, quality = 0.82): Promise<Blob> =>
-  new Promise((resolve, reject) => {
-    canvas.toBlob(
-      (blob) => (blob ? resolve(blob) : reject(new Error('The image could not be encoded.'))),
-      'image/jpeg',
-      quality,
-    );
-  });
-
 /** Uploads one receipt and returns the path to store in image_url. */
 export const uploadReceipt = async (blob: Blob, userId: string): Promise<string> => {
   const path = receiptPath(userId);

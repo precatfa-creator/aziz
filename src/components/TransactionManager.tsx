@@ -36,7 +36,8 @@ import { motion, AnimatePresence } from "motion/react";
 import { createPortal } from "react-dom";
 import { ConfirmModal } from "./ConfirmModal";
 import { isInlineReceipt, packReceiptImages, receiptEntries } from "../lib/receiptImages";
-import { canvasToJpegBlob, resolveReceiptUrls, uploadReceipt } from "../lib/receiptStorage";
+import { resolveReceiptUrls, uploadReceipt } from "../lib/receiptStorage";
+import { fileToReceiptJpeg } from "../lib/imageDownscale";
 
 interface TransactionManagerProps {
   defaultType?: 'income' | 'expense';
@@ -730,42 +731,6 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
     }
   };
 
-  const compressAndResizeImage = async (file: File): Promise<Blob> => {
-    const maxDim = 1020;
-    const objectUrl = URL.createObjectURL(file);
-
-    try {
-      // An object URL avoids materialising the original camera file as a large
-      // Base64 string. On mobile that extra copy can exhaust the PWA/WebView's
-      // memory and cause the operating system to reload the app.
-      const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-        const element = new Image();
-        element.onload = () => resolve(element);
-        element.onerror = () => reject(new Error("The selected image could not be decoded."));
-        element.src = objectUrl;
-      });
-
-      let width = img.naturalWidth;
-      let height = img.naturalHeight;
-      if (width > maxDim || height > maxDim) {
-        const scale = maxDim / Math.max(width, height);
-        width = Math.max(1, Math.round(width * scale));
-        height = Math.max(1, Math.round(height * scale));
-      }
-
-      const canvas = document.createElement("canvas");
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) throw new Error("Image processing is unavailable in this browser.");
-
-      ctx.drawImage(img, 0, 0, width, height);
-      return canvasToJpegBlob(canvas);
-    } finally {
-      URL.revokeObjectURL(objectUrl);
-    }
-  };
-
   const processFiles = async (files: FileList | File[]) => {
     const validFiles = Array.from(files).filter((file) => file.type.startsWith("image/"));
     if (validFiles.length === 0) {
@@ -788,7 +753,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
     try {
       for (const file of validFiles) {
         try {
-          uploadedPaths.push(await uploadReceipt(await compressAndResizeImage(file), user.id));
+          uploadedPaths.push(await uploadReceipt(await fileToReceiptJpeg(file), user.id));
         } catch (error) {
           failed++;
           console.error("Receipt upload failed:", file.name, error);
