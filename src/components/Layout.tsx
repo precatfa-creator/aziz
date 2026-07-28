@@ -103,19 +103,10 @@ export const Layout: React.FC = () => {
   if (loading) {
     return (
       <div className="min-h-screen w-full flex flex-col justify-center items-center bg-slate-50 dark:bg-slate-950 font-sans gap-6 text-center p-6">
-        {/* Logo assembles from 10 vertical slices of the same image */}
-        <div className="relative w-28 h-28 loader-gleam" role="img" aria-label="Aziz">
-          {Array.from({ length: 10 }, (_, i) => (
-            <div
-              key={i}
-              className="loader-strip"
-              style={{
-                clipPath: `inset(0 ${90 - i * 10}% 0 ${i * 10}%)`,
-                animationDelay: `${i * 0.05}s`,
-              }}
-            />
-          ))}
-        </div>
+        {/* Already assembled: the inline #boot loader in index.html plays the
+            slice assembly before React mounts. Replaying it here would show the
+            same intro twice and make the wait feel twice as long. */}
+        <div className="relative w-28 h-28 loader-mark" role="img" aria-label="Aziz" />
         <div className="relative w-44 h-[3px] rounded-full overflow-hidden bg-slate-400/20 loader-sweep loader-fade-in" />
         <div className="space-y-1 loader-fade-in">
           <h2 className="font-extrabold text-base text-slate-800 dark:text-slate-100">

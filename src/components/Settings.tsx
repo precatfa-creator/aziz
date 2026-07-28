@@ -8,6 +8,9 @@ import { useApp } from '../context/AppContext';
 import { supabase } from '../supabase';
 import { restoreBackup, type AzizBackup } from '../lib/restoreBackup';
 import { backupCounts, buildBackup, downloadBackup } from '../lib/exportBackup';
+import { inlineReceiptsForBackup } from '../lib/receiptStorage';
+import { countInlineReceipts, rowsNeedingMigration } from '../lib/receiptImages';
+import { migrateReceiptsToStorage } from '../lib/migrateReceipts';
 import { 
   Settings as SettingsIcon, 
   Languages, 
@@ -23,7 +26,8 @@ import {
   Fingerprint,
   DatabaseBackup,
   KeyRound,
-  Download
+  Download,
+  HardDriveUpload
 } from 'lucide-react';
 import { ConfirmModal } from './ConfirmModal';
 import { PASSKEY_ENABLED } from '../lib/features';
@@ -61,6 +65,14 @@ export const Settings: React.FC = () => {
   const [isRestoring, setIsRestoring] = useState(false);
   const [backupMessage, setBackupMessage] = useState('');
   const restoreInputRef = React.useRef<HTMLInputElement>(null);
+
+  // Receipts taken before the Storage migration are still Base64 inside the
+  // transaction row, so every app start downloads all of them. Counted here so
+  // the button can say what it is about to move — and so it disappears once
+  // there is nothing left to move.
+  const [isMigratingReceipts, setIsMigratingReceipts] = useState(false);
+  const [receiptMigrationMessage, setReceiptMigrationMessage] = useState('');
+  const inlineReceiptCount = countInlineReceipts([...incomes, ...expenses]);
 
   // Password change form
   const [newPassword, setNewPassword] = useState('');
@@ -113,7 +125,28 @@ export const Settings: React.FC = () => {
   };
 
   // Full backup: same JSON shape the restore above reads, so it round-trips.
-  const handleDownloadBackup = () => {
+  // Receipts live in Storage now, so they are pulled back inline first —
+  // exporting bare object paths would produce a file that restores to nothing
+  // in any other account.
+  const handleDownloadBackup = async () => {
+    let inlinedIncomes = incomes;
+    let inlinedExpenses = expenses;
+    try {
+      setBackupMessage(language === 'ar' ? 'جارٍ تجهيز المرفقات...' : 'Collecting receipts...');
+      [inlinedIncomes, inlinedExpenses] = await Promise.all([
+        inlineReceiptsForBackup(incomes),
+        inlineReceiptsForBackup(expenses),
+      ]);
+    } catch (e) {
+      console.error('Backup aborted: receipts could not be collected', e);
+      setBackupMessage(
+        language === 'ar'
+          ? 'تعذّر تنزيل النسخة: لم يتم جلب بعض المرفقات. لم يُحفظ أي ملف.'
+          : 'Backup cancelled: some receipts could not be fetched. No file was written.',
+      );
+      return;
+    }
+
     const backup = buildBackup({
       profile,
       language,
@@ -122,8 +155,8 @@ export const Settings: React.FC = () => {
       theme,
       wallets,
       categories: allCategories,
-      incomes,
-      expenses,
+      incomes: inlinedIncomes,
+      expenses: inlinedExpenses,
       plannedPurchases,
       savingsGroups,
     });
@@ -134,6 +167,38 @@ export const Settings: React.FC = () => {
         ? `تم تنزيل النسخة: ${c.wallets} محفظة، ${c.categories} تصنيف، ${c.incomes} دخل، ${c.expenses} مصروف، ${c.plannedPurchases} مشترى مخطط، ${c.savingsGroups} جمعية.`
         : `Backup downloaded: ${c.wallets} wallets, ${c.categories} categories, ${c.incomes} incomes, ${c.expenses} expenses, ${c.plannedPurchases} planned purchases, ${c.savingsGroups} savings groups.`,
     );
+  };
+
+  // Moves legacy inline receipts into the Storage bucket. Re-runnable: it only
+  // touches rows that still hold Base64, so restoring an older backup and
+  // pressing this again works. Reloads afterwards because every migrated row is
+  // now stale in memory.
+  const handleMigrateReceipts = async () => {
+    if (!user) return;
+    setIsMigratingReceipts(true);
+    setReceiptMigrationMessage(
+      language === 'ar' ? 'جارٍ نقل المرفقات...' : 'Moving receipts to storage...',
+    );
+    try {
+      const r = await migrateReceiptsToStorage(
+        user.id,
+        rowsNeedingMigration(incomes),
+        rowsNeedingMigration(expenses),
+      );
+      setReceiptMigrationMessage(
+        language === 'ar'
+          ? `تم نقل ${r.receipts} مرفقًا في ${r.migrated} حركة.${r.failed ? ` تعذّر نقل ${r.failed} حركة — أعد المحاولة.` : ' جارٍ إعادة التحميل...'}`
+          : `Moved ${r.receipts} receipts across ${r.migrated} transactions.${r.failed ? ` ${r.failed} transaction(s) failed — run it again.` : ' Reloading...'}`,
+      );
+      if (r.migrated > 0 && r.failed === 0) setTimeout(() => window.location.reload(), 1500);
+    } catch (e) {
+      console.error('Receipt migration failed', e);
+      setReceiptMigrationMessage(
+        language === 'ar' ? 'فشل نقل المرفقات.' : 'Receipt migration failed.',
+      );
+    } finally {
+      setIsMigratingReceipts(false);
+    }
   };
 
   // Sets a new password for the already-signed-in user. No email round trip:
@@ -547,6 +612,26 @@ export const Settings: React.FC = () => {
               </button>
               {backupMessage && (
                 <p className="text-[10px] text-center font-bold text-slate-500 dark:text-slate-400 leading-relaxed">{backupMessage}</p>
+              )}
+
+              {inlineReceiptCount > 0 && (
+                <>
+                  <button
+                    onClick={handleMigrateReceipts}
+                    disabled={isMigratingReceipts}
+                    className="w-full py-3 bg-brand-teal/10 hover:bg-brand-teal/20 text-brand-teal border border-brand-teal/20 disabled:opacity-40 disabled:cursor-not-allowed font-bold text-xs rounded-xl flex items-center justify-center gap-2 cursor-pointer transition-transform shadow-xs"
+                  >
+                    <HardDriveUpload className="w-4 h-4" />
+                    <span>
+                      {language === 'ar'
+                        ? `نقل ${inlineReceiptCount} مرفقًا إلى التخزين — يسرّع فتح التطبيق`
+                        : `Move ${inlineReceiptCount} receipts to storage — speeds up app loading`}
+                    </span>
+                  </button>
+                  {receiptMigrationMessage && (
+                    <p className="text-[10px] text-center font-bold text-slate-500 dark:text-slate-400 leading-relaxed">{receiptMigrationMessage}</p>
+                  )}
+                </>
               )}
 
               {PASSKEY_ENABLED && (

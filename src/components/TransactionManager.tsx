@@ -35,6 +35,8 @@ import {
 import { motion, AnimatePresence } from "motion/react";
 import { createPortal } from "react-dom";
 import { ConfirmModal } from "./ConfirmModal";
+import { isInlineReceipt, packReceiptImages, receiptEntries } from "../lib/receiptImages";
+import { canvasToJpegBlob, resolveReceiptUrls, uploadReceipt } from "../lib/receiptStorage";
 
 interface TransactionManagerProps {
   defaultType?: 'income' | 'expense';
@@ -68,6 +70,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
     selectedWalletFilter,
     setSelectedWalletFilter,
     currency: globalCurrency,
+    user,
   } = useApp();
 
   // Comment expand/input state
@@ -200,6 +203,43 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
   // Detail Modal State
   const [previewImagesList, setPreviewImagesList] = useState<string[]>([]);
   const [currentPreviewIndex, setCurrentPreviewIndex] = useState<number>(0);
+
+  // image_url holds Storage object paths, which no <img> can read directly.
+  // Sign whatever is on screen — the form's attachments plus the open preview —
+  // in one batched call. Only paths go through here: legacy Base64 entries are
+  // already displayable, and keying the effect on them would mean splitting and
+  // re-joining a megabyte of it on every keystroke in the form.
+  const [uploadingReceipts, setUploadingReceipts] = useState(false);
+  const [signedReceipts, setSignedReceipts] = useState<Record<string, string>>({});
+  const [receiptsUnavailable, setReceiptsUnavailable] = useState(false);
+  const pathsToSign = [...receiptEntries(imageUrl), ...previewImagesList].filter(
+    (entry) => !isInlineReceipt(entry),
+  );
+  const signKey = pathsToSign.join("|");
+
+  useEffect(() => {
+    const paths = signKey.split("|").filter(Boolean);
+    if (paths.length === 0) return;
+    let active = true;
+    resolveReceiptUrls(paths)
+      .then(({ urls, missing }) => {
+        if (!active) return;
+        setSignedReceipts((prev) => ({ ...prev, ...urls }));
+        setReceiptsUnavailable(missing > 0);
+      })
+      .catch((err) => {
+        console.error("Could not sign receipt URLs:", err);
+        if (active) setReceiptsUnavailable(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, [signKey]);
+
+  // undefined means "not signed yet". Rendering <img src=""> instead would make
+  // the browser re-request the page and paint a broken tile for every receipt.
+  const receiptSrc = (entry: string): string | undefined =>
+    isInlineReceipt(entry) ? entry : signedReceipts[entry];
 
   // ConfirmModal states
   const [confirmModalState, setConfirmModalState] = useState<{
@@ -377,9 +417,31 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
     setDropdownOpen(false);
   };
 
+  // A failed save used to only reach the console, so the form reset and jumped
+  // to the history tab as if it had worked and the entry was simply gone.
+  const reportSaveFailure = (err: unknown) => {
+    console.error(err);
+    alert(
+      language === "ar"
+        ? "تعذّر حفظ الحركة. لم يتم تسجيل أي شيء — حاول مجددًا، وإذا كانت هناك صور مرفقة فجرّب إزالة بعضها."
+        : "The transaction could not be saved. Nothing was recorded — try again, and if receipts are attached try removing some.",
+    );
+  };
+
   // Submit main consolidated ledger entry
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    // Disabling the save button is not enough: pressing Enter in any field
+    // submits the form directly, which would save the transaction without the
+    // photo that is still on its way to the bucket.
+    if (uploadingReceipts) {
+      alert(
+        language === "ar"
+          ? "جارٍ رفع الصور — انتظر حتى ينتهي الرفع قبل الحفظ."
+          : "Receipts are still uploading — wait for them to finish before saving.",
+      );
+      return;
+    }
     const isNewWalletOptionActive = createAndTopupWallet && transactionType === "income" && !editingId;
     if (!amount || !title || !selectedCatId || (!isNewWalletOptionActive && !walletId)) return;
     const numericAmount = parseFloat(amount);
@@ -526,7 +588,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
       resetForm();
       setActiveSubTab("history");
     } catch (err) {
-      console.error(err);
+      reportSaveFailure(err);
     }
   };
 
@@ -550,7 +612,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
       resetForm();
       setActiveSubTab("history");
     } catch (err) {
-      console.error(err);
+      reportSaveFailure(err);
     }
   };
 
@@ -606,7 +668,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
       resetForm();
       setActiveSubTab("history");
     } catch (err) {
-      console.error(err);
+      reportSaveFailure(err);
     }
   };
 
@@ -668,49 +730,40 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
     }
   };
 
-  const compressAndResizeImage = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const img = new Image();
-        img.onload = () => {
-          const canvas = document.createElement("canvas");
-          const ctx = canvas.getContext("2d");
-          if (!ctx) {
-            resolve(event.target?.result as string);
-            return;
-          }
+  const compressAndResizeImage = async (file: File): Promise<Blob> => {
+    const maxDim = 1020;
+    const objectUrl = URL.createObjectURL(file);
 
-          const maxDim = 1020; // Auto-resize large images preserving superb quality
-          let width = img.width;
-          let height = img.height;
+    try {
+      // An object URL avoids materialising the original camera file as a large
+      // Base64 string. On mobile that extra copy can exhaust the PWA/WebView's
+      // memory and cause the operating system to reload the app.
+      const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const element = new Image();
+        element.onload = () => resolve(element);
+        element.onerror = () => reject(new Error("The selected image could not be decoded."));
+        element.src = objectUrl;
+      });
 
-          if (width > maxDim || height > maxDim) {
-            if (width > height) {
-              height = Math.round((height * maxDim) / width);
-              width = maxDim;
-            } else {
-              width = Math.round((width * maxDim) / height);
-              height = maxDim;
-            }
-          }
+      let width = img.naturalWidth;
+      let height = img.naturalHeight;
+      if (width > maxDim || height > maxDim) {
+        const scale = maxDim / Math.max(width, height);
+        width = Math.max(1, Math.round(width * scale));
+        height = Math.max(1, Math.round(height * scale));
+      }
 
-          canvas.width = width;
-          canvas.height = height;
-          ctx.drawImage(img, 0, 0, width, height);
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("Image processing is unavailable in this browser.");
 
-          // Compress to lightweight JPEG at 0.82 quality
-          const dataUrl = canvas.toDataURL("image/jpeg", 0.82);
-          resolve(dataUrl);
-        };
-        img.onerror = () => {
-          resolve(event.target?.result as string);
-        };
-        img.src = event.target?.result as string;
-      };
-      reader.onerror = (err) => reject(err);
-      reader.readAsDataURL(file);
-    });
+      ctx.drawImage(img, 0, 0, width, height);
+      return canvasToJpegBlob(canvas);
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
   };
 
   const processFiles = async (files: FileList | File[]) => {
@@ -724,15 +777,51 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
       return;
     }
 
+    if (!user) return;
+
+    // Process one photo at a time. Decoding several full-resolution camera
+    // images concurrently creates a large memory spike on mobile devices.
+    // One bad file must not discard the photos already uploaded beside it.
+    setUploadingReceipts(true);
+    const uploadedPaths: string[] = [];
+    let failed = 0;
     try {
-      const promises = validFiles.map((file) => compressAndResizeImage(file));
-      const processedImages = await Promise.all(promises);
-      
-      const currentArr = imageUrl ? imageUrl.split("|").filter(Boolean) : [];
-      const updatedImages = [...currentArr, ...processedImages];
-      setImageUrl(updatedImages.join("|"));
-    } catch (error) {
-      console.error("Error compressing/resizing images:", error);
+      for (const file of validFiles) {
+        try {
+          uploadedPaths.push(await uploadReceipt(await compressAndResizeImage(file), user.id));
+        } catch (error) {
+          failed++;
+          console.error("Receipt upload failed:", file.name, error);
+        }
+      }
+    } finally {
+      setUploadingReceipts(false);
+    }
+
+    const updatedImages = [...receiptEntries(imageUrl), ...uploadedPaths];
+
+    // Paths are short, so this only ever bites on a row still holding legacy
+    // Base64. Overflowing image_url makes the INSERT fail and takes the whole
+    // transaction down with it, so refuse the extra photos here instead.
+    const { kept, dropped } = packReceiptImages(updatedImages);
+    setImageUrl(kept.join("|"));
+
+    if (failed > 0 || dropped > 0) {
+      alert(
+        language === "ar"
+          ? [
+              failed > 0 ? `تعذّر رفع ${failed} صورة.` : "",
+              dropped > 0 ? `تم تجاوز الحد الأقصى للمرفقات، ولم تُضف ${dropped} صورة.` : "",
+            ]
+              .filter(Boolean)
+              .join(" ")
+          : [
+              failed > 0 ? `${failed} image(s) could not be uploaded.` : "",
+              dropped > 0 ? `Attachment size limit reached — ${dropped} image(s) were not added.` : "",
+            ]
+              .filter(Boolean)
+              .join(" "),
+      );
     }
   };
 
@@ -746,9 +835,11 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      processFiles(e.target.files);
-    }
+    const files = e.target.files ? Array.from(e.target.files) : [];
+    // Reset immediately so taking the same photo again still fires `change`,
+    // and so the native camera input does not retain the large File object.
+    e.target.value = "";
+    if (files.length > 0) void processFiles(files);
   };
 
   // Consolidate Incomes & Expenses under a single list
@@ -1608,22 +1699,32 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                   {imageUrl ? (
                     <div className="flex flex-col gap-3 p-3 bg-slate-50 dark:bg-slate-900 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800">
                       <div className="flex flex-wrap gap-2.5">
-                        {imageUrl.split("|").filter(Boolean).map((imgUrl, idx) => (
+                        {receiptEntries(imageUrl).map((imgUrl, idx) => (
                           <div key={idx} className="relative group w-16 h-16 rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-white/50 shadow-xs transition-all hover:scale-[1.03]">
-                            <img
-                              src={imgUrl}
-                              alt={`Receipt ${idx + 1}`}
-                              className="w-full h-full object-cover cursor-pointer"
-                              onClick={() => {
-                                setPreviewImagesList([imgUrl]);
-                                setCurrentPreviewIndex(0);
-                              }}
-                              referrerPolicy="no-referrer"
-                            />
+                            {receiptSrc(imgUrl) ? (
+                              <img
+                                src={receiptSrc(imgUrl)}
+                                alt={`Receipt ${idx + 1}`}
+                                className="w-full h-full object-cover cursor-pointer"
+                                onClick={() => {
+                                  setPreviewImagesList([imgUrl]);
+                                  setCurrentPreviewIndex(0);
+                                }}
+                                referrerPolicy="no-referrer"
+                              />
+                            ) : (
+                              <div className="w-full h-full bg-slate-200 dark:bg-slate-800 animate-pulse" />
+                            )}
+                            {/* ponytail: drops the reference, leaves the object
+                                in the bucket. Deleting here would destroy the
+                                receipt of a row the user then cancels out of,
+                                and of anything sitting in Trash pointing at the
+                                same path. Sweep orphans with a scheduled job if
+                                storage cost ever shows up. */}
                             <button
                               type="button"
                               onClick={() => {
-                                const currentArr = imageUrl.split("|").filter(Boolean);
+                                const currentArr = receiptEntries(imageUrl);
                                 currentArr.splice(idx, 1);
                                 setImageUrl(currentArr.join("|"));
                               }}
@@ -1656,10 +1757,17 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                         </button>
                       </div>
                       <p className="text-[10px] text-slate-400 dark:text-slate-500 font-bold">
-                        {language === "ar" 
-                          ? `تم إرفاق ${imageUrl.split("|").filter(Boolean).length} صور. اضغط على أي صورة لمعاينتها بنقاء.`
-                          : `Attached ${imageUrl.split("|").filter(Boolean).length} documents. Click any to preview.`}
+                        {language === "ar"
+                          ? `تم إرفاق ${receiptEntries(imageUrl).length} صور. اضغط على أي صورة لمعاينتها بنقاء.`
+                          : `Attached ${receiptEntries(imageUrl).length} documents. Click any to preview.`}
                       </p>
+                      {receiptsUnavailable && (
+                        <p className="text-[10px] text-rose-500 font-bold">
+                          {language === "ar"
+                            ? "تعذّر تحميل صور المرفقات. المرفقات نفسها ما زالت محفوظة."
+                            : "Receipt images could not be loaded. The attachments themselves are still saved."}
+                        </p>
+                      )}
                       <input
                         ref={fileInputRef}
                         type="file"
@@ -1764,11 +1872,18 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                 >
                   {t.cancel}
                 </button>
+                {/* Saving mid-upload would store the transaction without the
+                    photo still on its way to the bucket. */}
                 <button
                   type="submit"
-                  className="px-12 py-3.5 bg-brand-slate text-white dark:bg-white dark:text-brand-slate hover:opacity-90 font-black text-xs rounded-2xl cursor-pointer transition-all active:scale-95 shadow-md shadow-brand-slate/15 dark:shadow-none"
+                  disabled={uploadingReceipts}
+                  className="px-12 py-3.5 bg-brand-slate text-white dark:bg-white dark:text-brand-slate hover:opacity-90 font-black text-xs rounded-2xl cursor-pointer transition-all active:scale-95 shadow-md shadow-brand-slate/15 dark:shadow-none disabled:opacity-50 disabled:cursor-wait"
                 >
-                  {t.save}
+                  {uploadingReceipts
+                    ? language === "ar"
+                      ? "جارٍ رفع الصور..."
+                      : "Uploading receipts..."
+                    : t.save}
                 </button>
               </div>
 
@@ -2866,12 +2981,24 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
 
               {/* Main image preview with carousel controls */}
               <div className="relative w-full flex items-center justify-center bg-black/10 dark:bg-black/40 rounded-2xl p-2 border border-slate-200/50 dark:border-slate-800 overflow-hidden min-h-[300px]">
-                <img
-                  src={previewImagesList[currentPreviewIndex]}
-                  alt="Full Receipt Photo"
-                  className="max-h-[60vh] w-auto object-contain rounded-xl shadow-xl transition-all duration-300"
-                  referrerPolicy="no-referrer"
-                />
+                {receiptSrc(previewImagesList[currentPreviewIndex]) ? (
+                  <img
+                    src={receiptSrc(previewImagesList[currentPreviewIndex])}
+                    alt="Full Receipt Photo"
+                    className="max-h-[60vh] w-auto object-contain rounded-xl shadow-xl transition-all duration-300"
+                    referrerPolicy="no-referrer"
+                  />
+                ) : (
+                  <p className="text-xs font-bold text-slate-400 py-24">
+                    {receiptsUnavailable
+                      ? language === "ar"
+                        ? "تعذّر تحميل هذا المرفق."
+                        : "This receipt could not be loaded."
+                      : language === "ar"
+                        ? "جارٍ التحميل..."
+                        : "Loading..."}
+                  </p>
+                )}
 
                 {/* Left/Right Buttons if more than 1 image */}
                 {previewImagesList.length > 1 && (
@@ -2921,12 +3048,16 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                           : "border-transparent opacity-50 hover:opacity-100"
                       }`}
                     >
-                      <img
-                        src={url}
-                        alt={`Slide ${idx + 1}`}
-                        className="w-full h-full object-cover"
-                        referrerPolicy="no-referrer"
-                      />
+                      {receiptSrc(url) ? (
+                        <img
+                          src={receiptSrc(url)}
+                          alt={`Slide ${idx + 1}`}
+                          className="w-full h-full object-cover"
+                          referrerPolicy="no-referrer"
+                        />
+                      ) : (
+                        <div className="w-full h-full bg-slate-200 dark:bg-slate-800 animate-pulse" />
+                      )}
                       <span className="absolute bottom-0 inset-x-0 bg-black/40 text-[8px] text-white text-center font-mono">
                         {idx + 1}
                       </span>

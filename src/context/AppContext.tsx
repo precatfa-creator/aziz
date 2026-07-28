@@ -1009,6 +1009,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
       );
     } catch (e) {
       logSupabaseError(e, `incomes/${id}`);
+      // See updateExpense: a silent failure here reads as a successful save.
+      throw e;
     }
   };
 
@@ -1129,6 +1131,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
       );
     } catch (e) {
       logSupabaseError(e, `expenses/${id}`);
+      // Swallowing this made a rejected update (an oversized image_url, say)
+      // look like a successful save: the form reset and switched tabs anyway.
+      throw e;
     }
   };
 
