@@ -61,6 +61,8 @@ function localApi(mode: string): Plugin {
 }
 
 export default defineConfig(({ mode }) => {
+  const isNativeBuild = mode === 'native';
+
   return {
     // Vercel's Supabase Marketplace integration injects NEXT_PUBLIC_-prefixed
     // vars; expose those to the client bundle alongside Vite's own VITE_ prefix.
@@ -69,7 +71,7 @@ export default defineConfig(({ mode }) => {
       localApi(mode),
       react(),
       tailwindcss(),
-      VitePWA({
+      ...(!isNativeBuild ? [VitePWA({
         registerType: 'autoUpdate',
         devOptions: {
           enabled: false
@@ -99,7 +101,7 @@ export default defineConfig(({ mode }) => {
             }
           ]
         }
-      })
+      })] : [])
     ],
     resolve: {
       alias: {
