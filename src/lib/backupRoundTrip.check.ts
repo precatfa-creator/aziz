@@ -120,6 +120,7 @@ assert.equal(inserted.incomes[0].transfer_id, null, 'an ordinary income gained a
 // Drop this and a restore quietly un-hides every row the owner kept from viewers.
 assert.equal(inserted.expenses[0].hidden_from_viewers, true, 'hidden-from-viewers flag lost on restore');
 assert.equal(inserted.expenses[1].hidden_from_viewers, null);
+assert.equal(inserted.wallets[0].is_card, true, 'a pre-setting backup wallet must restore as a card');
 assert.equal(inserted.future_purchases[0].item_name, 'Laptop');
 assert.equal(inserted.savings_groups[0].total_amount, 6000);
 

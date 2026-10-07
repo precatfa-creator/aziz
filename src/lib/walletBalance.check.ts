@@ -255,4 +255,24 @@ assert.strictEqual(inCompartment(expense(500, 'cash_withdrawal'), 'expense', 'ca
 assert.strictEqual(inCompartment(expense(500, 'cash_spend'), 'expense', 'card'), false);
 assert.strictEqual(inCompartment(expense(500, 'cash_spend'), 'expense', 'cash'), true);
 
+// Wallet type. Existing wallets have no isCard and must compute exactly as
+// before; a cash wallet keeps the same total with all of it in cash.
+{
+  const rows = [expense(400), expense(300, 'cash_withdrawal'), expense(100, 'cash_spend')];
+  const legacy = walletBalance(card, [income(1000)], rows);
+  const asCard = walletBalance({ ...card, isCard: true }, [income(1000)], rows);
+  assert.deepStrictEqual(asCard, legacy, 'isCard: true must change nothing');
+  assert.strictEqual(legacy.onCard, 2500 + 1000 - 400 - 300);
+  assert.strictEqual(legacy.inCash, 200);
+
+  const asCash = walletBalance({ ...card, isCard: false }, [income(1000)], rows);
+  assert.strictEqual(asCash.total, legacy.total, 'switching type must not change the total');
+  assert.strictEqual(asCash.onCard, 0);
+  assert.strictEqual(asCash.inCash, legacy.total);
+  assert.strictEqual(asCash.actualSpending, legacy.actualSpending);
+
+  assert.strictEqual(inCompartment(expense(5), 'expense', 'cash', false), true);
+  assert.strictEqual(inCompartment(income(5), 'income', 'card', false), false);
+}
+
 console.log('walletBalance.check.ts: all assertions passed');

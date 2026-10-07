@@ -341,6 +341,11 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
     if (editingId || !walletId) return;
     const w = wallets.find((x) => x.id === walletId);
     if (!w) return;
+    // A cash wallet has one compartment; there is nothing to suggest.
+    if (w.isCard === false) {
+      setExpenseKind("wallet_spend");
+      return;
+    }
     // Per currency: a wallet can be out of LYD while still holding USD cash,
     // and the compartment to suggest depends on which one is being spent.
     const { onCard, inCash } = walletStats(w, currency);
@@ -372,8 +377,13 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
   // What an expense of this kind can actually draw on, in the currency being
   // spent. Cash already withdrawn cannot be spent off the card again, USD
   // cannot be spent out of the LYD bucket, and vice versa.
+  // A cash wallet can spend everything it holds, whatever kind the row carries.
   const availableFor = (wallet: any, kind: ExpenseKind, curr: "LYD" | "USD" = currency) =>
-    kind === "cash_spend" ? walletStats(wallet, curr).inCash : walletStats(wallet, curr).onCard;
+    wallet.isCard === false
+      ? walletStats(wallet, curr).total
+      : kind === "cash_spend"
+        ? walletStats(wallet, curr).inCash
+        : walletStats(wallet, curr).onCard;
 
   const showConfirm = (
     title: string,
@@ -1030,9 +1040,11 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
     .filter((tx) => !hideHistoricalData || !tx.isHistorical)
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
-  const hasCashRows = expenses.some(
-    (e) => e.expenseKind === "cash_withdrawal" || e.expenseKind === "cash_spend",
-  );
+  // Cash exists once anything was withdrawn or spent as cash, or once a cash
+  // wallet exists at all.
+  const hasCashRows =
+    wallets.some((w) => w.isCard === false) ||
+    expenses.some((e) => e.expenseKind === "cash_withdrawal" || e.expenseKind === "cash_spend");
 
   // Under the cash view a withdrawal is money arriving, not leaving.
   const isInflow = (tx: { type: string; expenseKind?: string }) =>
@@ -1062,13 +1074,14 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
       ? tx.walletId === walletFilter || (tx as any).transferPair?.walletId === walletFilter
       : true;
     // A transfer row viewed from its receiving wallet is that wallet's income
-    // leg, which always lands on the card — not the paying leg's compartment.
+    // leg, which lands on its card — or in its cash, if it is a cash wallet.
     const receivingSide = !!walletFilter && tx.walletId !== walletFilter;
+    const isCardWallet = (id?: string) => wallets.find((w) => w.id === id)?.isCard !== false;
     const matchCompartment =
       compartmentFilter === "all" ||
       (receivingSide
-        ? compartmentFilter === "card"
-        : inCompartment(tx as any, tx.type, compartmentFilter));
+        ? compartmentFilter === (isCardWallet(walletFilter) ? "card" : "cash")
+        : inCompartment(tx as any, tx.type, compartmentFilter, isCardWallet(tx.walletId)));
     return matchSearch && matchCat && matchType && matchPriority && matchWallet && matchCompartment;
   });
 
@@ -1963,7 +1976,8 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                     too — the money has to leave the card or the hand. */}
                 {(transactionType === "expense" || transactionType === "exchange") && walletId && (() => {
                   const w = wallets.find((x) => x.id === walletId);
-                  if (!w) return null;
+                  // A cash wallet has no card to spend from or withdraw from.
+                  if (!w || w.isCard === false) return null;
                   const { onCard, inCash } = walletStats(w, currency);
                   const isExchange = transactionType === "exchange";
                   const kinds: { kind: ExpenseKind; ar: string; en: string; hint: string }[] = [

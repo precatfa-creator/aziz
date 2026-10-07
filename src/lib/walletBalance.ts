@@ -72,7 +72,10 @@ export const inCompartment = (
   tx: { expenseKind?: ExpenseKind },
   type: 'income' | 'expense',
   compartment: Compartment,
+  // A cash wallet has no card side: everything in it is cash.
+  isCardWallet = true,
 ): boolean => {
+  if (!isCardWallet) return compartment === 'cash';
   if (type === 'income') return compartment === 'card';
   const kind = tx.expenseKind ?? 'wallet_spend';
   if (kind === 'cash_withdrawal') return true;
@@ -137,8 +140,15 @@ export function walletBalance(
   // negative compartment means rows are mis-tagged (cash spent that was never
   // withdrawn), and showing that is more use than hiding it behind a max(0, …)
   // that would silently break the identity.
-  const onCard = opening + earned + transferIn - spend - drawn - outCard;
-  const inCash = drawn - cashSpend - outCash;
+  let onCard = opening + earned + transferIn - spend - drawn - outCard;
+  let inCash = drawn - cashSpend - outCash;
+  // A cash wallet is the same money with no card to hold it: the total is
+  // untouched, it is all cash in hand. Card wallets (undefined included) keep
+  // the split exactly as before.
+  if (wallet.isCard === false) {
+    inCash += onCard;
+    onCard = 0;
+  }
   const actualSpending = spend + cashSpend;
 
   return {

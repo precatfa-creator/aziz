@@ -167,6 +167,27 @@ await as(O, null, async () => {
   await db.exec(`update public.wallet_shares set compartment = 'all'`);
 });
 
+// Wallet type: existing wallets default to card (W1's numbers above are
+// unchanged). A cash wallet is all cash, and a card/cash scope on it is moot.
+await db.exec(`
+  update public.wallets set is_card = false where id = '${W2}';
+  insert into public.incomes (user_id, amount, currency, title, date, wallet_id) values ('${O}', 300, 'LYD', 'Gift', '2026-02-01', '${W2}');
+  insert into public.expenses (user_id, amount, currency, title, date, wallet_id) values ('${O}', 50, 'LYD', 'Bread', '2026-02-02', '${W2}');
+`);
+await as(O, null, () => db.exec(`insert into public.wallet_shares (wallet_id, viewer_id, owner_id, mode, compartment) values ('${W2}', '${V}', '${O}', 'all', 'card')`));
+await as(V, 'viewer', async () => {
+  const w2 = (await db.query(`select * from public.viewer_wallets()`)).rows.find((b) => b.wallet_id === W2);
+  assert.equal(w2.on_card, null, 'a cash wallet has no card balance');
+  assert.equal(Number(w2.in_cash), 250, 'a cash wallet holds its whole total as cash');
+  assert.equal(w2.compartment, 'all', 'scope must not apply to a cash wallet');
+  const tx = (await db.query(`select * from public.viewer_wallet_transactions('${W2}')`)).rows;
+  assert.equal(tx.length, 2, 'a card scope must not hide a cash wallet\'s rows');
+  const w1 = (await db.query(`select * from public.viewer_wallets()`)).rows.find((b) => b.wallet_id === W1 && b.currency === 'LYD');
+  assert.equal(Number(w1.on_card), 1120, 'existing card wallet changed');
+  assert.equal(Number(w1.in_cash), 250, 'existing card wallet changed');
+});
+await as(O, null, () => db.exec(`delete from public.wallet_shares where wallet_id = '${W2}'`));
+
 // Balance mode returns no rows.
 await as(O, null, () => db.exec(`update public.wallet_shares set mode = 'balance'`));
 await as(V, 'viewer', async () => {

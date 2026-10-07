@@ -87,6 +87,12 @@ export interface Wallet {
   color: string;
   icon: string;
   isHidden?: boolean;
+  /**
+   * A card has two compartments (on the card, and cash withdrawn from it). A
+   * cash wallet is all cash. Undefined reads as card: every wallet created
+   * before the setting existed was modelled as one.
+   */
+  isCard?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }

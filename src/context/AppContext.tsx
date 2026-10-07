@@ -182,6 +182,7 @@ function mapWallet(row: any): Wallet {
     color: row.color || "slate",
     icon: row.icon || "Wallet",
     isHidden: row.is_hidden,
+    isCard: row.is_card !== false,
     createdAt: new Date(row.created_at),
     updatedAt: new Date(row.updated_at),
   };
@@ -407,6 +408,7 @@ interface AppContextProps {
     currency: "LYD" | "USD",
     color: string,
     icon: string,
+    isCard?: boolean,
   ) => Promise<string>;
   updateWallet: (
     id: string,
@@ -416,6 +418,7 @@ interface AppContextProps {
     color: string,
     icon: string,
     isHidden?: boolean,
+    isCard?: boolean,
   ) => Promise<void>;
   deleteWallet: (id: string) => Promise<void>;
 
@@ -2121,6 +2124,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     currency: "LYD" | "USD",
     color: string,
     icon: string,
+    // New wallets are cash unless the user says they're a card.
+    isCard = false,
   ): Promise<string> => {
     if (!user) throw new Error("Unauthorized");
     const { data, error } = await supabase
@@ -2133,6 +2138,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
         color,
         icon,
         is_hidden: false,
+        is_card: isCard,
       })
       .select()
       .single();
@@ -2153,6 +2159,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     color: string,
     icon: string,
     isHidden?: boolean,
+    isCard?: boolean,
   ) => {
     try {
       const updates: Record<string, any> = {
@@ -2163,6 +2170,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
         icon,
       };
       if (isHidden !== undefined) updates.is_hidden = isHidden;
+      if (isCard !== undefined) updates.is_card = isCard;
       const { data, error } = await supabase
         .from("wallets")
         .update(updates)

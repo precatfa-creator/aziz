@@ -84,6 +84,8 @@ export async function restoreBackup(
     color: w.color || 'slate',
     icon: w.icon || 'Wallet',
     is_hidden: !!w.isHidden,
+    // Backups made before the setting existed hold wallets that were all cards.
+    is_card: w.isCard ?? true,
   }));
   await insertChunked(supabase, 'wallets', walletRows);
 

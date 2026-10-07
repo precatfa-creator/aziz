@@ -12,6 +12,8 @@ import {
   ArrowRightLeft,
   Layers,
   Share2,
+  CreditCard,
+  Banknote,
   X
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
@@ -50,6 +52,8 @@ export const WalletManager: React.FC<WalletManagerProps> = ({ setCurrentTab }) =
   const [initialBalance, setInitialBalance] = useState("");
   const [currency, setCurrency] = useState<"LYD" | "USD">("LYD");
   const [color, setColor] = useState("slate");
+  // New wallets are cash; ticking marks a card (money on it, cash withdrawn from it).
+  const [isCard, setIsCard] = useState(false);
 
   // ConfirmModal states
   const [confirmModalState, setConfirmModalState] = useState<{
@@ -206,6 +210,7 @@ export const WalletManager: React.FC<WalletManagerProps> = ({ setCurrentTab }) =
     setInitialBalance("");
     setCurrency("LYD");
     setColor("slate");
+    setIsCard(false);
     setShowAddForm(false);
   };
 
@@ -215,6 +220,7 @@ export const WalletManager: React.FC<WalletManagerProps> = ({ setCurrentTab }) =
     setInitialBalance(wallet.initialBalance.toString());
     setCurrency(wallet.currency);
     setColor(wallet.color || "slate");
+    setIsCard(wallet.isCard !== false);
     setShowAddForm(true);
   };
 
@@ -233,9 +239,11 @@ export const WalletManager: React.FC<WalletManagerProps> = ({ setCurrentTab }) =
           currency,
           color,
           "Wallet",
+          undefined,
+          isCard,
         );
       } else {
-        await addWallet(name, numBalance, currency, color, "Wallet");
+        await addWallet(name, numBalance, currency, color, "Wallet", isCard);
       }
       resetForm();
     } catch (error) {
@@ -527,6 +535,35 @@ export const WalletManager: React.FC<WalletManagerProps> = ({ setCurrentTab }) =
                     ))}
                   </div>
                 </div>
+
+                <label className="sm:col-span-2 flex items-start gap-3 rounded-2xl border border-slate-200 dark:border-slate-800 p-3.5 cursor-pointer has-[:checked]:border-brand-slate dark:has-[:checked]:border-white/50 has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-brand-teal">
+                  <input
+                    type="checkbox"
+                    checked={isCard}
+                    onChange={(e) => setIsCard(e.target.checked)}
+                    className="mt-0.5 w-4 h-4 accent-brand-slate cursor-pointer"
+                  />
+                  <span className="min-w-0">
+                    <span className="flex items-center gap-1.5 text-xs font-extrabold text-slate-800 dark:text-slate-100">
+                      <CreditCard className="w-3.5 h-3.5" aria-hidden="true" />
+                      {language === "ar" ? "هذه بطاقة" : "This is a card"}
+                    </span>
+                    <span className="block mt-0.5 text-[10px] font-semibold text-slate-500 dark:text-slate-400">
+                      {language === "ar"
+                        ? "البطاقة لها رصيد عليها، ويمكن السحب منها نقداً. بدون التحديد تُعامل المحفظة كنقد بالكامل."
+                        : "A card holds a balance and can have cash withdrawn from it. Unticked, the wallet is all cash."}
+                    </span>
+                    {editingId && !isCard && expenses.some(
+                      (x) => x.walletId === editingId && (x.expenseKind === "cash_withdrawal" || x.expenseKind === "cash_spend"),
+                    ) && (
+                      <span className="block mt-1.5 text-[10px] font-bold text-amber-600 dark:text-amber-400">
+                        {language === "ar"
+                          ? "لهذه المحفظة سحوبات نقدية: سيُحسب رصيد البطاقة والنقد معاً كنقد. المجموع لا يتغير."
+                          : "This wallet has cash withdrawals: its card and cash balances will count together as cash. The total doesn’t change."}
+                      </span>
+                    )}
+                  </span>
+                </label>
               </div>
 
               <div className="flex justify-end gap-3 pt-2">
@@ -588,8 +625,15 @@ export const WalletManager: React.FC<WalletManagerProps> = ({ setCurrentTab }) =
                     )}
                   </div>
                   <div>
-                    <h3 className="font-extrabold text-sm text-slate-900 dark:text-white capitalize truncate max-w-[140px]">
-                      {wallet.name}
+                    <h3 className="font-extrabold text-sm text-slate-900 dark:text-white capitalize truncate max-w-[140px] flex items-center gap-1.5">
+                      <span className="truncate">{wallet.name}</span>
+                      <span
+                        className="shrink-0 inline-flex items-center gap-0.5 rounded-md bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 text-[9px] font-bold text-slate-500 dark:text-slate-400"
+                        title={wallet.isCard === false ? (language === "ar" ? "محفظة نقدية" : "Cash wallet") : (language === "ar" ? "بطاقة" : "Card")}
+                      >
+                        {wallet.isCard === false ? <Banknote className="w-2.5 h-2.5" /> : <CreditCard className="w-2.5 h-2.5" />}
+                        {wallet.isCard === false ? (language === "ar" ? "نقد" : "Cash") : (language === "ar" ? "بطاقة" : "Card")}
+                      </span>
                     </h3>
                     <p className="text-[10px] text-slate-400 font-bold uppercase mapping-widest flex items-center gap-1 mt-0.5">
                       {language === "ar" ? "الافتتاحي: " : "Initial: "}
@@ -706,7 +750,7 @@ export const WalletManager: React.FC<WalletManagerProps> = ({ setCurrentTab }) =
 
                 {/* Split the total once part of it has been withdrawn as cash:
                     the card can read zero while the money is still in hand. */}
-                {stats.inCash !== 0 && (
+                {wallet.isCard !== false && stats.inCash !== 0 && (
                   <div className="mt-2 flex gap-2 text-[10px] font-bold">
                     {([
                       {
