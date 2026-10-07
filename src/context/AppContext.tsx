@@ -78,6 +78,7 @@ function mapIncome(row: any): Income {
     categoryName: row.category_name || "",
     isOpening: !!row.is_opening,
     transferId: row.transfer_id || undefined,
+    hiddenFromViewers: !!row.hidden_from_viewers,
   };
 }
 
@@ -107,6 +108,7 @@ function mapExpense(row: any): Expense {
     categoryName: row.category_name || "",
     expenseKind: row.expense_kind || undefined,
     transferId: row.transfer_id || undefined,
+    hiddenFromViewers: !!row.hidden_from_viewers,
   };
 }
 
@@ -379,6 +381,7 @@ interface AppContextProps {
     categoryName?: string,
     expenseKind?: ExpenseKind,
   ) => Promise<string>;
+  setTransactionHidden: (type: "income" | "expense", id: string, hidden: boolean) => Promise<void>;
   updateExpense: (
     id: string,
     amount: number,
@@ -815,6 +818,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     const { data: authListener } = supabase.auth.onAuthStateChange(
       (event, session) => {
         if (event === "SIGNED_IN" && session?.user) {
+          // App swaps a viewer over to ViewerPortal; there is no owner data to load.
+          if (session.user.app_metadata?.role === "viewer") return;
           const userChanged = activeUserIdRef.current !== session.user.id;
           activeUserIdRef.current = session.user.id;
           // Keep refreshed auth metadata, but do not show the global loader or
@@ -1503,6 +1508,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
       // look like a successful save: the form reset and switched tabs anyway.
       throw e;
     }
+  };
+
+  // Viewer redaction reads this flag server-side; the owner's own screens only
+  // use it to draw the switch.
+  const setTransactionHidden = async (type: "income" | "expense", id: string, hidden: boolean) => {
+    const { error } = await supabase
+      .from(type === "income" ? "incomes" : "expenses")
+      .update({ hidden_from_viewers: hidden })
+      .eq("id", id);
+    if (error) {
+      logSupabaseError(error, `${type}s/${id}/hidden`);
+      throw error;
+    }
+    const patch = <T extends { id: string }>(rows: T[]) =>
+      rows.map((r) => (r.id === id ? { ...r, hiddenFromViewers: hidden } : r));
+    if (type === "income") setIncomes(patch);
+    else setExpenses(patch);
   };
 
   const deleteExpense = async (id: string) => {
@@ -2392,6 +2414,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
 
         addExpense,
         updateExpense,
+        setTransactionHidden,
         toggleExpenseRefund,
         toggleExpenseDue,
         recoverDue,

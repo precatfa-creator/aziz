@@ -46,6 +46,8 @@ export interface Income {
   isOpening?: boolean;
   /** Set when this row is the receiving half of a transfer or currency exchange. */
   transferId?: string;
+  /** Shown to viewers of a partially shared wallet as "معاملة N", amount and date only. */
+  hiddenFromViewers?: boolean;
 }
 
 export interface Expense {
@@ -72,6 +74,8 @@ export interface Expense {
   expenseKind?: 'wallet_spend' | 'cash_withdrawal' | 'cash_spend';
   /** Set when this row is the paying half of a transfer or currency exchange. */
   transferId?: string;
+  /** Shown to viewers of a partially shared wallet as "معاملة N", amount and date only. */
+  hiddenFromViewers?: boolean;
 }
 
 export interface Wallet {

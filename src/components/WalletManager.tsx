@@ -11,10 +11,13 @@ import {
   EyeOff,
   ArrowRightLeft,
   Layers,
+  Share2,
   X
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { ConfirmModal } from "./ConfirmModal";
+import { ShareWalletModal } from "./ShareWalletModal";
+import type { Wallet as WalletRow } from "../types";
 import { walletBalance, walletTotals } from "../lib/walletBalance";
 
 interface WalletManagerProps {
@@ -38,6 +41,7 @@ export const WalletManager: React.FC<WalletManagerProps> = ({ setCurrentTab }) =
     setSelectedCompartmentFilter
   } = useApp();
   const [showAddForm, setShowAddForm] = useState(false);
+  const [sharing, setSharing] = useState<WalletRow | null>(null);
   const [showTransferForm, setShowTransferForm] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
 
@@ -610,6 +614,17 @@ export const WalletManager: React.FC<WalletManagerProps> = ({ setCurrentTab }) =
                     <Layers className="w-3.5 h-3.5" />
                   </button>
                   <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSharing(wallet);
+                    }}
+                    className="p-1 text-slate-500 hover:text-brand-teal dark:text-slate-400 rounded-lg cursor-pointer transition-colors"
+                    title={language === "ar" ? "مشاركة المحفظة للمشاهدة" : "Share for viewing"}
+                    aria-label={language === "ar" ? "مشاركة المحفظة للمشاهدة" : "Share for viewing"}
+                  >
+                    <Share2 className="w-3.5 h-3.5" />
+                  </button>
+                  <button
                     onClick={async (e) => {
                       e.stopPropagation();
                       await updateWallet(
@@ -845,6 +860,8 @@ export const WalletManager: React.FC<WalletManagerProps> = ({ setCurrentTab }) =
           </div>
         );
       })()}
+
+      {sharing && <ShareWalletModal wallet={sharing} onClose={() => setSharing(null)} />}
 
       <ConfirmModal
         isOpen={confirmModalState.isOpen}

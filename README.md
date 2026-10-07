@@ -28,6 +28,23 @@ Google OAuth only, through Supabase Auth. Enable the Google provider in the
 Supabase dashboard (Authentication → Providers → Google) with the redirect URI
 `https://<project-ref>.supabase.co/auth/v1/callback`.
 
+## Wallet sharing
+
+An owner can share a wallet with a **viewer**: a separate email-and-password
+account that opens a read-only portal showing only the wallets shared with it.
+Per wallet and viewer, the owner picks *balance only*, *all transactions*, or
+*all except the ones I hide* (hidden rows arrive as "معاملة N", amount and date
+only).
+
+All of it is enforced in Postgres (`supabase/migrations/20261007120000_wallet_sharing.sql`):
+viewers have no table access and read through two security-definer functions
+that apply the share mode. Viewer accounts are created by `api/viewers.ts` with
+`SUPABASE_SERVICE_ROLE_KEY`. The Email provider must be enabled in Supabase so
+viewers can sign in with a password.
+
+`node supabase/sharing.check.mjs` runs every migration against an in-memory
+Postgres (PGlite) and asserts what owners, viewers and strangers can see.
+
 ## Scripts
 
 | Command | What it does |

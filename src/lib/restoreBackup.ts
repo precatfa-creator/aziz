@@ -132,6 +132,7 @@ export async function restoreBackup(
     is_opening: t.isOpening ?? null,
     category_name: t.categoryName || null,
     transfer_id: mapTransferId(t.transferId),
+    hidden_from_viewers: t.hiddenFromViewers ?? null,
   }));
   await insertChunked(supabase, 'incomes', incomeRows);
 
@@ -160,6 +161,7 @@ export async function restoreBackup(
     // Drop this and an exchange comes back as a real expense paired with a real
     // income: the same money reported as both earned and spent.
     transfer_id: mapTransferId(t.transferId),
+    hidden_from_viewers: t.hiddenFromViewers ?? null,
   }));
   await insertChunked(supabase, 'expenses', expenseRows);
 

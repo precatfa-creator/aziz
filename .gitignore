@@ -12,6 +12,7 @@ coverage/
 # Supabase/agent tooling install artifacts (not app code)
 .agents/
 .claude/
+.hermes/
 skills-lock.json
 
 # user data export, not repo content
