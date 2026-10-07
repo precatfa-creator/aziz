@@ -1097,7 +1097,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
         "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-400 border border-amber-200/30",
       sky: "bg-sky-100 text-sky-800 dark:bg-sky-950/40 dark:text-sky-400 border border-sky-200/30",
       orange:
-        "bg-orange-100 text-orange-800 dark:bg-orange-950/40 dark:text-orange-450 border border-orange-200/30",
+        "bg-orange-100 text-orange-800 dark:bg-orange-950/40 dark:text-orange-400 border border-orange-200/30",
       red: "bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-400 border border-red-200/30",
       purple:
         "bg-purple-100 text-purple-800 dark:bg-purple-950/40 dark:text-purple-400 border border-purple-200/30",
@@ -1423,7 +1423,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                 
                 {/* Visual Label */}
                 <div className="absolute top-3 flex items-center gap-1">
-                  <span className="text-[10px] font-black uppercase text-slate-400 dark:text-slate-500 tracking-wider">
+                  <span className="text-[10px] font-black uppercase text-slate-400 dark:text-slate-400 tracking-wider">
                     {language === "ar" ? "المبلغ المالي" : "Transaction Amount"}
                   </span>
                 </div>
@@ -1479,7 +1479,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                     <div className="flex items-center gap-2">
                       <label
                         htmlFor="exchange-rate"
-                        className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 shrink-0"
+                        className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-400 shrink-0"
                       >
                         {language === "ar" ? "سعر الصرف" : "Exchange rate"}
                       </label>
@@ -1523,7 +1523,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                           </span>
                         </>
                       ) : (
-                        <span className="text-[11px] font-bold text-slate-400 dark:text-slate-500">
+                        <span className="text-[11px] font-bold text-slate-400 dark:text-slate-400">
                           {language === "ar"
                             ? "أدخل المبلغ وسعر الصرف لحساب الناتج"
                             : "Enter an amount and a rate to see the result"}
@@ -1554,7 +1554,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
 
                 {/* Amount Guidance tag */}
                 {transactionType !== "exchange" && amount && parseFloat(amount) > 0 && (
-                  <div className="text-[10px] font-bold text-slate-400 dark:text-slate-500 mt-2 flex items-center gap-1">
+                  <div className="text-[10px] font-bold text-slate-400 dark:text-slate-400 mt-2 flex items-center gap-1">
                     <span>
                       {language === "ar" ? "سيتم تسجيل" : "Will log"}
                     </span>
@@ -1838,7 +1838,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                                   <span className="text-xs font-extrabold truncate max-w-[80%] flex flex-col">
                                     <span className="truncate">{w.name}</span>
                                     {isArchived && (
-                                      <span className="text-[9px] text-slate-400 dark:text-slate-500 font-bold mt-0.5">
+                                      <span className="text-[9px] text-slate-400 dark:text-slate-400 font-bold mt-0.5">
                                         {language === "ar" ? "(مؤرشفة)" : "(Archived)"}
                                       </span>
                                     )}
@@ -2176,7 +2176,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                           <Camera className="w-5 h-5 animate-pulse" />
                         </button>
                       </div>
-                      <p className="text-[10px] text-slate-400 dark:text-slate-500 font-bold">
+                      <p className="text-[10px] text-slate-400 dark:text-slate-400 font-bold">
                         {language === "ar"
                           ? `تم إرفاق ${receiptEntries(imageUrl).length} صور. اضغط على أي صورة لمعاينتها بنقاء.`
                           : `Attached ${receiptEntries(imageUrl).length} documents. Click any to preview.`}
@@ -2864,7 +2864,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                               ? "bg-brand-teal/10 text-brand-teal border-brand-teal/20"
                               : tx.type === "income"
                                 ? "bg-brand-green/20 text-emerald-600 border-brand-green/30 dark:bg-brand-green/10 dark:text-brand-green"
-                                : "bg-rose-50 dark:bg-rose-950/20 text-rose-500 border-rose-250/20 dark:border-rose-900/10"
+                                : "bg-rose-50 dark:bg-rose-950/20 text-rose-500 border-rose-200/20 dark:border-rose-900/10"
                           }`}
                         >
                           {(tx as any).transferPair ? (
@@ -2889,7 +2889,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                             </h4>
 
                             {tx.isHistorical && (
-                              <span className="text-[9px] font-bold bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 px-1.5 py-0.5 rounded border border-amber-250/20 dark:border-amber-900/10">
+                              <span className="text-[9px] font-bold bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 px-1.5 py-0.5 rounded border border-amber-200/20 dark:border-amber-900/10">
                                 {language === 'ar' ? 'بيان قديم/مستورد' : 'Historical/Imported'}
                               </span>
                             )}
@@ -2920,7 +2920,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                             {/* A withdrawal sits in the feed as an outflow of the
                                 card, so say plainly that the money is still yours. */}
                             {(tx as any).expenseKind === "cash_withdrawal" && (
-                              <span className="text-[9px] font-black px-1.5 py-0.5 rounded-md uppercase bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 border border-amber-250/20 dark:border-amber-900/10">
+                              <span className="text-[9px] font-black px-1.5 py-0.5 rounded-md uppercase bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 border border-amber-200/20 dark:border-amber-900/10">
                                 {language === "ar" ? "سحب نقدي — تحوّل لنقد" : "Withdrawal — became cash"}
                               </span>
                             )}
@@ -2967,7 +2967,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                             </p>
                           )}
 
-                          <div className="flex flex-wrap items-center gap-4 text-[10px] text-slate-400 dark:text-slate-500 font-semibold">
+                          <div className="flex flex-wrap items-center gap-4 text-[10px] text-slate-400 dark:text-slate-400 font-semibold">
                             <span className="flex items-center gap-1">
                               <Calendar className="w-3.5 h-3.5" />
                               <span dir="ltr">
@@ -3009,7 +3009,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                               className={`flex items-center gap-1 hover:underline cursor-pointer transition-colors ${
                                 expandedCommentsTxId === tx.id
                                   ? "text-brand-teal font-extrabold"
-                                  : "hover:text-brand-teal text-slate-400 dark:text-slate-500"
+                                  : "hover:text-brand-teal text-slate-400 dark:text-slate-400"
                               }`}
                             >
                               <MessageSquare className="w-3.5 h-3.5" />
@@ -3034,7 +3034,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                               className="font-black text-base text-brand-slate dark:text-white flex items-center gap-1.5 whitespace-nowrap"
                               style={{ direction: "ltr" }}
                             >
-                              <span className="text-slate-400 dark:text-slate-500 font-bold text-sm tabular-nums">
+                              <span className="text-slate-400 dark:text-slate-400 font-bold text-sm tabular-nums">
                                 {tx.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}{" "}
                                 {tx.currency}
                               </span>
@@ -3233,7 +3233,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                               ))}
                             </div>
                           ) : (
-                            <p className="text-xs text-slate-400 dark:text-slate-500 italic py-1">
+                            <p className="text-xs text-slate-400 dark:text-slate-400 italic py-1">
                               {language === "ar" ? "لا توجد تعليقات بعد في هذا السجل. كن أول من يضيف تعليقاً!" : "No recorded comments for this ledger entry. Start the discussion!"}
                             </p>
                           )}

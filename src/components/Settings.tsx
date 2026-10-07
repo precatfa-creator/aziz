@@ -560,7 +560,7 @@ export const Settings: React.FC = () => {
           {/* Quick Stats System Information */}
           <div className="bg-slate-50 dark:bg-slate-950 border border-slate-150/40 rounded-3xl p-6 space-y-4">
             <h4 className="font-extrabold text-xs text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-              <ShieldAlert className="w-4.5 h-4.5 text-indigo-505" />
+              <ShieldAlert className="w-4.5 h-4.5 text-indigo-500" />
               {language === 'ar' ? 'الحساب والأمان' : 'Account & Security'}
             </h4>
 

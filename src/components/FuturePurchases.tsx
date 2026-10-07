@@ -367,7 +367,7 @@ export const FuturePurchases: React.FC = () => {
                 <h3 className="font-extrabold text-sm text-slate-900 dark:text-white leading-none">
                   {editingId ? t.editPurchase : t.addPurchase}
                 </h3>
-                <p className="text-[10px] text-slate-400 dark:text-slate-500 font-bold mt-1">
+                <p className="text-[10px] text-slate-400 dark:text-slate-400 font-bold mt-1">
                   {language === 'ar' ? 'حدد خطتك الشرائية بدقة هنا' : 'Define your acquisition plans and budgets below'}
                 </p>
               </div>
@@ -384,7 +384,7 @@ export const FuturePurchases: React.FC = () => {
             
             {/* A. HERO EXPECTED PRICE BOX */}
             <div className="p-6 rounded-3xl bg-slate-50/50 dark:bg-slate-950/40 border border-slate-100 dark:border-slate-850/60 flex flex-col items-center justify-center gap-4">
-              <label className="text-[11px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-wider text-center">
+              <label className="text-[11px] font-black text-slate-400 dark:text-slate-400 uppercase tracking-wider text-center">
                 {language === 'ar' ? 'السعر التقديري المتوقع' : 'Expected Targeted Budget Amount'}
               </label>
               
@@ -799,7 +799,7 @@ export const FuturePurchases: React.FC = () => {
                       <div className="flex gap-1">
                         <button
                           onClick={() => handleEditClick(item)}
-                          className="p-1 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-lg text-slate-455"
+                          className="p-1 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-lg text-slate-450"
                         >
                           <Edit2 className="w-3.5 h-3.5" />
                         </button>
@@ -831,7 +831,7 @@ export const FuturePurchases: React.FC = () => {
                   {item.notes && (
                     <p 
                       onClick={() => setExpandedNotesIds(prev => ({ ...prev, [item.id]: !prev[item.id] }))}
-                      className={`text-xs text-slate-400 dark:text-slate-500 cursor-pointer hover:text-slate-600 dark:hover:text-slate-305 transition-colors duration-150 ${expandedNotesIds[item.id] ? "" : "line-clamp-2"}`}
+                      className={`text-xs text-slate-400 dark:text-slate-400 cursor-pointer hover:text-slate-600 dark:hover:text-slate-300 transition-colors duration-150 ${expandedNotesIds[item.id] ? "" : "line-clamp-2"}`}
                       title={language === "ar" ? "اضغط للتوسيع / الطي" : "Click to expand/collapse"}
                     >
                       {item.notes}
@@ -848,7 +848,7 @@ export const FuturePurchases: React.FC = () => {
                 )}
 
                 {/* Bottom: convert triggers */}
-                <div className="border-t border-slate-100 dark:border-slate-805 pt-4 flex items-center justify-between gap-2 mt-auto">
+                <div className="border-t border-slate-100 dark:border-slate-800 pt-4 flex items-center justify-between gap-2 mt-auto">
                   <span className="font-extrabold text-sm md:text-base text-slate-900 dark:text-white">
                     {item.expectedPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })} {item.currency === 'LYD' ? t.lydSymbol : t.usdSymbol}
                   </span>

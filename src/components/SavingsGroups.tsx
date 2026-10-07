@@ -426,7 +426,7 @@ export const SavingsGroups: React.FC = () => {
                     <div key={member.id} className="p-4 bg-slate-50 dark:bg-slate-850/30 rounded-2xl border border-slate-150/50 dark:border-slate-800/80 grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
                       
                       {/* Seq Tag */}
-                      <div className="md:col-span-2 text-xs font-black text-slate-509 flex items-center gap-2">
+                      <div className="md:col-span-2 text-xs font-black text-slate-500 flex items-center gap-2">
                         <span className="w-6 h-6 bg-emerald-500 text-white rounded-full flex items-center justify-center text-[10px]">
                           {index + 1}
                         </span>
@@ -502,7 +502,7 @@ export const SavingsGroups: React.FC = () => {
                 >
                   <div className="space-y-4">
                     <div className="flex justify-between items-start gap-2">
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-450 uppercase tracking-widest">
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 uppercase tracking-widest">
                         {t[group.paymentCycle]}
                       </span>
 
@@ -592,7 +592,7 @@ export const SavingsGroups: React.FC = () => {
 
                     <button
                       onClick={() => setSelectedGroupId(group.id)}
-                      className="px-4 py-2 bg-emerald-500 hover:bg-emerald-650 text-white font-bold text-xs rounded-xl shadow-xs cursor-pointer transition-transform duration-100"
+                      className="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs rounded-xl shadow-xs cursor-pointer transition-transform duration-100"
                     >
                       {language === 'ar' ? 'عرض السهم والتاريخ ←' : 'View payments matrix ←'}
                     </button>
@@ -614,7 +614,7 @@ export const SavingsGroups: React.FC = () => {
         <div className="space-y-6 animate-fade-in pb-16">
           
           {/* A. Info Hub Block */}
-          <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-105 dark:border-slate-805 shadow-xs grid grid-cols-1 md:grid-cols-4 gap-6 items-center">
+          <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-100 dark:border-slate-800 shadow-xs grid grid-cols-1 md:grid-cols-4 gap-6 items-center">
             <div className="md:col-span-2 space-y-2">
               <div className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 text-[10px] font-black border border-emerald-100/30">
                 <span>{t[currentOpenGroup.paymentCycle]}</span>
@@ -631,7 +631,7 @@ export const SavingsGroups: React.FC = () => {
               <span className="text-[10px] text-slate-400 font-bold block uppercase">
                 {t.paymentPerMember}
               </span>
-              <span className="text-lg font-black text-emerald-520 text-emerald-500">
+              <span className="text-lg font-black text-emerald-500">
                 {currentOpenGroup.paymentPerMember.toLocaleString()} {currentOpenGroup.currency === 'LYD' ? t.lydSymbol : t.usdSymbol}
               </span>
             </div>
@@ -682,7 +682,7 @@ export const SavingsGroups: React.FC = () => {
                     ))}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-805">
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                   {currentOpenGroup.members.map((member) => (
                     <tr key={member.id} className="hover:bg-slate-50/40 dark:hover:bg-slate-850/10">
                       
@@ -691,7 +691,7 @@ export const SavingsGroups: React.FC = () => {
                         <div className="space-y-0.5">
                           <span>{member.name || (language === 'ar' ? `عضو ${member.receiveCycleIndex}` : `Member ${member.receiveCycleIndex}`)}</span>
                           {member.phone && (
-                            <span className="text-[10px] text-slate-400 dark:text-slate-500 flex items-center gap-1">
+                            <span className="text-[10px] text-slate-400 dark:text-slate-400 flex items-center gap-1">
                               <Phone className="w-3 h-3" /> {member.phone}
                             </span>
                           )}
@@ -704,7 +704,7 @@ export const SavingsGroups: React.FC = () => {
                           onClick={() => toggleMemberReceivedState(currentOpenGroup.id, member.id, !member.isReceived, member.receiveCycleIndex)}
                           className={`px-3 py-1 text-[10px] font-black rounded-lg cursor-pointer ${
                             member.isReceived 
-                              ? 'bg-emerald-500/10 text-emerald-505 bg-emerald-100 dark:bg-emerald-950/40 text-emerald-500 border border-emerald-300/30' 
+                              ? 'bg-emerald-500/10 text-emerald-500 bg-emerald-100 dark:bg-emerald-950/40 text-emerald-500 border border-emerald-300/30' 
                               : 'bg-slate-50 dark:bg-slate-800 text-slate-400 border border-slate-200 dark:border-slate-700'
                           }`}
                         >
@@ -799,7 +799,7 @@ export const SavingsGroups: React.FC = () => {
               </div>
 
               <div className="p-3 bg-indigo-500/5 rounded-2xl border border-indigo-500/10 text-[10px] text-indigo-500 font-bold flex items-center gap-2 mt-4">
-                <ShieldAlert className="w-4.5 h-4.5 flex-shrink-0 text-indigo-505" />
+                <ShieldAlert className="w-4.5 h-4.5 flex-shrink-0 text-indigo-500" />
                 <span>
                   {language === 'ar' 
                     ? `تأسست جمعيتك الكبرى بدلاً من الورق التقليدي ليسهل تتبع الاستحقاق والدفع للأعضاء!` 

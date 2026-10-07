@@ -193,15 +193,15 @@ export const ExpenseManager: React.FC = () => {
 
   const getCatColorClass = (color: string) => {
     const colors: Record<string, string> = {
-      rose: 'bg-rose-100 text-rose-800 dark:bg-rose-950/40 dark:text-rose-450',
-      amber: 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-450',
-      sky: 'bg-sky-100 text-sky-800 dark:bg-sky-950/40 dark:text-sky-450',
-      orange: 'bg-orange-100 text-orange-850 dark:bg-orange-950/40 dark:text-orange-450',
-      red: 'bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-450',
-      purple: 'bg-purple-100 text-purple-800 dark:bg-purple-950/40 dark:text-purple-450',
-      violet: 'bg-violet-100 text-violet-805 dark:bg-violet-950/40 dark:text-violet-450',
-      emerald: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-450',
-      indigo: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-450',
+      rose: 'bg-rose-100 text-rose-800 dark:bg-rose-950/40 dark:text-rose-400',
+      amber: 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-400',
+      sky: 'bg-sky-100 text-sky-800 dark:bg-sky-950/40 dark:text-sky-400',
+      orange: 'bg-orange-100 text-orange-900 dark:bg-orange-950/40 dark:text-orange-400',
+      red: 'bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-400',
+      purple: 'bg-purple-100 text-purple-800 dark:bg-purple-950/40 dark:text-purple-400',
+      violet: 'bg-violet-100 text-violet-800 dark:bg-violet-950/40 dark:text-violet-400',
+      emerald: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-400',
+      indigo: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-400',
       slate: 'bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-300'
     };
     return colors[color] || 'bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-300';
@@ -242,7 +242,7 @@ export const ExpenseManager: React.FC = () => {
             </h3>
             <button
               onClick={resetForm}
-              className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-850 rounded-lg cursor-pointer text-slate-400 hover:text-slate-655"
+              className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-850 rounded-lg cursor-pointer text-slate-400 hover:text-slate-650"
             >
               <X className="w-4 h-4" />
             </button>
@@ -477,7 +477,7 @@ export const ExpenseManager: React.FC = () => {
                       {exp.notes && (
                         <p 
                           onClick={() => setExpandedNotesIds(prev => ({ ...prev, [exp.id]: !prev[exp.id] }))}
-                          className={`text-xs text-slate-400 dark:text-slate-500 max-w-md cursor-pointer hover:text-slate-600 dark:hover:text-slate-305 transition-colors duration-150 ${expandedNotesIds[exp.id] ? "" : "line-clamp-2"}`}
+                          className={`text-xs text-slate-400 dark:text-slate-400 max-w-md cursor-pointer hover:text-slate-600 dark:hover:text-slate-300 transition-colors duration-150 ${expandedNotesIds[exp.id] ? "" : "line-clamp-2"}`}
                           title={language === "ar" ? "اضغط للتوسيع / الطي" : "Click to expand/collapse"}
                         >
                           {exp.notes}

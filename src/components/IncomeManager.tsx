@@ -115,12 +115,12 @@ export const IncomeManager: React.FC = () => {
 
   const getCatColorClass = (color: string) => {
     const colors: Record<string, string> = {
-      emerald: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-450',
-      teal: 'bg-teal-100 text-teal-800 dark:bg-teal-950/40 dark:text-teal-450',
-      indigo: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-450',
-      cyan: 'bg-cyan-100 text-cyan-800 dark:bg-cyan-950/40 dark:text-cyan-450',
-      rose: 'bg-rose-100 text-rose-800 dark:bg-rose-950/40 dark:text-rose-450',
-      amber: 'bg-amber-100 text-amber-805 dark:bg-amber-950/40 dark:text-amber-450'
+      emerald: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-400',
+      teal: 'bg-teal-100 text-teal-800 dark:bg-teal-950/40 dark:text-teal-400',
+      indigo: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-400',
+      cyan: 'bg-cyan-100 text-cyan-800 dark:bg-cyan-950/40 dark:text-cyan-400',
+      rose: 'bg-rose-100 text-rose-800 dark:bg-rose-950/40 dark:text-rose-400',
+      amber: 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-400'
     };
     return colors[color] || 'bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-300';
   };
@@ -356,7 +356,7 @@ export const IncomeManager: React.FC = () => {
                       {inc.notes && (
                         <p 
                           onClick={() => setExpandedNotesIds(prev => ({ ...prev, [inc.id]: !prev[inc.id] }))}
-                          className={`text-xs text-slate-400 dark:text-slate-500 max-w-md cursor-pointer hover:text-slate-600 dark:hover:text-slate-305 transition-colors duration-150 ${expandedNotesIds[inc.id] ? "" : "line-clamp-2"}`}
+                          className={`text-xs text-slate-400 dark:text-slate-400 max-w-md cursor-pointer hover:text-slate-600 dark:hover:text-slate-300 transition-colors duration-150 ${expandedNotesIds[inc.id] ? "" : "line-clamp-2"}`}
                           title={language === "ar" ? "اضغط للتوسيع / الطي" : "Click to expand/collapse"}
                         >
                           {inc.notes}

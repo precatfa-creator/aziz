@@ -49,12 +49,12 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
     confirmBtnBg = 'bg-amber-500 hover:bg-amber-600 text-slate-900 shadow-md shadow-amber-500/10 cursor-pointer';
     Icon = AlertTriangle;
   } else if (type === 'archive') {
-    iconBg = 'bg-indigo-500/10 text-indigo-550 dark:text-indigo-400 border border-indigo-500/20';
+    iconBg = 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20';
     confirmBtnBg = 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-md shadow-indigo-500/15 cursor-pointer';
     Icon = Archive;
   } else if (type === 'info') {
     iconBg = 'bg-brand-teal/10 text-brand-teal border border-brand-teal/20';
-    confirmBtnBg = 'bg-brand-teal hover:bg-brand-teal/92 text-slate-905 dark:text-slate-900 shadow-md shadow-brand-teal/10 cursor-pointer';
+    confirmBtnBg = 'bg-brand-teal hover:bg-brand-teal/92 text-slate-900 dark:text-slate-900 shadow-md shadow-brand-teal/10 cursor-pointer';
     Icon = HelpCircle;
   }
 
@@ -98,7 +98,7 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
               {message}
             </p>
             {type === 'danger' && (
-              <div className="mt-3 text-[10px] bg-rose-50 dark:bg-rose-950/20 text-rose-600 dark:text-rose-450 border border-rose-100 dark:border-rose-900/30 font-bold rounded-xl p-2.5 leading-normal">
+              <div className="mt-3 text-[10px] bg-rose-50 dark:bg-rose-950/20 text-rose-600 dark:text-rose-400 border border-rose-100 dark:border-rose-900/30 font-bold rounded-xl p-2.5 leading-normal">
                 {language === 'ar' 
                   ? '💡 سيتم نقل المحدد إلى سلة المحذوفات مؤقتاً لمدة 3 أيام مع إمكانية استعادته بالكامل بأي وقت.'
                   : '💡 This will be moved to the Trash Bin temporarily for 3 days where it remains fully restorable.'}

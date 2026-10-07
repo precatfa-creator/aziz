@@ -400,7 +400,7 @@ export const Reports: React.FC = () => {
         </div>
 
         {/* Hide Historical Data Toggle */}
-        <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-105/90 dark:bg-slate-950/95 rounded-xl cursor-pointer shadow-xs">
+        <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-100/90 dark:bg-slate-950/95 rounded-xl cursor-pointer shadow-xs">
           <label className="text-xs font-bold text-slate-600 dark:text-slate-400 cursor-pointer flex items-center gap-2 select-none">
             <span>{language === 'ar' ? 'إخفاء البيانات القديمة' : 'Hide Historical'}</span>
             <input
@@ -435,7 +435,7 @@ export const Reports: React.FC = () => {
                       <h4 className="font-extrabold text-sm sm:text-base text-slate-900 dark:text-white leading-tight">
                         {grp.key}
                       </h4>
-                      <p className="text-[10px] text-slate-405 text-slate-400">
+                      <p className="text-[10px] text-slate-400">
                         {grp.txs.length} {language === 'ar' ? 'عمليات مستقرة' : 'Transactions grouped'}
                       </p>
                     </div>
@@ -472,7 +472,7 @@ export const Reports: React.FC = () => {
                     const isInc = tx.type === 'income';
                     const transferPair = tx.transferPair;
                     return (
-                      <div key={tx.id} className="p-4 flex justify-between items-center text-xs hover:bg-slate-55/10">
+                      <div key={tx.id} className="p-4 flex justify-between items-center text-xs hover:bg-slate-50/10">
                         <div className="space-y-0.5">
                           <div className="flex items-center gap-1.5 flex-wrap">
                             <span className="font-semibold text-slate-900 dark:text-white" dir="auto">
@@ -487,7 +487,7 @@ export const Reports: React.FC = () => {
                               </span>
                             )}
                             {tx.isHistorical && (
-                              <span className="text-[9px] font-bold bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 px-1.5 py-0.5 rounded border border-amber-250/20 dark:border-amber-900/10">
+                              <span className="text-[9px] font-bold bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 px-1.5 py-0.5 rounded border border-amber-200/20 dark:border-amber-900/10">
                                 {language === 'ar' ? 'بيانات قديمة/مستوردة' : 'Imported'}
                               </span>
                             )}
@@ -509,7 +509,7 @@ export const Reports: React.FC = () => {
                             {transferPair.amount.toLocaleString()} {transferPair.currency}
                           </span>
                         ) : (
-                          <span className={`font-black ${isInc ? 'text-emerald-500' : 'text-slate-800 dark:text-slate-205'}`}>
+                          <span className={`font-black ${isInc ? 'text-emerald-500' : 'text-slate-800 dark:text-slate-200'}`}>
                             {isInc ? '+' : '-'} {tx.amount.toLocaleString()} {tx.currency === 'LYD' ? t.lydSymbol : t.usdSymbol}
                           </span>
                         )}

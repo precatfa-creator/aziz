@@ -385,7 +385,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ setCurrentTab }) => {
                 {formatMoney(stats.expense, activeCurrency)}
               </h3>
             </div>
-            <div className="w-12 h-12 rounded-2xl bg-rose-50 dark:bg-rose-950/40 text-rose-550 flex items-center justify-center relative z-10">
+            <div className="w-12 h-12 rounded-2xl bg-rose-50 dark:bg-rose-950/40 text-rose-600 flex items-center justify-center relative z-10">
               <TrendingDown className="w-6 h-6" />
             </div>
             <div className="absolute left-0 right-0 bottom-0 h-1 bg-brand-slate opacity-60" />
@@ -400,7 +400,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ setCurrentTab }) => {
             <div className="p-1.5 bg-brand-slate/5 dark:bg-white/5 rounded-xl text-slate-500 dark:text-slate-400">
               <PlusCircle className="w-4 h-4 text-brand-teal" />
             </div>
-            <span className="text-xs font-black text-slate-800 dark:text-slate-205">
+            <span className="text-xs font-black text-slate-800 dark:text-slate-200">
               {t.quickAdd}
             </span>
           </div>
@@ -668,8 +668,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ setCurrentTab }) => {
             {plannedPurchases.filter(p => !p.isPurchased).length > 0 ? (
               plannedPurchases.filter(p => !p.isPurchased).slice(0, 3).map((item) => {
                 const priorityColors = {
-                  high: 'bg-rose-100 text-rose-600 dark:bg-rose-950/40 dark:text-rose-450',
-                  medium: 'bg-amber-100 text-amber-600 dark:bg-amber-950/40 dark:text-amber-450',
+                  high: 'bg-rose-100 text-rose-600 dark:bg-rose-950/40 dark:text-rose-400',
+                  medium: 'bg-amber-100 text-amber-600 dark:bg-amber-950/40 dark:text-amber-400',
                   low: 'bg-slate-100 text-slate-650 dark:bg-slate-800/80 dark:text-slate-400'
                 };
 
@@ -707,7 +707,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ setCurrentTab }) => {
       {/* 7. Recent Transactions List */}
       <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-100 dark:border-slate-800 shadow-xs space-y-4">
         <h3 className="font-extrabold text-sm text-slate-900 dark:text-white flex items-center gap-2">
-          <FileText className="w-4.5 h-4.5 text-slate-550 dark:text-slate-455" />
+          <FileText className="w-4.5 h-4.5 text-slate-550 dark:text-slate-450" />
           {t.recentTransactions}
         </h3>
 

@@ -126,10 +126,13 @@
       }
     </style>
     <script>
-      // Apply the saved theme before first paint. AppContext reads the same key
-      // in an effect, which would otherwise flash light mode at dark-mode users.
-      if (localStorage.getItem('aziz_theme') === 'dark')
-        document.documentElement.classList.add('dark');
+      // Apply the theme before first paint: the saved choice, or the OS setting
+      // until the user picks one. AppContext resolves it the same way.
+      try {
+        var saved = localStorage.getItem('aziz_theme');
+        if (saved ? saved === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches)
+          document.documentElement.classList.add('dark');
+      } catch (e) {}
     </script>
   </head>
   <body>

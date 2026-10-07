@@ -552,9 +552,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
   const [exchangeRate, setExchangeRate] = useState<number>(6.15); // Default Libya-friendly standard (1 USD = 6.15 Lyd)
   // Initialised from localStorage so the first sync effect agrees with the
   // pre-paint script in index.html — otherwise dark users get a light flash.
-  const [theme, setTheme] = useState<"light" | "dark">(
-    () => (localStorage.getItem("aziz_theme") as "light" | "dark") || "light",
-  );
+  // Without a saved choice, follow the OS, as the pre-paint script does.
+  const [theme, setTheme] = useState<"light" | "dark">(() => {
+    try {
+      const saved = localStorage.getItem("aziz_theme");
+      if (saved === "light" || saved === "dark") return saved;
+      return matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    } catch {
+      return "light";
+    }
+  });
 
   // Database lists
   const [categories, setCategories] = useState<Category[]>([]);

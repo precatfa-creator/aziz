@@ -14,6 +14,34 @@
   --color-brand-teal: #6EADBC;
   --color-brand-green: #9FCBAD;
   --color-brand-lime: #F1F7D4;
+
+  /* Half-steps the components were already written against (slate-850 alone
+     appears ~100 times). Tailwind has no such shades, so every one of those
+     classes used to compile to nothing — a dark:border-slate-850 border fell
+     back to currentColor and drew a bright outline. Each is the midpoint of
+     its two real neighbours. */
+  --color-slate-150: color-mix(in oklab, var(--color-slate-100), var(--color-slate-200));
+  --color-slate-250: color-mix(in oklab, var(--color-slate-200), var(--color-slate-300));
+  --color-slate-350: color-mix(in oklab, var(--color-slate-300), var(--color-slate-400));
+  --color-slate-450: color-mix(in oklab, var(--color-slate-400), var(--color-slate-500));
+  --color-slate-550: color-mix(in oklab, var(--color-slate-500), var(--color-slate-600));
+  --color-slate-650: color-mix(in oklab, var(--color-slate-600), var(--color-slate-700));
+  --color-slate-750: color-mix(in oklab, var(--color-slate-700), var(--color-slate-800));
+  --color-slate-850: color-mix(in oklab, var(--color-slate-800), var(--color-slate-900));
+}
+
+/* Native controls (selects, date pickers, scrollbars) follow the theme too;
+   without this they stayed light inside dark forms. */
+:root { color-scheme: light; }
+.dark { color-scheme: dark; }
+
+/* Keyboard focus for every control that doesn't style its own. Base layer, so
+   a component's focus:outline-none / ring utilities still win. */
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--color-brand-teal);
+    outline-offset: 2px;
+  }
 }
 
 html, body, #root {
@@ -33,7 +61,7 @@ body {
 }
 
 .dark body {
-  background-color: #0b0f19;
+  background-color: #080c16;
   background-image: 
     radial-gradient(at 0% 0%, rgba(74, 68, 102, 0.3) 0px, transparent 50%),
     radial-gradient(at 100% 100%, rgba(110, 173, 188, 0.1) 0px, transparent 50%);
@@ -52,14 +80,17 @@ body {
     inset 0 1px 1px rgba(255, 255, 255, 0.7);
 }
 
+/* Dark surfaces sit one clear step above the page (slate-900 lifted toward
+   the brand slate) instead of a 15% purple wash that read as muddy and let
+   the background blobs bleed through unevenly from card to card. */
 .dark .glass-card {
-  background: rgba(74, 68, 102, 0.15);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: 
-    0 4px 30px rgba(0, 0, 0, 0.2),
-    inset 0 1px 1px rgba(255, 255, 255, 0.05);
+  background: rgba(22, 30, 48, 0.72);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  border: 1px solid rgba(148, 163, 184, 0.10);
+  box-shadow:
+    0 8px 30px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .glass-modal {
@@ -73,7 +104,7 @@ body {
 }
 
 .dark .glass-modal {
-  background: rgba(18, 24, 38, 0.8);
+  background: rgba(17, 24, 39, 0.94);
   backdrop-filter: blur(25px);
   -webkit-backdrop-filter: blur(25px);
   border: 1px solid rgba(255, 255, 255, 0.1);
@@ -89,8 +120,8 @@ body {
 }
 
 .dark .glass-input {
-  background: rgba(74, 68, 102, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(2, 6, 23, 0.45);
+  border: 1px solid rgba(148, 163, 184, 0.16);
   backdrop-filter: blur(5px);
 }
 

@@ -96,7 +96,7 @@ export const TrashPage: React.FC = () => {
       case 'wallet':
         return {
           icon: Wallet,
-          colorClass: 'bg-indigo-500/10 text-indigo-550 dark:text-indigo-400 border-indigo-500/25',
+          colorClass: 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/25',
           label: language === 'ar' ? 'محفظة مالية' : 'Wallet'
         };
       case 'comment':
@@ -302,7 +302,7 @@ export const TrashPage: React.FC = () => {
                 {/* Amount Display & Metadata */}
                 <div className="bg-slate-50/50 dark:bg-slate-950/40 border border-slate-100/40 dark:border-slate-850/40 rounded-2xl p-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5">
                   <div>
-                    <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 block leading-tight">
+                    <span className="text-[10px] font-bold text-slate-400 dark:text-slate-400 block leading-tight">
                       {isRTL ? 'القيمة الأصلية' : 'Original Amount'}
                     </span>
                     <strong className="text-sm font-black text-rose-500 dark:text-rose-400">
@@ -311,7 +311,7 @@ export const TrashPage: React.FC = () => {
                   </div>
 
                   <div className="text-right sm:text-start max-w-xs">
-                    <span className="text-[9px] font-bold text-slate-400 dark:text-slate-500 block leading-tight">
+                    <span className="text-[9px] font-bold text-slate-400 dark:text-slate-400 block leading-tight">
                       {isRTL ? 'التفاصيل / الملاحظات' : 'Details / Notes'}
                     </span>
                     <p className="text-[10px] text-slate-500 dark:text-slate-400 font-bold truncate">
@@ -321,7 +321,7 @@ export const TrashPage: React.FC = () => {
                 </div>
 
                 {/* Deleter Metadata */}
-                <div className="flex items-center justify-between text-[9px] font-mono text-slate-400 dark:text-slate-500 border-t border-slate-50 dark:border-slate-850/60 pt-3">
+                <div className="flex items-center justify-between text-[9px] font-mono text-slate-400 dark:text-slate-400 border-t border-slate-50 dark:border-slate-850/60 pt-3">
                   <span className="truncate max-w-[150px]">
                     {isRTL ? 'حذف بواسطة:' : 'Deleted by:'} {item.deletedBy}
                   </span>
@@ -365,7 +365,7 @@ export const TrashPage: React.FC = () => {
                       <div className="flex items-center gap-2 self-end">
                         <button
                           onClick={() => setConfirmDeleteId(null)}
-                          className="bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-755 text-slate-600 dark:text-slate-200 py-1 px-2.5 rounded-lg text-[10px] font-black cursor-pointer transition-colors"
+                          className="bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-750 text-slate-600 dark:text-slate-200 py-1 px-2.5 rounded-lg text-[10px] font-black cursor-pointer transition-colors"
                         >
                           {isRTL ? 'إلغاء' : 'Cancel'}
                         </button>

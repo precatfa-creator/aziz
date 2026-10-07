@@ -577,7 +577,7 @@ export const Auth: React.FC = () => {
             </div>
 
             {/* Micro proof badges */}
-            <div className="pt-2 flex items-center gap-6 text-slate-400 dark:text-slate-500 text-xs font-semibold">
+            <div className="pt-2 flex items-center gap-6 text-slate-400 dark:text-slate-400 text-xs font-semibold">
               <span className="flex items-center gap-1.5">
                 <Shield className="w-4 h-4 text-emerald-500" />
                 <span>{language === 'ar' ? 'حفظ مشفر سحابي' : 'Cloud encrypted ledger'}</span>
@@ -972,7 +972,7 @@ export const Auth: React.FC = () => {
         </div>
 
         {/* Clickable Tab Screen Body Presentation mockup */}
-        <div className="max-w-4xl mx-auto bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-805 rounded-[2.5rem] shadow-2xl p-6 md:p-8 overflow-hidden min-h-[360px] flex flex-col justify-between relative">
+        <div className="max-w-4xl mx-auto bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-[2.5rem] shadow-2xl p-6 md:p-8 overflow-hidden min-h-[360px] flex flex-col justify-between relative">
           
           {/* Glowing gradient background indicator */}
           <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/5 rounded-full blur-3xl -z-5" />
@@ -1005,7 +1005,7 @@ export const Auth: React.FC = () => {
                   <span className="text-[10px] font-bold text-slate-400 block mb-1">
                     {currentLangText.previewData.dashboard.inc}
                   </span>
-                  <p className="text-xl font-black text-emerald-505 text-emerald-500 font-mono">
+                  <p className="text-xl font-black text-emerald-500 font-mono">
                     {previewCurrency === 'LYD' ? '8,000 د.ل' : '$1,300'}
                   </p>
                 </div>
@@ -1236,7 +1236,7 @@ export const Auth: React.FC = () => {
             <div className="space-y-5 animate-in fade-in duration-300">
               <div className="flex justify-between items-center border-b border-slate-50 dark:border-slate-850 pb-4">
                 <span className="text-sm font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
-                  <BarChart3 className="w-5 h-5 text-indigo-505 text-indigo-500" />
+                  <BarChart3 className="w-5 h-5 text-indigo-500" />
                   <span>{currentLangText.previewData.reports.topCats}</span>
                 </span>
                 <span className="text-xs text-slate-400">{language === 'ar' ? 'تحاليل محاسبة ذكية' : 'Intelligent cost audits'}</span>
@@ -1245,13 +1245,13 @@ export const Auth: React.FC = () => {
               {/* Simulated horizontal bars */}
               <div className="space-y-4">
                 {[
-                  { cat: language === 'ar' ? 'البيت والوجبات والمطبخ' : 'Household, Kitchen & Meals', percent: 45, color: 'bg-emerald-550 bg-emerald-500' },
+                  { cat: language === 'ar' ? 'البيت والوجبات والمطبخ' : 'Household, Kitchen & Meals', percent: 45, color: 'bg-emerald-500' },
                   { cat: language === 'ar' ? 'السيارة والوقود والصيانة' : 'Automobile & Transportation Fuel', percent: 25, color: 'bg-amber-500' },
                   { cat: language === 'ar' ? 'الاشتراكات والخدمات الرقمية' : 'Digital Platform & Software Bills', percent: 18, color: 'bg-indigo-500' },
                   { cat: language === 'ar' ? 'الصحة والطبابة والطوارئ' : 'Emergency & Medical services', percent: 12, color: 'bg-rose-500' },
                 ].map((item, idx) => (
                   <div key={idx} className="space-y-1">
-                    <div className="flex justify-between text-xs font-bold text-slate-650 text-slate-600 dark:text-slate-350">
+                    <div className="flex justify-between text-xs font-bold text-slate-600 dark:text-slate-350">
                       <span>{item.cat}</span>
                       <span className="font-mono text-[11px] font-black">{item.percent}%</span>
                     </div>
@@ -1263,7 +1263,7 @@ export const Auth: React.FC = () => {
               </div>
 
               <div className="pt-3 border-t border-slate-50 dark:border-slate-850 text-start">
-                <p className="text-xs font-medium text-slate-550 text-slate-500 leading-relaxed italic">
+                <p className="text-xs font-medium text-slate-500 leading-relaxed italic">
                   {language === 'ar' 
                     ? '💡 نصيحة خبير عزيز المالي: معدل استهلاكك على متطلبات البيت والتموين أعلى بنسبة ٧٪ من المتوسط المقترح لميزانيتك. يُنصح بالاستفادة من الشراء بأسعار الجملة لتوفير ما يقارب ١٢٠ د.ل شهرياً.'
                     : '💡 Aziz Advisory Insight: Grocery expenditure ranges 7% higher than your strict budget template threshold. Consider collective wholesale bulk purchases to save approximately $25 monthly.'}
@@ -1275,10 +1275,10 @@ export const Auth: React.FC = () => {
           {/* Prompt action under the preview box */}
           <div className="mt-8 pt-4 border-t border-slate-100 dark:border-slate-850 flex flex-col sm:flex-row items-center justify-between gap-4 text-start">
             <div>
-              <h5 className="text-xs font-black text-slate-800 dark:text-slate-205 text-slate-200">
+              <h5 className="text-xs font-black text-slate-800 dark:text-slate-200 text-slate-200">
                 {language === 'ar' ? 'أعجبتك هذه الواجهات الفاخرة؟' : 'Love these elegant, minimal panels?'}
               </h5>
-              <p className="text-[10px] text-slate-450 dark:text-slate-500 font-medium">
+              <p className="text-[10px] text-slate-450 dark:text-slate-400 font-medium">
                 {language === 'ar' ? 'سجل معنا الآن بضغطة واحدة واكتشف لوحة تحكمك الكاملة فوراً' : 'Complete a one-click signup and deploy your master workspace instantly'}
               </p>
             </div>
@@ -1301,7 +1301,7 @@ export const Auth: React.FC = () => {
             
             {/* Left Info Column */}
             <div className="lg:col-span-6 space-y-6 text-start">
-              <span className="text-indigo-650 text-indigo-500 font-extrabold text-xs tracking-wider uppercase bg-indigo-500/10 px-3.5 py-1.5 rounded-full inline-block">
+              <span className="text-indigo-500 font-extrabold text-xs tracking-wider uppercase bg-indigo-500/10 px-3.5 py-1.5 rounded-full inline-block">
                 {language === 'ar' ? 'الجمعية التشاركية الدوارة' : 'Collaborative Banking Circle'}
               </span>
 
@@ -1494,7 +1494,7 @@ export const Auth: React.FC = () => {
             </span>
           </div>
 
-          <p className="text-[11px] text-slate-400 dark:text-slate-500 font-bold max-w-md text-center sm:text-end">
+          <p className="text-[11px] text-slate-400 dark:text-slate-400 font-bold max-w-md text-center sm:text-end">
             {currentLangText.rights}
           </p>
 
