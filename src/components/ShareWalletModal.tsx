@@ -31,8 +31,8 @@ const MODES: { id: Mode; ar: string; en: string; hintAr: string; hintEn: string 
     id: 'all',
     ar: 'كل المعاملات',
     en: 'All transactions',
-    hintAr: 'المبلغ والتاريخ والتصنيف، والعناوين تظهر «معاملة 1، 2…».',
-    hintEn: 'Amount, date and category; titles show as “معاملة 1, 2…”.',
+    hintAr: 'المبلغ والتاريخ فقط، والعناوين تظهر «معاملة 1، 2…».',
+    hintEn: 'Amount and date only; titles show as “معاملة 1, 2…”.',
   },
 ];
 

@@ -128,7 +128,7 @@ await as(V, 'viewer', async () => {
   assert.deepEqual(numbered.map((t) => t.title), [1, 2, 3, 4, 5, 6, 7].map((n) => `معاملة ${n}`));
   assert.ok(numbered.every((t) => t.is_masked && t.notes === null));
   assert.equal(numbered[0].date, '2026-01-01', 'numbering must be oldest first');
-  assert.ok(numbered.find((t) => t.date === '2026-01-04').category_name, 'category should stay visible');
+  assert.ok(tx.every((t) => t.category_name === null), 'category leaked to a viewer');
   assert.equal(tx.find((t) => t.is_transfer).title, 'تحويل', 'transfer title leaked');
   assert.ok(!JSON.stringify(tx).includes('Other wallet'), 'other wallet name leaked through a transfer');
   assert.equal(Number(tx.find((t) => t.date === '2026-01-07').amount), 0, 'refunded row must read 0');

@@ -50,12 +50,6 @@ const money = (n: number, currency: string, lang: string) =>
     maximumFractionDigits: 2,
   }).format(Number(n));
 
-// Stored names are "عربي / English"; show the half matching the language.
-const categoryLabel = (name: string, lang: string) => {
-  const [a, e] = name.split(' / ');
-  return (lang === 'ar' ? a : e) || name;
-};
-
 // The wallet's starting point, set apart from the live balance so it can't be
 // mistaken for it. Null when the database predates it or the share is cash-only.
 const OpeningBalance: React.FC<{ info: BalanceRow; lang: string }> = ({ info, lang }) =>
@@ -332,7 +326,6 @@ export const ViewerPortal: React.FC = () => {
                       </p>
                       <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
                         {t.date.slice(0, 10)}
-                        {t.category_name && ` · ${categoryLabel(t.category_name, lang)}`}
                         {t.expense_kind === 'cash_withdrawal' && ` · ${ar ? 'سحب نقدي' : 'Cash withdrawal'}`}
                         {t.expense_kind === 'cash_spend' && ` · ${ar ? 'من النقد' : 'From cash'}`}
                       </p>
