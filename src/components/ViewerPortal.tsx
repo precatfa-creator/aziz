@@ -303,8 +303,7 @@ export const ViewerPortal: React.FC = () => {
                 return (
                   <li key={t.id} className="flex items-center justify-between gap-3 px-4 py-3">
                     <div className="min-w-0">
-                      <p className={`text-sm font-extrabold truncate ${t.is_masked ? 'text-slate-500 dark:text-slate-400' : 'text-slate-800 dark:text-slate-100'}`}>
-                        {t.is_masked && <Lock className="w-3 h-3 inline-block me-1 -mt-0.5" />}
+                      <p className="text-sm font-extrabold truncate text-slate-800 dark:text-slate-100">
                         {t.title}
                       </p>
                       <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">

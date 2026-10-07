@@ -9,25 +9,30 @@
 
 import React, { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
-import { Lock, KeyRound, Loader2, Share2, Trash2, UserPlus, X } from 'lucide-react';
+import { KeyRound, Loader2, Share2, Trash2, UserPlus, X } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { authHeader, supabase } from '../supabase';
 import { apiUrl } from '../lib/apiUrl';
 import { ConfirmModal } from './ConfirmModal';
 import type { Wallet } from '../types';
 
-type Mode = 'none' | 'balance' | 'all' | 'partial';
+type Mode = 'none' | 'balance' | 'all';
 interface Viewer {
   id: string;
   name: string;
   email: string;
 }
 
-const MODES: { id: Mode; ar: string; en: string }[] = [
-  { id: 'none', ar: 'لا يرى المحفظة', en: 'No access' },
-  { id: 'balance', ar: 'الرصيد فقط', en: 'Balance only' },
-  { id: 'all', ar: 'كل المعاملات', en: 'All transactions' },
-  { id: 'partial', ar: 'المعاملات مع إخفاء ما أحدده', en: 'Transactions, except ones I hide' },
+const MODES: { id: Mode; ar: string; en: string; hintAr: string; hintEn: string }[] = [
+  { id: 'none', ar: 'لا يرى المحفظة', en: 'No access', hintAr: 'لا تظهر له هذه المحفظة.', hintEn: 'This wallet is hidden from them.' },
+  { id: 'balance', ar: 'الرصيد فقط', en: 'Balance only', hintAr: 'الرصيد والرصيد الافتتاحي، بلا معاملات.', hintEn: 'Balance and opening balance, no transactions.' },
+  {
+    id: 'all',
+    ar: 'كل المعاملات',
+    en: 'All transactions',
+    hintAr: 'المبلغ والتاريخ والتصنيف، والعناوين تظهر «معاملة 1، 2…».',
+    hintEn: 'Amount, date and category; titles show as “معاملة 1, 2…”.',
+  },
 ];
 
 const ERRORS: Record<string, { ar: string; en: string }> = {
@@ -218,29 +223,45 @@ export const ShareWalletModal: React.FC<{ wallet: Wallet; onClose: () => void }>
                   </div>
                 </div>
 
-                <label className="block">
-                  <span className="sr-only">{ar ? 'ماذا يرى' : 'What they see'}</span>
-                  <select
-                    value={modes[v.id] ?? 'none'}
-                    disabled={busy === v.id}
-                    onChange={(e) => void setMode(v.id, e.target.value as Mode)}
-                    className={`${input} cursor-pointer`}
-                  >
-                    {MODES.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {ar ? m.ar : m.en}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                {modes[v.id] === 'partial' && (
-                  <p className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 flex items-center gap-1">
-                    <Lock className="w-3 h-3 shrink-0" />
-                    {ar
-                      ? 'من سجل المعاملات، اضغط أيقونة القفل لإخفاء معاملة. تظهر له «معاملة 1، 2…» بالمبلغ والتاريخ فقط.'
-                      : 'In the ledger, tap the lock icon to hide a transaction. It shows as “معاملة 1, 2…” with amount and date only.'}
-                  </p>
-                )}
+                {/* Real radios under custom styling: arrow keys, focus and screen
+                    readers behave natively, and every option is visible at once. */}
+                <fieldset disabled={busy === v.id} className="grid gap-1.5 disabled:opacity-60">
+                  <legend className="sr-only">{ar ? `ماذا يرى ${v.name}` : `What ${v.name} sees`}</legend>
+                  {MODES.map((m) => {
+                    const checked = (modes[v.id] ?? 'none') === m.id;
+                    return (
+                      <label
+                        key={m.id}
+                        className={`flex items-start gap-2.5 rounded-xl border px-3 py-2 cursor-pointer transition-colors has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-brand-teal ${
+                          checked
+                            ? 'border-brand-slate bg-brand-slate/5 dark:border-white/60 dark:bg-white/5'
+                            : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name={`mode-${v.id}`}
+                          value={m.id}
+                          checked={checked}
+                          onChange={() => void setMode(v.id, m.id)}
+                          className="sr-only"
+                        />
+                        <span
+                          aria-hidden="true"
+                          className={`mt-0.5 w-3.5 h-3.5 shrink-0 rounded-full border-2 flex items-center justify-center ${
+                            checked ? 'border-brand-slate dark:border-white' : 'border-slate-300 dark:border-slate-600'
+                          }`}
+                        >
+                          {checked && <span className="w-1.5 h-1.5 rounded-full bg-brand-slate dark:bg-white" />}
+                        </span>
+                        <span className="min-w-0">
+                          <span className="block text-xs font-extrabold text-slate-800 dark:text-slate-100">{ar ? m.ar : m.en}</span>
+                          <span className="block text-[10px] font-semibold text-slate-500 dark:text-slate-400">{ar ? m.hintAr : m.hintEn}</span>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </fieldset>
 
                 {passwordFor === v.id && (
                   <div className="flex gap-2">

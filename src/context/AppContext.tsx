@@ -381,7 +381,6 @@ interface AppContextProps {
     categoryName?: string,
     expenseKind?: ExpenseKind,
   ) => Promise<string>;
-  setTransactionHidden: (type: "income" | "expense", id: string, hidden: boolean) => Promise<void>;
   updateExpense: (
     id: string,
     amount: number,
@@ -1517,23 +1516,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   };
 
-  // Viewer redaction reads this flag server-side; the owner's own screens only
-  // use it to draw the switch.
-  const setTransactionHidden = async (type: "income" | "expense", id: string, hidden: boolean) => {
-    const { error } = await supabase
-      .from(type === "income" ? "incomes" : "expenses")
-      .update({ hidden_from_viewers: hidden })
-      .eq("id", id);
-    if (error) {
-      logSupabaseError(error, `${type}s/${id}/hidden`);
-      throw error;
-    }
-    const patch = <T extends { id: string }>(rows: T[]) =>
-      rows.map((r) => (r.id === id ? { ...r, hiddenFromViewers: hidden } : r));
-    if (type === "income") setIncomes(patch);
-    else setExpenses(patch);
-  };
-
   const deleteExpense = async (id: string) => {
     if (!user) return;
     try {
@@ -2421,7 +2403,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
 
         addExpense,
         updateExpense,
-        setTransactionHidden,
         toggleExpenseRefund,
         toggleExpenseDue,
         recoverDue,

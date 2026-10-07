@@ -53,6 +53,64 @@
   @media (prefers-reduced-motion: reduce) {
     button:not(:disabled):active { scale: none; }
   }
+
+  /* Dropdowns: the open option list is styled too, not just the closed box.
+     Customizable <select> (Chrome/Edge/Android WebView 135+); every other
+     browser keeps its native list, still fully working. Each select's own
+     Tailwind classes keep styling the closed control. */
+  @supports (appearance: base-select) {
+    select,
+    ::picker(select) {
+      appearance: base-select;
+    }
+    select::picker-icon {
+      color: var(--color-slate-400);
+      transition: rotate 0.2s ease;
+    }
+    select:open::picker-icon {
+      rotate: 180deg;
+    }
+    ::picker(select) {
+      margin-block: 6px;
+      padding: 4px;
+      border: 1px solid var(--color-slate-200);
+      border-radius: 14px;
+      background: #fff;
+      box-shadow: 0 16px 40px -12px rgb(74 68 102 / 0.25);
+    }
+    .dark ::picker(select) {
+      border-color: var(--color-slate-800);
+      background: var(--color-slate-900);
+      box-shadow: 0 16px 40px -12px rgb(0 0 0 / 0.6);
+    }
+    option {
+      padding: 8px 12px;
+      border-radius: 10px;
+      font-size: 0.8rem;
+      font-weight: 700;
+      color: var(--color-slate-700);
+      cursor: pointer;
+    }
+    .dark option {
+      color: var(--color-slate-200);
+    }
+    option:hover,
+    option:focus-visible {
+      background: rgb(110 173 188 / 0.14);
+      outline: none;
+    }
+    option:checked {
+      background: var(--color-brand-slate);
+      color: #fff;
+    }
+    .dark option:checked {
+      background: #fff;
+      color: var(--color-brand-slate);
+    }
+    option::checkmark {
+      display: none;
+    }
+  }
 }
 
 html, body, #root {

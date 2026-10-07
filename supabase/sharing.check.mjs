@@ -88,9 +88,12 @@ const as = async (uid, role, fn) => {
 };
 const rejects = async (p, msg) => assert.rejects(p, undefined, msg);
 
-// Owner shares W1 with V (partial). Owner can't share with a non-viewer uuid.
+// Owner shares W1 with V. The retired 'partial' mode is refused; so is a
+// share with a uuid that is not one of the owner's viewers.
 await as(O, null, async () => {
-  await db.exec(`insert into public.wallet_shares (wallet_id, viewer_id, owner_id, mode) values ('${W1}', '${V}', '${O}', 'partial')`);
+  await rejects(db.exec(`insert into public.wallet_shares (wallet_id, viewer_id, owner_id, mode) values ('${W1}', '${V}', '${O}', 'partial')`),
+    'retired partial mode accepted');
+  await db.exec(`insert into public.wallet_shares (wallet_id, viewer_id, owner_id, mode) values ('${W1}', '${V}', '${O}', 'all')`);
   await rejects(db.exec(`insert into public.wallet_shares (wallet_id, viewer_id, owner_id, mode) values ('${W1}', '${O}', '${O}', 'all')`),
     'shared with a uuid that is not one of my viewers');
   const own = await db.query(`select count(*)::int n from public.expenses`);
@@ -120,30 +123,23 @@ await as(V, 'viewer', async () => {
 
   const tx = (await db.query(`select * from public.viewer_wallet_transactions('${W1}')`)).rows;
   assert.equal(tx.length, 8);
-  const masked = tx.filter((t) => t.is_masked);
-  assert.deepEqual(masked.map((t) => t.title).sort(), ['معاملة 1', 'معاملة 2']);
-  for (const m of masked) {
-    assert.equal(m.category_name, null);
-    assert.equal(m.notes, null);
-  }
-  assert.equal(masked.find((t) => t.title === 'معاملة 1').date, '2026-01-06', 'numbering must be oldest first');
+  // Every non-transfer row is "معاملة N", oldest first; notes never leave.
+  const numbered = tx.filter((t) => !t.is_transfer).sort((a, b) => a.date.localeCompare(b.date));
+  assert.deepEqual(numbered.map((t) => t.title), [1, 2, 3, 4, 5, 6, 7].map((n) => `معاملة ${n}`));
+  assert.ok(numbered.every((t) => t.is_masked && t.notes === null));
+  assert.equal(numbered[0].date, '2026-01-01', 'numbering must be oldest first');
+  assert.ok(numbered.find((t) => t.date === '2026-01-04').category_name, 'category should stay visible');
   assert.equal(tx.find((t) => t.is_transfer).title, 'تحويل', 'transfer title leaked');
   assert.ok(!JSON.stringify(tx).includes('Other wallet'), 'other wallet name leaked through a transfer');
-  const groceries = tx.find((t) => t.title === 'Groceries');
-  assert.equal(groceries.notes, 'milk');
-  assert.ok(groceries.category_name, 'unmasked row lost its category');
-  assert.equal(Number(tx.find((t) => t.title === 'Returned').amount), 0, 'refunded row must read 0');
-  assert.ok(!tx.some((t) => JSON.stringify(t).includes('Secret') || JSON.stringify(t).includes('for X')), 'hidden content leaked');
+  assert.equal(Number(tx.find((t) => t.date === '2026-01-07').amount), 0, 'refunded row must read 0');
+  for (const secret of ['Groceries', 'milk', 'Secret', 'for X', 'Salary', 'ATM', 'Returned', 'App store', 'opening']) {
+    assert.ok(!JSON.stringify(tx).includes(secret), `real title or note leaked: ${secret}`);
+  }
 
   assert.equal((await db.query(`select * from public.viewer_wallet_transactions('${W2}')`)).rows.length, 0, 'unshared wallet leaked');
 });
 
-// Mode switches: all shows hidden rows in full; balance returns no rows.
-await as(O, null, () => db.exec(`update public.wallet_shares set mode = 'all'`));
-await as(V, 'viewer', async () => {
-  const tx = (await db.query(`select * from public.viewer_wallet_transactions('${W1}')`)).rows;
-  assert.ok(tx.some((t) => t.title === 'Secret gift') && !tx.some((t) => t.is_masked));
-});
+// Balance mode returns no rows.
 await as(O, null, () => db.exec(`update public.wallet_shares set mode = 'balance'`));
 await as(V, 'viewer', async () => {
   assert.equal((await db.query(`select * from public.viewer_wallet_transactions('${W1}')`)).rows.length, 0, 'balance mode leaked rows');

@@ -32,14 +32,11 @@ import {
   MessageSquare,
   Send,
   SlidersHorizontal,
-  Lock,
-  LockOpen,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { createPortal } from "react-dom";
 import { ConfirmModal } from "./ConfirmModal";
 import { isInlineReceipt, packReceiptImages, receiptEntries } from "../lib/receiptImages";
-import { supabase } from "../supabase";
 import { resolveReceiptUrls, uploadReceipt } from "../lib/receiptStorage";
 import { fileToReceiptJpeg } from "../lib/imageDownscale";
 import {
@@ -85,7 +82,6 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
     setSelectedWalletFilter,
     selectedCompartmentFilter,
     setSelectedCompartmentFilter,
-    setTransactionHidden,
     currency: globalCurrency,
     exchangeRate,
     setExchangeRate,
@@ -1033,29 +1029,6 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
   ]
     .filter((tx) => !hideHistoricalData || !tx.isHistorical)
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-
-  // Wallets shared in "hide some" mode. Only their rows get the lock switch;
-  // anywhere else it would do nothing a viewer could see.
-  const [partialWallets, setPartialWallets] = useState<Set<string>>(new Set());
-  useEffect(() => {
-    void supabase
-      .from("wallet_shares")
-      .select("wallet_id")
-      .eq("mode", "partial")
-      .then(({ data }) => setPartialWallets(new Set((data ?? []).map((r) => r.wallet_id as string))));
-  }, []);
-
-  // A transfer row is two legs; hiding it hides both, so neither wallet's
-  // viewer learns what the other one was told was private.
-  const toggleHidden = async (tx: any) => {
-    const next = !tx.hiddenFromViewers;
-    try {
-      await setTransactionHidden(tx.type, tx.id, next);
-      if (tx.transferPair) await setTransactionHidden("income", tx.transferPair.id, next);
-    } catch {
-      alert(language === "ar" ? "لم يُحفظ التغيير." : "The change wasn’t saved.");
-    }
-  };
 
   const hasCashRows = expenses.some(
     (e) => e.expenseKind === "cash_withdrawal" || e.expenseKind === "cash_spend",
@@ -3108,21 +3081,6 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                              >
                                <Layers className="w-3.5 h-3.5" />
                              </button>
-                          )}
-                          {(partialWallets.has(tx.walletId ?? "") ||
-                            partialWallets.has((tx as any).transferPair?.walletId ?? "")) && (
-                            <button
-                              onClick={() => void toggleHidden(tx)}
-                              aria-pressed={!!(tx as any).hiddenFromViewers}
-                              className={`p-2 rounded-xl transition-colors cursor-pointer border ${(tx as any).hiddenFromViewers ? "bg-amber-50 text-amber-600 border-amber-200/50 dark:bg-amber-950/30 dark:text-amber-400 dark:border-amber-900/30" : "hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-amber-500 border-transparent"}`}
-                              title={
-                                (tx as any).hiddenFromViewers
-                                  ? language === "ar" ? "مخفية عن المشاهدين — اضغط لإظهارها" : "Hidden from viewers — tap to show"
-                                  : language === "ar" ? "إخفاء التفاصيل عن المشاهدين" : "Hide details from viewers"
-                              }
-                            >
-                              {(tx as any).hiddenFromViewers ? <Lock className="w-3.5 h-3.5" /> : <LockOpen className="w-3.5 h-3.5" />}
-                            </button>
                           )}
                           {tx.imageUrl && (
                             <button
