@@ -49,7 +49,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ setCurrentTab }) => {
     categories,
     addIncome,
     addExpense,
-    wallets
+    wallets,
+    setSelectedCompartmentFilter
   } = useApp();
 
   const incomes = allIncomes.filter(i => !i.isHistorical);
@@ -111,8 +112,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ setCurrentTab }) => {
   };
 
   const getWalletsBalance = () => {
-    let sumBalLYD = 0;
-    let sumBalUSD = 0;
+    // Per currency and per compartment, so the card/cash split converts at the
+    // same rate the total does and the two parts always add up to it.
+    const sum = { LYD: { onCard: 0, inCash: 0 }, USD: { onCard: 0, inCash: 0 } };
     
     wallets.forEach(w => {
       if (w.isHidden) return; // Exclude hidden wallets
@@ -122,25 +124,22 @@ export const Dashboard: React.FC<DashboardProps> = ({ setCurrentTab }) => {
       // one bucket per currency the wallet holds, because a wallet that
       // exchanged part of its balance now contributes to both sides at once.
       walletTotals(w, incomes, expenses).forEach((bal) => {
-        if (bal.currency === 'LYD') {
-          sumBalLYD += bal.total;
-        } else {
-          sumBalUSD += bal.total;
-        }
+        sum[bal.currency].onCard += bal.onCard;
+        sum[bal.currency].inCash += bal.inCash;
       });
     });
 
-    if (activeCurrency === 'MERGED') {
-       return sumBalLYD + getMergedLYD(sumBalUSD, 'USD');
-    } else if (activeCurrency === 'LYD') {
-       return sumBalLYD;
-    } else {
-       return sumBalUSD;
-    }
+    const pick = (part: 'onCard' | 'inCash') =>
+      activeCurrency === 'MERGED'
+        ? sum.LYD[part] + getMergedLYD(sum.USD[part], 'USD')
+        : sum[activeCurrency as 'LYD' | 'USD'][part];
+    const onCard = pick('onCard');
+    const inCash = pick('inCash');
+    return { total: onCard + inCash, onCard, inCash };
   };
 
   const stats = getTotals();
-  const walletsBalance = getWalletsBalance();
+  const { total: walletsBalance, onCard: balanceOnCard, inCash: balanceInCash } = getWalletsBalance();
 
   // Combine trans for recent list
   const recentTransactions = [
@@ -330,6 +329,28 @@ export const Dashboard: React.FC<DashboardProps> = ({ setCurrentTab }) => {
             <h3 className={`text-4xl md:text-5xl font-black ${walletsBalance >= 0 ? 'text-emerald-500 dark:text-emerald-400' : 'text-rose-500'}`}>
               {formatMoney(walletsBalance, activeCurrency)}
             </h3>
+            {/* Same rule as the wallet card: split only once cash exists. */}
+            {balanceInCash !== 0 && (
+              <div className="flex flex-wrap gap-2 text-xs font-bold">
+                {([
+                  { id: 'card' as const, label: language === 'ar' ? 'على البطاقات' : 'On cards', value: balanceOnCard, tone: 'text-slate-600 dark:text-slate-300' },
+                  { id: 'cash' as const, label: language === 'ar' ? 'نقداً في اليد' : 'Cash in hand', value: balanceInCash, tone: 'text-amber-500' },
+                ]).map((part) => (
+                  <button
+                    key={part.id}
+                    type="button"
+                    onClick={() => {
+                      setSelectedCompartmentFilter(part.id);
+                      setCurrentTab?.('transactions');
+                    }}
+                    className="-mx-1.5 px-1.5 py-0.5 rounded-lg cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800/60 focus-visible:outline-2 focus-visible:outline-brand-teal transition-colors"
+                  >
+                    <span className="text-slate-400 font-medium">{part.label}</span>{' '}
+                    <span className={part.value < 0 ? 'text-rose-500' : part.tone}>{formatMoney(part.value, activeCurrency)}</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           <div className={`w-12 h-12 rounded-2xl flex items-center justify-center relative z-10 ${walletsBalance >= 0 ? 'bg-brand-teal/20 text-teal-600 dark:bg-brand-teal/10 dark:text-brand-teal' : 'bg-red-50 dark:bg-red-950/45 text-red-500'}`}>
             <Wallet className="w-6 h-6" />

@@ -525,6 +525,8 @@ interface AppContextProps {
   // Custom Wallet Filter crossing views
   selectedWalletFilter: string;
   setSelectedWalletFilter: (val: string) => void;
+  selectedCompartmentFilter: "" | "card" | "cash";
+  setSelectedCompartmentFilter: (val: "" | "card" | "cash") => void;
 }
 
 const AppContext = createContext<AppContextProps | undefined>(undefined);
@@ -564,6 +566,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
   const [comments, setComments] = useState<TransactionComment[]>([]);
   const [trashItems, setTrashItems] = useState<TrashItem[]>([]);
   const [selectedWalletFilter, setSelectedWalletFilter] = useState<string>("");
+  const [selectedCompartmentFilter, setSelectedCompartmentFilter] = useState<"" | "card" | "cash">("");
 
   // Select literal translation matching current language state
   const t = translations[language];
@@ -2432,6 +2435,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
         // Custom Wallet Filter crossing views
         selectedWalletFilter,
         setSelectedWalletFilter,
+        selectedCompartmentFilter,
+        setSelectedCompartmentFilter,
       }}
     >
       {children}

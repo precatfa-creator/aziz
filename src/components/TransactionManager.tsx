@@ -41,6 +41,7 @@ import { resolveReceiptUrls, uploadReceipt } from "../lib/receiptStorage";
 import { fileToReceiptJpeg } from "../lib/imageDownscale";
 import {
   convertAmount,
+  inCompartment,
   roundMoney,
   walletBalance,
   walletCurrencies,
@@ -79,6 +80,8 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
     addWallet,
     selectedWalletFilter,
     setSelectedWalletFilter,
+    selectedCompartmentFilter,
+    setSelectedCompartmentFilter,
     currency: globalCurrency,
     exchangeRate,
     setExchangeRate,
@@ -111,6 +114,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
   const [priorityFilter, setPriorityFilter] = useState("");
   const [walletFilter, setWalletFilter] = useState("");
   const [typeFilter, setTypeFilter] = useState<"all" | "income" | "expense" | "transfer">("all",);
+  const [compartmentFilter, setCompartmentFilter] = useState<"all" | "card" | "cash">("all");
   const [isFiltersExpanded, setIsFiltersExpanded] = useState(false);
 
   // Derived filter metrics
@@ -119,7 +123,8 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
     (categoryFilter ? 1 : 0) +
     (priorityFilter ? 1 : 0) +
     (walletFilter ? 1 : 0) +
-    (typeFilter !== "all" ? 1 : 0);
+    (typeFilter !== "all" ? 1 : 0) +
+    (compartmentFilter !== "all" ? 1 : 0);
 
   // Tab and Subtab Toggle
   const [activeSubTab, setActiveSubTab] = useState<"new" | "history" | "refunds" | "dues">("new");
@@ -138,14 +143,19 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
     }
   }, [defaultType]);
 
+  // Wallet cards and the dashboard open the history pre-filtered: by wallet,
+  // by compartment, or both. Either arriving alone resets the other, so a
+  // "cash in hand" tap never inherits a wallet picked on an earlier visit.
   useEffect(() => {
-    if (selectedWalletFilter) {
+    if (selectedWalletFilter || selectedCompartmentFilter) {
       setWalletFilter(selectedWalletFilter);
+      setCompartmentFilter(selectedCompartmentFilter || "all");
       setActiveSubTab("history");
       setSelectedWalletFilter("");
+      setSelectedCompartmentFilter("");
       setIsFiltersExpanded(true);
     }
-  }, [selectedWalletFilter, setSelectedWalletFilter]);
+  }, [selectedWalletFilter, setSelectedWalletFilter, selectedCompartmentFilter, setSelectedCompartmentFilter]);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingType, setEditingType] = useState<"income" | "expense" | null>(
@@ -218,7 +228,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
   // Reset pagination limit when filters undergo transition
   useEffect(() => {
     setVisibleLimit(20);
-  }, [searchQuery, categoryFilter, priorityFilter, walletFilter, typeFilter]);
+  }, [searchQuery, categoryFilter, priorityFilter, walletFilter, typeFilter, compartmentFilter]);
 
   // Drag-and-drop state for uploads
   const [dragActive, setDragActive] = useState(false);
@@ -1011,6 +1021,14 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
     .filter((tx) => !hideHistoricalData || !tx.isHistorical)
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
+  const hasCashRows = expenses.some(
+    (e) => e.expenseKind === "cash_withdrawal" || e.expenseKind === "cash_spend",
+  );
+
+  // Under the cash view a withdrawal is money arriving, not leaving.
+  const isInflow = (tx: { type: string; expenseKind?: string }) =>
+    tx.type === "income" || (compartmentFilter === "cash" && tx.expenseKind === "cash_withdrawal");
+
   // Filters application
   const filteredTransactions = consolidatedTransactions.filter((tx) => {
     const matchSearch =
@@ -1028,8 +1046,21 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
           ? isTransfer
           : tx.type === typeFilter && !isTransfer;
     const matchPriority = priorityFilter ? tx.priority === priorityFilter : true;
-    const matchWallet = walletFilter ? tx.walletId === walletFilter : true;
-    return matchSearch && matchCat && matchType && matchPriority && matchWallet;
+    // A transfer row is filed under its paying wallet, but it moved money into
+    // the receiving one too; without the second check, wallet B's history
+    // would never show what arrived in B and could not add up to its balance.
+    const matchWallet = walletFilter
+      ? tx.walletId === walletFilter || (tx as any).transferPair?.walletId === walletFilter
+      : true;
+    // A transfer row viewed from its receiving wallet is that wallet's income
+    // leg, which always lands on the card — not the paying leg's compartment.
+    const receivingSide = !!walletFilter && tx.walletId !== walletFilter;
+    const matchCompartment =
+      compartmentFilter === "all" ||
+      (receivingSide
+        ? compartmentFilter === "card"
+        : inCompartment(tx as any, tx.type, compartmentFilter));
+    return matchSearch && matchCat && matchType && matchPriority && matchWallet && matchCompartment;
   });
 
   const getCatColorCombined = (color: string) => {
@@ -2297,6 +2328,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                         setPriorityFilter("");
                         setWalletFilter("");
                         setTypeFilter("all");
+                        setCompartmentFilter("all");
                       }}
                       className="text-[10px] font-black text-rose-500 hover:text-rose-600 dark:text-rose-400 dark:hover:text-rose-300 transition-colors bg-rose-500/10 dark:bg-rose-500/20 px-2.5 py-1 rounded-lg cursor-pointer animate-fade-in"
                     >
@@ -2368,6 +2400,41 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                           />
                         </div>
                       </div>
+
+                      {/* Compartment: only once a cash row exists, so a card-only
+                          user never meets a control with nothing behind it. */}
+                      {hasCashRows && (
+                        <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                          <div className="grid grid-cols-3 p-1 bg-slate-100/50 dark:bg-slate-950/50 rounded-xl border border-white/10 dark:border-slate-900/30 sm:w-80">
+                            {[
+                              { id: "all" as const, label: language === "ar" ? "الكل" : "All" },
+                              { id: "card" as const, label: language === "ar" ? "البطاقة" : "Card" },
+                              { id: "cash" as const, label: language === "ar" ? "النقد" : "Cash" },
+                            ].map((pill) => (
+                              <button
+                                key={pill.id}
+                                type="button"
+                                aria-pressed={compartmentFilter === pill.id}
+                                onClick={() => setCompartmentFilter(pill.id)}
+                                className={`py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${
+                                  compartmentFilter === pill.id
+                                    ? "bg-brand-slate text-white dark:bg-white dark:text-brand-slate shadow-xs"
+                                    : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white"
+                                }`}
+                              >
+                                {pill.label}
+                              </button>
+                            ))}
+                          </div>
+                          {compartmentFilter !== "all" && (
+                            <p className="text-[10px] font-semibold text-slate-400">
+                              {language === "ar"
+                                ? "السحب النقدي يظهر في القائمتين: يخرج من البطاقة ويدخل النقد."
+                                : "Cash withdrawals appear in both: they leave the card and arrive as cash."}
+                            </p>
+                          )}
+                        </div>
+                      )}
 
                       {/* Dropdowns filters row */}
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2 border-t border-slate-100 dark:border-slate-800/40">
@@ -2953,14 +3020,14 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                           ) : (
                           <span
                             className={`font-black text-base ${
-                              tx.type === "income"
+                              isInflow(tx as any)
                                 ? "text-emerald-500" // palette custom positive green
                                 : (tx as any).isRefunded
                                   ? "text-brand-slate dark:text-white line-through decoration-rose-500 decoration-2"
                                   : "text-brand-slate dark:text-white font-extrabold"
                             }`}
                           >
-                            {tx.type === "income" ? "+" : "-"}{" "}
+                            {isInflow(tx as any) ? "+" : "-"}{" "}
                             {((tx as any).isRefunded ? ((tx as any).originalAmount || 0) : tx.amount).toLocaleString(undefined, {
                               minimumFractionDigits: 2,
                             })}{" "}

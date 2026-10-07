@@ -11,6 +11,7 @@
 import assert from 'node:assert';
 import {
   convertAmount,
+  inCompartment,
   isEarning,
   isSpending,
   roundMoney,
@@ -242,5 +243,16 @@ assert.strictEqual(
 assert.strictEqual(isEarning(income(500)), true);
 assert.strictEqual(isEarning(income(500, { isOpening: true })), false);
 assert.strictEqual(isEarning(income(500, { transferId: 't1' })), false);
+
+// Compartment filter: each list must reconcile to its own balance, so a
+// withdrawal sits in both and incomes only ever land on the card.
+assert.strictEqual(inCompartment(income(500), 'income', 'card'), true);
+assert.strictEqual(inCompartment(income(500), 'income', 'cash'), false);
+assert.strictEqual(inCompartment(expense(500), 'expense', 'card'), true, 'untagged rows are card spends');
+assert.strictEqual(inCompartment(expense(500), 'expense', 'cash'), false);
+assert.strictEqual(inCompartment(expense(500, 'cash_withdrawal'), 'expense', 'card'), true);
+assert.strictEqual(inCompartment(expense(500, 'cash_withdrawal'), 'expense', 'cash'), true);
+assert.strictEqual(inCompartment(expense(500, 'cash_spend'), 'expense', 'card'), false);
+assert.strictEqual(inCompartment(expense(500, 'cash_spend'), 'expense', 'cash'), true);
 
 console.log('walletBalance.check.ts: all assertions passed');

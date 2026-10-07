@@ -34,7 +34,8 @@ export const WalletManager: React.FC<WalletManagerProps> = ({ setCurrentTab }) =
     addTransfer,
     categories,
     selectedWalletFilter,
-    setSelectedWalletFilter
+    setSelectedWalletFilter,
+    setSelectedCompartmentFilter
   } = useApp();
   const [showAddForm, setShowAddForm] = useState(false);
   const [showTransferForm, setShowTransferForm] = useState(false);
@@ -691,23 +692,39 @@ export const WalletManager: React.FC<WalletManagerProps> = ({ setCurrentTab }) =
                 {/* Split the total once part of it has been withdrawn as cash:
                     the card can read zero while the money is still in hand. */}
                 {stats.inCash !== 0 && (
-                  <div className="mt-2 flex gap-4 text-[10px] font-bold">
-                    <div>
-                      <span className="text-slate-400 font-medium">
-                        {language === "ar" ? "على البطاقة" : "On card"}
-                      </span>{" "}
-                      <span className={stats.onCard < 0 ? "text-rose-500" : "text-slate-600 dark:text-slate-300"}>
-                        {stats.onCard.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-slate-400 font-medium">
-                        {language === "ar" ? "نقداً في اليد" : "Cash in hand"}
-                      </span>{" "}
-                      <span className={stats.inCash < 0 ? "text-rose-500" : "text-amber-500"}>
-                        {stats.inCash.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                      </span>
-                    </div>
+                  <div className="mt-2 flex gap-2 text-[10px] font-bold">
+                    {([
+                      {
+                        id: "card" as const,
+                        label: language === "ar" ? "على البطاقة" : "On card",
+                        value: stats.onCard,
+                        tone: "text-slate-600 dark:text-slate-300",
+                      },
+                      {
+                        id: "cash" as const,
+                        label: language === "ar" ? "نقداً في اليد" : "Cash in hand",
+                        value: stats.inCash,
+                        tone: "text-amber-500",
+                      },
+                    ]).map((part) => (
+                      <button
+                        key={part.id}
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedWalletFilter(wallet.id);
+                          setSelectedCompartmentFilter(part.id);
+                          setCurrentTab?.("transactions");
+                        }}
+                        title={language === "ar" ? "عرض معاملات هذا الجزء" : "Show these transactions"}
+                        className="-mx-1 px-1 py-0.5 rounded-md cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800/60 focus-visible:outline-2 focus-visible:outline-brand-teal transition-colors"
+                      >
+                        <span className="text-slate-400 font-medium">{part.label}</span>{" "}
+                        <span className={part.value < 0 ? "text-rose-500" : part.tone}>
+                          {part.value.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        </span>
+                      </button>
+                    ))}
                   </div>
                 )}
 

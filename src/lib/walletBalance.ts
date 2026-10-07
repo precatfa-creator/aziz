@@ -59,6 +59,26 @@ export interface WalletBalance {
 
 const kindOf = (e: Expense): ExpenseKind => e.expenseKind ?? 'wallet_spend';
 
+/** The two compartments of a wallet, as the history filter names them. */
+export type Compartment = 'card' | 'cash';
+
+/**
+ * Whether a ledger row moves money in this compartment — the rows whose sum
+ * reconciles to `onCard` or `inCash`. Incomes always land on the card. A
+ * withdrawal is in both: it leaves the card and arrives as cash, so dropping it
+ * from either list would leave that list unable to add up to its balance.
+ */
+export const inCompartment = (
+  tx: { expenseKind?: ExpenseKind },
+  type: 'income' | 'expense',
+  compartment: Compartment,
+): boolean => {
+  if (type === 'income') return compartment === 'card';
+  const kind = tx.expenseKind ?? 'wallet_spend';
+  if (kind === 'cash_withdrawal') return true;
+  return compartment === 'cash' ? kind === 'cash_spend' : kind === 'wallet_spend';
+};
+
 /**
  * A withdrawal moves money between one wallet's own compartments and a transfer
  * moves it between wallets or currencies. Neither is spending, so neither
