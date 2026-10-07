@@ -9,7 +9,7 @@
  */
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowRight, Languages, Lock, LogOut, Moon, RefreshCw, Sun, Wallet } from 'lucide-react';
+import { ArrowRight, Banknote, CreditCard, Flag, Languages, Lock, LogOut, Moon, RefreshCw, Sun, Wallet } from 'lucide-react';
 import { supabase } from '../supabase';
 import { inCompartment, type Compartment } from '../lib/walletBalance';
 
@@ -18,13 +18,15 @@ interface BalanceRow {
   name: string;
   color: string;
   primary_currency: string;
-  mode: 'balance' | 'all' | 'partial';
+  mode: 'balance' | 'all';
+  /** Which side of the wallet is shared; the other side's figures arrive null. */
+  compartment: 'all' | 'card' | 'cash';
   owner_name: string;
   /** The wallet's opening balance, in primary_currency. Same on every row of a wallet. */
   initial_balance: number | null;
   currency: string;
-  on_card: number;
-  in_cash: number;
+  on_card: number | null;
+  in_cash: number | null;
 }
 
 interface TxRow {
@@ -54,15 +56,26 @@ const categoryLabel = (name: string, lang: string) => {
   return (lang === 'ar' ? a : e) || name;
 };
 
-// Null only if the database predates the column; show nothing rather than 0.
+// The wallet's starting point, set apart from the live balance so it can't be
+// mistaken for it. Null when the database predates it or the share is cash-only.
 const OpeningBalance: React.FC<{ info: BalanceRow; lang: string }> = ({ info, lang }) =>
   info.initial_balance == null ? null : (
-    <p className="mt-2 text-[11px] font-semibold text-slate-500 dark:text-slate-400 tabular-nums">
-      {lang === 'ar' ? 'الرصيد الافتتاحي' : 'Opening balance'}{' '}
-      <span className="font-bold text-slate-700 dark:text-slate-200">
-        {money(info.initial_balance, info.primary_currency, lang)}
-      </span>
-    </p>
+    <span className="mt-1.5 inline-flex items-center gap-1.5 rounded-full border border-brand-teal/30 bg-brand-teal/10 px-2.5 py-1 text-[11px] font-bold text-teal-700 dark:text-brand-teal tabular-nums">
+      <Flag className="w-3 h-3" aria-hidden="true" />
+      {lang === 'ar' ? 'الرصيد الافتتاحي' : 'Opening balance'}
+      <span className="font-black">{money(info.initial_balance, info.primary_currency, lang)}</span>
+    </span>
+  );
+
+// Tells the viewer they are looking at one side of the wallet, not all of it.
+const ScopeBadge: React.FC<{ info: BalanceRow; lang: string }> = ({ info, lang }) =>
+  info.compartment === 'all' ? null : (
+    <span className="mt-1.5 inline-flex items-center gap-1 rounded-full bg-slate-100 dark:bg-slate-800 px-2.5 py-1 text-[11px] font-bold text-slate-600 dark:text-slate-300">
+      {info.compartment === 'card' ? <CreditCard className="w-3 h-3" aria-hidden="true" /> : <Banknote className="w-3 h-3" aria-hidden="true" />}
+      {info.compartment === 'card'
+        ? lang === 'ar' ? 'البطاقة فقط' : 'Card only'
+        : lang === 'ar' ? 'النقد فقط' : 'Cash only'}
+    </span>
   );
 
 export const ViewerPortal: React.FC = () => {
@@ -137,7 +150,7 @@ export const ViewerPortal: React.FC = () => {
   const visibleTxs = (txs ?? []).filter(
     (t) => compartment === 'all' || inCompartment({ expenseKind: t.expense_kind ?? undefined }, t.type, compartment),
   );
-  const hasCash = (txs ?? []).some((t) => t.expense_kind === 'cash_withdrawal' || t.expense_kind === 'cash_spend');
+  const hasCash = open?.info.compartment === 'all' && (txs ?? []).some((t) => t.expense_kind === 'cash_withdrawal' || t.expense_kind === 'cash_spend');
 
   const iconBtn =
     'p-2 rounded-xl text-slate-500 dark:text-slate-400 hover:bg-white/70 dark:hover:bg-slate-800 cursor-pointer transition-colors focus-visible:outline-2 focus-visible:outline-brand-teal';
@@ -200,26 +213,29 @@ export const ViewerPortal: React.FC = () => {
                           {ar ? `من ${info.owner_name}` : `From ${info.owner_name}`}
                         </p>
                       )}
+                      <div className="flex flex-wrap gap-1.5">
+                        <OpeningBalance info={info} lang={lang} />
+                        <ScopeBadge info={info} lang={lang} />
+                      </div>
                     </div>
                     {canOpen && <ArrowRight className="w-4 h-4 text-slate-400 rtl:rotate-180 shrink-0" />}
                   </div>
                   {buckets.map((b) => (
                     <div key={b.currency} className="mt-3">
                       <p className="text-2xl font-black text-brand-slate dark:text-white tabular-nums">
-                        {money(Number(b.on_card) + Number(b.in_cash), b.currency, lang)}
+                        {money(Number(b.on_card ?? 0) + Number(b.in_cash ?? 0), b.currency, lang)}
                       </p>
-                      {Number(b.in_cash) !== 0 && (
+                      {b.on_card != null && b.in_cash != null && Number(b.in_cash) !== 0 && (
                         <p className="text-[11px] font-bold text-slate-500 dark:text-slate-400 tabular-nums">
-                          {ar ? 'على البطاقة' : 'On card'} {money(b.on_card, b.currency, lang)}
+                          {ar ? 'على البطاقة' : 'On card'} {money(b.on_card ?? 0, b.currency, lang)}
                           {' · '}
                           <span className="text-amber-600 dark:text-amber-400">
-                            {ar ? 'نقداً' : 'Cash'} {money(b.in_cash, b.currency, lang)}
+                            {ar ? 'نقداً' : 'Cash'} {money(b.in_cash ?? 0, b.currency, lang)}
                           </span>
                         </p>
                       )}
                     </div>
                   ))}
-                  <OpeningBalance info={info} lang={lang} />
                   {!canOpen && (
                     <p className="mt-3 text-[11px] font-semibold text-slate-500 dark:text-slate-400 flex items-center gap-1">
                       <Lock className="w-3 h-3" />
@@ -267,7 +283,10 @@ export const ViewerPortal: React.FC = () => {
             <h2 id="wallet-title" className="text-xl font-black text-brand-slate dark:text-white">
               {open.info.name}
             </h2>
-            <OpeningBalance info={open.info} lang={lang} />
+            <div className="flex flex-wrap gap-1.5">
+              <OpeningBalance info={open.info} lang={lang} />
+              <ScopeBadge info={open.info} lang={lang} />
+            </div>
           </div>
 
           {hasCash && (

@@ -17,6 +17,7 @@ import { ConfirmModal } from './ConfirmModal';
 import type { Wallet } from '../types';
 
 type Mode = 'none' | 'balance' | 'all';
+type Scope = 'all' | 'card' | 'cash';
 interface Viewer {
   id: string;
   name: string;
@@ -43,10 +44,15 @@ const ERRORS: Record<string, { ar: string; en: string }> = {
 };
 
 export const ShareWalletModal: React.FC<{ wallet: Wallet; onClose: () => void }> = ({ wallet, onClose }) => {
-  const { language, user } = useApp();
+  const { language, user, expenses } = useApp();
   const ar = language === 'ar';
   const [viewers, setViewers] = useState<Viewer[]>([]);
   const [modes, setModes] = useState<Record<string, Mode>>({});
+  const [scopes, setScopes] = useState<Record<string, Scope>>({});
+  // The card/cash choice only means something once this wallet holds cash.
+  const walletHasCash = expenses.some(
+    (e) => e.walletId === wallet.id && (e.expenseKind === 'cash_withdrawal' || e.expenseKind === 'cash_spend'),
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
@@ -59,13 +65,14 @@ export const ShareWalletModal: React.FC<{ wallet: Wallet; onClose: () => void }>
   const load = async () => {
     const [v, s] = await Promise.all([
       supabase.from('viewers').select('id, name, email').order('created_at'),
-      supabase.from('wallet_shares').select('viewer_id, mode').eq('wallet_id', wallet.id),
+      supabase.from('wallet_shares').select('viewer_id, mode, compartment').eq('wallet_id', wallet.id),
     ]);
     if (v.error || s.error) {
       setError(ar ? 'تعذّر تحميل المشاهدين.' : 'Couldn’t load viewers.');
     } else {
       setViewers(v.data);
       setModes(Object.fromEntries(s.data.map((r) => [r.viewer_id, r.mode as Mode])));
+      setScopes(Object.fromEntries(s.data.map((r) => [r.viewer_id, (r.compartment ?? 'all') as Scope])));
       setShowForm(v.data.length === 0);
     }
     setLoading(false);
@@ -90,7 +97,8 @@ export const ShareWalletModal: React.FC<{ wallet: Wallet; onClose: () => void }>
     throw new Error(msg ? (ar ? msg.ar : msg.en) : ar ? 'حدث خطأ، حاول مرة أخرى.' : 'Something went wrong. Try again.');
   };
 
-  const setMode = async (viewerId: string, mode: Mode) => {
+  // Mode and scope are written together so neither change resets the other.
+  const saveShare = async (viewerId: string, mode: Mode, compartment: Scope) => {
     if (!user) return;
     setBusy(viewerId);
     setError('');
@@ -99,9 +107,12 @@ export const ShareWalletModal: React.FC<{ wallet: Wallet; onClose: () => void }>
         ? await supabase.from('wallet_shares').delete().eq('wallet_id', wallet.id).eq('viewer_id', viewerId)
         : await supabase
             .from('wallet_shares')
-            .upsert({ wallet_id: wallet.id, viewer_id: viewerId, owner_id: user.id, mode });
+            .upsert({ wallet_id: wallet.id, viewer_id: viewerId, owner_id: user.id, mode, compartment });
     if (e) setError(ar ? 'لم يُحفظ التغيير.' : 'The change wasn’t saved.');
-    else setModes((m) => ({ ...m, [viewerId]: mode }));
+    else {
+      setModes((m) => ({ ...m, [viewerId]: mode }));
+      setScopes((sc) => ({ ...sc, [viewerId]: compartment }));
+    }
     setBusy('');
   };
 
@@ -243,7 +254,7 @@ export const ShareWalletModal: React.FC<{ wallet: Wallet; onClose: () => void }>
                           name={`mode-${v.id}`}
                           value={m.id}
                           checked={checked}
-                          onChange={() => void setMode(v.id, m.id)}
+                          onChange={() => void saveShare(v.id, m.id, scopes[v.id] ?? 'all')}
                           className="sr-only"
                         />
                         <span
@@ -262,6 +273,43 @@ export const ShareWalletModal: React.FC<{ wallet: Wallet; onClose: () => void }>
                     );
                   })}
                 </fieldset>
+
+                {walletHasCash && (modes[v.id] ?? 'none') !== 'none' && (
+                  <fieldset disabled={busy === v.id} className="disabled:opacity-60">
+                    <legend className="mb-1.5 text-[11px] font-extrabold text-slate-600 dark:text-slate-300">
+                      {ar ? 'أي جزء من المحفظة؟' : 'Which part of the wallet?'}
+                    </legend>
+                    <div className="grid grid-cols-3 p-1 rounded-xl bg-slate-100/70 dark:bg-slate-950/50">
+                      {([
+                        { id: 'all', ar: 'الكل', en: 'All' },
+                        { id: 'card', ar: 'البطاقة', en: 'Card' },
+                        { id: 'cash', ar: 'النقد', en: 'Cash' },
+                      ] as const).map((c) => {
+                        const checked = (scopes[v.id] ?? 'all') === c.id;
+                        return (
+                          <label
+                            key={c.id}
+                            className={`py-1.5 rounded-lg text-center text-xs font-extrabold cursor-pointer transition-colors has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-brand-teal ${
+                              checked
+                                ? 'bg-brand-slate text-white dark:bg-white dark:text-brand-slate shadow-xs'
+                                : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white'
+                            }`}
+                          >
+                            <input
+                              type="radio"
+                              name={`scope-${v.id}`}
+                              value={c.id}
+                              checked={checked}
+                              onChange={() => void saveShare(v.id, modes[v.id] ?? 'balance', c.id)}
+                              className="sr-only"
+                            />
+                            {ar ? c.ar : c.en}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </fieldset>
+                )}
 
                 {passwordFor === v.id && (
                   <div className="flex gap-2">

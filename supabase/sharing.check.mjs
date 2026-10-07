@@ -139,6 +139,34 @@ await as(V, 'viewer', async () => {
   assert.equal((await db.query(`select * from public.viewer_wallet_transactions('${W2}')`)).rows.length, 0, 'unshared wallet leaked');
 });
 
+// Compartment scope: a cash-only share sees cash rows and the cash balance,
+// a card-only share the card side; numbering counts only what is received.
+await as(O, null, () => db.exec(`update public.wallet_shares set compartment = 'cash'`));
+await as(V, 'viewer', async () => {
+  const tx = (await db.query(`select * from public.viewer_wallet_transactions('${W1}')`)).rows;
+  assert.deepEqual(tx.map((t) => t.date).sort(), ['2026-01-05', '2026-01-06'], 'cash share must see only the withdrawal and cash spend');
+  assert.deepEqual(tx.map((t) => t.title).sort(), ['معاملة 1', 'معاملة 2']);
+  const lyd = (await db.query(`select * from public.viewer_wallets()`)).rows.find((b) => b.currency === 'LYD');
+  assert.equal(lyd.on_card, null, 'cash share leaked the card balance');
+  assert.equal(lyd.initial_balance, null, 'cash share leaked the opening balance');
+  assert.equal(Number(lyd.in_cash), 250);
+  assert.equal(lyd.compartment, 'cash');
+});
+await as(O, null, () => db.exec(`update public.wallet_shares set compartment = 'card'`));
+await as(V, 'viewer', async () => {
+  const tx = (await db.query(`select * from public.viewer_wallet_transactions('${W1}')`)).rows;
+  assert.equal(tx.length, 7, 'card share must drop only the cash spend');
+  assert.ok(!tx.some((t) => t.expense_kind === 'cash_spend'));
+  const lyd = (await db.query(`select * from public.viewer_wallets()`)).rows.find((b) => b.currency === 'LYD');
+  assert.equal(lyd.in_cash, null, 'card share leaked the cash balance');
+  assert.equal(Number(lyd.on_card), 1120);
+  assert.equal(Number(lyd.initial_balance), 1000);
+});
+await as(O, null, async () => {
+  await rejects(db.exec(`update public.wallet_shares set compartment = 'pocket'`), 'unknown compartment accepted');
+  await db.exec(`update public.wallet_shares set compartment = 'all'`);
+});
+
 // Balance mode returns no rows.
 await as(O, null, () => db.exec(`update public.wallet_shares set mode = 'balance'`));
 await as(V, 'viewer', async () => {
