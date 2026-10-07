@@ -40,7 +40,7 @@ interface TxRow {
 }
 
 const money = (n: number, currency: string, lang: string) =>
-  new Intl.NumberFormat(lang === 'ar' ? 'ar-LY' : 'en-US', {
+  new Intl.NumberFormat(lang === 'ar' ? 'ar-u-nu-latn' : 'en-US', {
     style: 'currency',
     currency,
     maximumFractionDigits: 2,

@@ -77,8 +77,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ setCurrentTab }) => {
   const [quickCat, setQuickCat] = useState('');
 
   // Helpers to structure numbers
+  // Not ar-LY: its locale data swaps the separators (4.121,30). Plain Arabic
+  // gives 4,121.30, and nu-latn pins Latin digits on older WebViews.
   const formatMoney = (val: number, currCode: string) => {
-    return new Intl.NumberFormat(language === 'ar' ? 'ar-LY' : 'en-US', {
+    return new Intl.NumberFormat(language === 'ar' ? 'ar-u-nu-latn' : 'en-US', {
       style: 'currency',
       currency: currCode === 'MERGED' ? 'LYD' : currCode,
       maximumFractionDigits: 2
