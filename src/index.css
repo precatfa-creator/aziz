@@ -1,4 +1,6 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Tajawal:wght@300;400;500;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+/* Every weight the UI asks for is loaded: the app leans on font-extrabold (800)
+   and font-black (900), which Inter-up-to-700 could only fake-bold. */
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@300..900&family=Tajawal:wght@300;400;500;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap');
 @import "tailwindcss";
 
 /* Tailwind v4 defaults dark: to prefers-color-scheme; drive it off the .dark
@@ -7,7 +9,7 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
-  --font-sans: "Inter", "Tajawal", sans-serif;
+  --font-sans: "Geist", "Tajawal", sans-serif;
   --font-arabic: "Tajawal", sans-serif;
   --font-mono: "JetBrains Mono", monospace;
   --color-brand-slate: #4A4466;
@@ -41,6 +43,15 @@
   :focus-visible {
     outline: 2px solid var(--color-brand-teal);
     outline-offset: 2px;
+  }
+
+  /* A press you can feel on every button. Buttons that set their own
+     active:scale-* keep theirs (utilities beat base). */
+  button:not(:disabled):active {
+    scale: 0.98;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    button:not(:disabled):active { scale: none; }
   }
 }
 

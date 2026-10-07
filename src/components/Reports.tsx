@@ -16,7 +16,6 @@ import {
   TrendingDown, 
   FileSpreadsheet, 
   HelpCircle,
-  Clock,
   Briefcase,
   AlertCircle,
   Send
@@ -289,9 +288,12 @@ export const Reports: React.FC = () => {
 
         {/* AI Loading Progress Bar */}
         {aiLoading && (
-          <div className="space-y-2 py-4 text-center">
-            <Clock className="w-5 h-5 text-emerald-400 animate-spin mx-auto" />
-            <p className="text-[11px] text-slate-400 animate-pulse italic">
+          <div className="space-y-2.5 py-4" role="status" aria-live="polite">
+            {/* Shaped like the answer that is about to replace it. */}
+            {['w-11/12', 'w-full', 'w-4/5', 'w-2/3'].map((w) => (
+              <div key={w} className={`h-2.5 ${w} rounded-full bg-slate-200/80 dark:bg-slate-800 animate-pulse`} />
+            ))}
+            <p className="pt-1 text-[11px] text-slate-400">
               {language === 'ar'
                 ? 'يقوم عزيز الآن بمطابقة الحسابات وحصيلة النقدية لصياغة توجيه مالي استراتيجي...'
                 : 'Aziz is compiling balances and wishlist goals to draft custom financial advice...'}

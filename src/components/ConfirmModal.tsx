@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { AlertTriangle, Trash2, X, Archive, HelpCircle } from 'lucide-react';
+import { AlertTriangle, Trash2, X, Archive, HelpCircle, Info } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 
 interface ConfirmModalProps {
@@ -98,10 +98,13 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
               {message}
             </p>
             {type === 'danger' && (
-              <div className="mt-3 text-[10px] bg-rose-50 dark:bg-rose-950/20 text-rose-600 dark:text-rose-400 border border-rose-100 dark:border-rose-900/30 font-bold rounded-xl p-2.5 leading-normal">
-                {language === 'ar' 
-                  ? '💡 سيتم نقل المحدد إلى سلة المحذوفات مؤقتاً لمدة 3 أيام مع إمكانية استعادته بالكامل بأي وقت.'
-                  : '💡 This will be moved to the Trash Bin temporarily for 3 days where it remains fully restorable.'}
+              <div className="mt-3 flex items-start gap-2 text-start text-[10px] bg-rose-50 dark:bg-rose-950/20 text-rose-600 dark:text-rose-400 border border-rose-100 dark:border-rose-900/30 font-bold rounded-xl p-2.5 leading-normal">
+                <Info className="w-3.5 h-3.5 shrink-0 mt-px" aria-hidden="true" />
+                <span>
+                  {language === 'ar'
+                    ? 'ينتقل إلى سلة المحذوفات، ويمكنك استعادته خلال 3 أيام.'
+                    : 'Moves to the Trash. You can restore it within 3 days.'}
+                </span>
               </div>
             )}
           </div>

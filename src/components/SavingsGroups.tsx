@@ -537,8 +537,8 @@ export const SavingsGroups: React.FC = () => {
                             showConfirm(
                               language === 'ar' ? 'حذف الجمعية نهائياً' : 'Delete Savings Group',
                               language === 'ar'
-                                ? `⚠️ تحذير: هل أنت متأكد من حذف الجمعية "${group.name}" بالكامل؟ سيتم مسح كافة الأعضاء وجداول الدورة ولا يمكن التراجع عن هذا الإجراء.`
-                                : `⚠️ Warning: Are you sure you want to permanently delete the savings group "${group.name}"? This will erase all members and payment history. This action cannot be undone.`,
+                                ? `حذف الجمعية «${group.name}» مع أعضائها وسجل دفعاتها؟`
+                                : `Delete the savings group “${group.name}” with its members and payment history?`,
                               () => deleteSavingsGroup(group.id),
                               'danger'
                             );
@@ -708,7 +708,7 @@ export const SavingsGroups: React.FC = () => {
                               : 'bg-slate-50 dark:bg-slate-800 text-slate-400 border border-slate-200 dark:border-slate-700'
                           }`}
                         >
-                          {member.isReceived ? (language === 'ar' ? 'تم الاستلام ✓' : 'Collected ✓') : (language === 'ar' ? 'معلّق' : 'Pending')}
+                          {member.isReceived ? (language === 'ar' ? 'تم الاستلام' : 'Collected') : (language === 'ar' ? 'معلّق' : 'Pending')}
                         </button>
                       </td>
 

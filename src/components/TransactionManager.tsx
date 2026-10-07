@@ -130,6 +130,15 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
     (typeFilter !== "all" ? 1 : 0) +
     (compartmentFilter !== "all" ? 1 : 0);
 
+  const clearFilters = () => {
+    setSearchQuery("");
+    setCategoryFilter("");
+    setPriorityFilter("");
+    setWalletFilter("");
+    setTypeFilter("all");
+    setCompartmentFilter("all");
+  };
+
   // Tab and Subtab Toggle
   const [activeSubTab, setActiveSubTab] = useState<"new" | "history" | "refunds" | "dues">("new");
 
@@ -2350,12 +2359,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
-                        setSearchQuery("");
-                        setCategoryFilter("");
-                        setPriorityFilter("");
-                        setWalletFilter("");
-                        setTypeFilter("all");
-                        setCompartmentFilter("all");
+                        clearFilters();
                       }}
                       className="text-[10px] font-black text-rose-500 hover:text-rose-600 dark:text-rose-400 dark:hover:text-rose-300 transition-colors bg-rose-500/10 dark:bg-rose-500/20 px-2.5 py-1 rounded-lg cursor-pointer animate-fade-in"
                     >
@@ -3287,8 +3291,24 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
               )}
             </>
           ) : (
-            <div className="text-center py-20 text-slate-400 text-xs font-semibold">
-              {t.noTransactionsYet}
+            // Filters that hide everything are not the same as an empty ledger:
+            // say which one it is, and offer the action that fixes it.
+            <div className="flex flex-col items-center gap-3 py-16 text-center">
+              <Layers className="w-8 h-8 text-slate-300 dark:text-slate-600" aria-hidden="true" />
+              <p className="text-sm font-bold text-slate-600 dark:text-slate-300">
+                {activeFiltersCount > 0
+                  ? language === "ar" ? "لا توجد معاملات تطابق هذه التصفية." : "No transactions match these filters."
+                  : t.noTransactionsYet}
+              </p>
+              <button
+                type="button"
+                onClick={() => (activeFiltersCount > 0 ? clearFilters() : setActiveSubTab("new"))}
+                className="px-4 py-2 rounded-xl text-xs font-black bg-brand-slate text-white dark:bg-white dark:text-brand-slate cursor-pointer"
+              >
+                {activeFiltersCount > 0
+                  ? language === "ar" ? "مسح التصفية" : "Clear filters"
+                  : language === "ar" ? "إضافة معاملة" : "Add a transaction"}
+              </button>
             </div>
           )}
         </div>

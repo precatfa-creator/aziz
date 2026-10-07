@@ -866,7 +866,7 @@ export const FuturePurchases: React.FC = () => {
                     </button>
                   ) : (
                     <span className="text-[10px] font-bold text-slate-400 block italic">
-                      {language === 'ar' ? 'تم شراؤها بنجاح' : 'Success fully purchased ✓'}
+                      {language === 'ar' ? 'تم شراؤها' : 'Purchased'}
                     </span>
                   )}
                 </div>

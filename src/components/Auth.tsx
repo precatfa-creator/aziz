@@ -1202,7 +1202,7 @@ export const Auth: React.FC = () => {
                       {previewCurrency === 'LYD' ? '1,230 د.ل' : '$200'}
                     </span>
                     <span className="text-[8.5px] px-1 bg-emerald-500/10 text-emerald-600 rounded-sm font-bold uppercase">
-                      {language === 'ar' ? 'جاهز للشراء ✓' : 'Completed ✓'}
+                      {language === 'ar' ? 'جاهز للشراء' : 'Ready to buy'}
                     </span>
                   </div>
                 </div>
@@ -1265,8 +1265,8 @@ export const Auth: React.FC = () => {
               <div className="pt-3 border-t border-slate-50 dark:border-slate-850 text-start">
                 <p className="text-xs font-medium text-slate-500 leading-relaxed italic">
                   {language === 'ar' 
-                    ? '💡 نصيحة خبير عزيز المالي: معدل استهلاكك على متطلبات البيت والتموين أعلى بنسبة ٧٪ من المتوسط المقترح لميزانيتك. يُنصح بالاستفادة من الشراء بأسعار الجملة لتوفير ما يقارب ١٢٠ د.ل شهرياً.'
-                    : '💡 Aziz Advisory Insight: Grocery expenditure ranges 7% higher than your strict budget template threshold. Consider collective wholesale bulk purchases to save approximately $25 monthly.'}
+                    ? 'نصيحة عزيز: معدل استهلاكك على متطلبات البيت والتموين أعلى بنسبة ٧٪ من المتوسط المقترح لميزانيتك. يُنصح بالاستفادة من الشراء بأسعار الجملة لتوفير ما يقارب ١٢٠ د.ل شهرياً.'
+                    : 'Aziz insight: Grocery expenditure ranges 7% higher than your strict budget template threshold. Consider collective wholesale bulk purchases to save approximately $25 monthly.'}
                 </p>
               </div>
             </div>
@@ -1384,8 +1384,8 @@ export const Auth: React.FC = () => {
                 {/* Subtext info */}
                 <div className="mt-5 text-[10px] text-slate-400 font-bold leading-relaxed text-center bg-slate-100/60 dark:bg-slate-950/40 py-2 px-3 rounded-lg">
                   {language === 'ar' 
-                    ? '💡 هل تعلم؟ يقوم عزيز بحساب الأقساط أوتوماتيكياً وتسجيل مصفوفات الانتظام بفاعلية مطلقة.' 
-                    : '💡 Did you know? Aziz calculates custom cyclic dues & records attendance columns with zero error.'}
+                    ? 'هل تعلم؟ يقوم عزيز بحساب الأقساط أوتوماتيكياً وتسجيل مصفوفات الانتظام بفاعلية مطلقة.' 
+                    : 'Did you know? Aziz calculates custom cyclic dues & records attendance columns with zero error.'}
                 </div>
 
               </div>
