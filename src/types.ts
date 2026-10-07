@@ -10,6 +10,7 @@ export interface UserProfile {
   preferredLanguage: 'ar' | 'en';
   preferredCurrency: 'LYD' | 'USD';
   exchangeRateUSD_LYD: number; // custom conversion rate (e.g. 1 USD = 6.15 LYD)
+  defaultExpenseWalletId?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -43,12 +44,18 @@ export interface Income {
   isHistorical?: boolean;
   categoryName?: string;
   isOpening?: boolean;
+  /** Set when this row is the receiving half of a transfer or currency exchange. */
+  transferId?: string;
 }
 
 export interface Expense {
   id: string;
   userId: string;
   amount: number;
+  originalAmount?: number;
+  isRefunded?: boolean;
+  refundedAt?: string;
+  isDue?: boolean;
   currency: 'LYD' | 'USD';
   title: string;
   date: string; // YYYY-MM-DD
@@ -61,6 +68,10 @@ export interface Expense {
   walletId?: string;
   isHistorical?: boolean;
   categoryName?: string;
+  /** Which compartment of the wallet moved. Undefined reads as 'wallet_spend'. */
+  expenseKind?: 'wallet_spend' | 'cash_withdrawal' | 'cash_spend';
+  /** Set when this row is the paying half of a transfer or currency exchange. */
+  transferId?: string;
 }
 
 export interface Wallet {

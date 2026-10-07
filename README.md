@@ -1,20 +1,57 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# عزيز | Aziz — Personal Finance
 
-# Run and deploy your AI Studio app
+Wallets, transactions, transfers, receipts, reports, and a Gemini-backed AI
+advisor. Ships as a web app/PWA on Vercel and as an Android APK via Capacitor.
 
-This contains everything you need to run your app locally.
+| Layer | Stack |
+| --- | --- |
+| Frontend | React + Vite + Tailwind (`src/`) |
+| Backend | Supabase — Postgres, Auth, Storage, Realtime (`supabase/migrations/`) |
+| API | Vercel functions calling Gemini (`api/`) |
+| Android | Capacitor 8 WebView wrapper (`android/`, `capacitor.config.ts`) |
 
-View your app in AI Studio: https://ai.studio/apps/cfac7153-c795-47f3-bd4a-e22a567b8295
+## Run locally
 
-## Run Locally
+**Prerequisites:** Node.js 22+, a linked Vercel project (`vercel link`), and
+Supabase provisioned through the Vercel Marketplace
+(`vercel integration add supabase`).
 
-**Prerequisites:**  Node.js
+1. `npm install`
+2. `vercel env pull .env.local` — variables are documented in `.env.example`
+3. Apply every file in `supabase/migrations/` to your Supabase project, in
+   filename order
+4. `npm run dev`
 
+## Auth
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+Google OAuth only, through Supabase Auth. Enable the Google provider in the
+Supabase dashboard (Authentication → Providers → Google) with the redirect URI
+`https://<project-ref>.supabase.co/auth/v1/callback`.
+
+## Scripts
+
+| Command | What it does |
+| --- | --- |
+| `npm run dev` | Vite dev server |
+| `npm run build` | Production web build into `dist/` |
+| `npm run lint` | Type-check (`tsc --noEmit`) |
+| `npx tsx src/lib/<name>.check.ts` | Run one self-check; each exits non-zero on failure |
+| `npm run android:sync` | Native build + `cap sync android` |
+| `npm run android:apk` | Sync, then build a debug APK with Gradle |
+
+## Android
+
+The APK bundles the UI and serves it from `https://localhost`. API calls go to
+the deployed Vercel origin (`src/lib/apiUrl.ts`) over Capacitor's native HTTP.
+Android Studio is not required; see
+[BUILD_ANDROID_APK_FROM_WEBAPP.md](BUILD_ANDROID_APK_FROM_WEBAPP.md) for the
+SDK setup and signing steps.
+
+The debug APK is written to `android/app/build/outputs/apk/debug/`.
+
+## Releases
+
+Versions follow [Semantic Versioning](https://semver.org). Tags are named
+`vX.Y.Z`. On each release, keep `package.json` `version` and the Android
+`versionName` equal, and increment `versionCode` in
+`android/app/build.gradle`.

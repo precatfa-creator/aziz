@@ -17,7 +17,6 @@ import {
   Award, 
   Heart,
   Globe,
-  Sparkles
 } from 'lucide-react';
 
 interface AboutModalProps {

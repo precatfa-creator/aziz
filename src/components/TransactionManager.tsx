@@ -14,9 +14,9 @@ import {
   X,
   CreditCard,
   Tag,
-  Sparkles,
   Wallet,
   ArrowUpRight,
+  ArrowRightLeft,
   ArrowDownLeft,
   Image as ImageIcon,
   Upload,
@@ -34,7 +34,19 @@ import {
   SlidersHorizontal,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import { createPortal } from "react-dom";
 import { ConfirmModal } from "./ConfirmModal";
+import { isInlineReceipt, packReceiptImages, receiptEntries } from "../lib/receiptImages";
+import { resolveReceiptUrls, uploadReceipt } from "../lib/receiptStorage";
+import { fileToReceiptJpeg } from "../lib/imageDownscale";
+import {
+  convertAmount,
+  roundMoney,
+  walletBalance,
+  walletCurrencies,
+  walletTotals,
+  type ExpenseKind,
+} from "../lib/walletBalance";
 
 interface TransactionManagerProps {
   defaultType?: 'income' | 'expense';
@@ -44,6 +56,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
   const {
     t,
     language,
+    profile,
     incomes,
     expenses,
     categories,
@@ -52,6 +65,9 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
     deleteIncome,
     addExpense,
     updateExpense,
+    toggleExpenseRefund,
+    toggleExpenseDue,
+    recoverDue,
     deleteExpense,
     addCategory,
     wallets,
@@ -63,6 +79,11 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
     addWallet,
     selectedWalletFilter,
     setSelectedWalletFilter,
+    currency: globalCurrency,
+    exchangeRate,
+    setExchangeRate,
+    addTransfer,
+    user,
   } = useApp();
 
   // Comment expand/input state
@@ -74,14 +95,22 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
   const [expandedTitlesTxIds, setExpandedTitlesTxIds] = useState<Record<string, boolean>>({});
 
   // Consolidation States
-  const [transactionType, setTransactionType] = useState<"income" | "expense">(
+  const [transactionType, setTransactionType] = useState<"income" | "expense" | "exchange">(
     defaultType || "expense"
   );
+  const [expenseKind, setExpenseKind] = useState<ExpenseKind>("wallet_spend");
+  // Exchange only. The amount field stays the "from" side, so the rate is the
+  // single extra input and the "to" side is always derived from the two.
+  const [exchangeRateInput, setExchangeRateInput] = useState("");
+  // A wallet holding 88 LYD and 100 USD is worth 1000 LYD only if the dashboard
+  // converts at the rate actually paid. Defaulting this on keeps the merged
+  // total honest; unticking it leaves the display rate alone.
+  const [syncDisplayRate, setSyncDisplayRate] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
   const [priorityFilter, setPriorityFilter] = useState("");
   const [walletFilter, setWalletFilter] = useState("");
-  const [typeFilter, setTypeFilter] = useState<"all" | "income" | "expense">("all",);
+  const [typeFilter, setTypeFilter] = useState<"all" | "income" | "expense" | "transfer">("all",);
   const [isFiltersExpanded, setIsFiltersExpanded] = useState(false);
 
   // Derived filter metrics
@@ -93,7 +122,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
     (typeFilter !== "all" ? 1 : 0);
 
   // Tab and Subtab Toggle
-  const [activeSubTab, setActiveSubTab] = useState<"new" | "history">("new");
+  const [activeSubTab, setActiveSubTab] = useState<"new" | "history" | "refunds" | "dues">("new");
 
   useEffect(() => {
     setActiveSubTab("new");
@@ -102,6 +131,10 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
       // Reset any active editing block
       setEditingId(null);
       setEditingType(null);
+      // Clearing editingId re-arms the compartment auto-preselect, so the kind
+      // has to go back to the default with it — otherwise a withdrawal that was
+      // open for editing leaves its kind behind on the next expense typed here.
+      setExpenseKind("wallet_spend");
     }
   }, [defaultType]);
 
@@ -118,6 +151,11 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
   const [editingType, setEditingType] = useState<"income" | "expense" | null>(
     null,
   );
+  
+  // Due Recovery Modal state
+  const [recoverDueId, setRecoverDueId] = useState<string | null>(null);
+  const [recoverDueAmount, setRecoverDueAmount] = useState("");
+  const [recoverDueMax, setRecoverDueMax] = useState(0);
 
   // Form Fields
   const [title, setTitle] = useState("");
@@ -149,6 +187,26 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
   const categoryFilterRef = useRef<HTMLDivElement>(null);
   const priorityFilterRef = useRef<HTMLDivElement>(null);
 
+  // Pre-select default wallet for expense transactions
+  useEffect(() => {
+    if (!editingId) {
+      if (transactionType === "expense") {
+        if (profile?.defaultExpenseWalletId) {
+          const existsAndActive = wallets.some(w => w.id === profile.defaultExpenseWalletId && !w.isHidden);
+          if (existsAndActive) {
+            setWalletId(profile.defaultExpenseWalletId);
+            const matchedWallet = wallets.find(w => w.id === profile.defaultExpenseWalletId);
+            if (matchedWallet) {
+              setCurrency(matchedWallet.currency);
+            }
+          }
+        }
+      } else {
+        setWalletId("");
+      }
+    }
+  }, [transactionType, profile?.defaultExpenseWalletId, editingId, wallets]);
+
   // Custom states for wallet selection when we have > 4 wallets
   const [walletSelectDropdownOpen, setWalletSelectDropdownOpen] = useState(false);
   const [walletSearchQuery, setWalletSearchQuery] = useState("");
@@ -170,6 +228,43 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
   // Detail Modal State
   const [previewImagesList, setPreviewImagesList] = useState<string[]>([]);
   const [currentPreviewIndex, setCurrentPreviewIndex] = useState<number>(0);
+
+  // image_url holds Storage object paths, which no <img> can read directly.
+  // Sign whatever is on screen — the form's attachments plus the open preview —
+  // in one batched call. Only paths go through here: legacy Base64 entries are
+  // already displayable, and keying the effect on them would mean splitting and
+  // re-joining a megabyte of it on every keystroke in the form.
+  const [uploadingReceipts, setUploadingReceipts] = useState(false);
+  const [signedReceipts, setSignedReceipts] = useState<Record<string, string>>({});
+  const [receiptsUnavailable, setReceiptsUnavailable] = useState(false);
+  const pathsToSign = [...receiptEntries(imageUrl), ...previewImagesList].filter(
+    (entry) => !isInlineReceipt(entry),
+  );
+  const signKey = pathsToSign.join("|");
+
+  useEffect(() => {
+    const paths = signKey.split("|").filter(Boolean);
+    if (paths.length === 0) return;
+    let active = true;
+    resolveReceiptUrls(paths)
+      .then(({ urls, missing }) => {
+        if (!active) return;
+        setSignedReceipts((prev) => ({ ...prev, ...urls }));
+        setReceiptsUnavailable(missing > 0);
+      })
+      .catch((err) => {
+        console.error("Could not sign receipt URLs:", err);
+        if (active) setReceiptsUnavailable(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, [signKey]);
+
+  // undefined means "not signed yet". Rendering <img src=""> instead would make
+  // the browser re-request the page and paint a broken tile for every receipt.
+  const receiptSrc = (entry: string): string | undefined =>
+    isInlineReceipt(entry) ? entry : signedReceipts[entry];
 
   // ConfirmModal states
   const [confirmModalState, setConfirmModalState] = useState<{
@@ -197,17 +292,69 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
   } | null>(null);
   const [selectedAlternativeWalletId, setSelectedAlternativeWalletId] = useState("");
 
-  const getWalletCurrentBalance = (wallet: any) => {
-    const wIncomes = incomes.filter(
-      (inc) => inc.walletId === wallet.id && inc.currency === wallet.currency && !inc.isOpening,
+  const walletStats = (wallet: any, curr: "LYD" | "USD" = wallet.currency) =>
+    walletBalance(wallet, incomes, expenses, curr);
+
+  const convertTo = (v: number, from: "LYD" | "USD", to: "LYD" | "USD") =>
+    convertAmount(v, from, to, exchangeRate);
+
+  // Only two currencies exist, so the destination of an exchange is whichever
+  // one the amount is not in. No second picker, and no way to pick the same
+  // currency on both sides.
+  const exchangeTo: "LYD" | "USD" = currency === "LYD" ? "USD" : "LYD";
+  const exchangeRateValue = parseFloat(exchangeRateInput);
+  const hasValidRate = !isNaN(exchangeRateValue) && exchangeRateValue > 0;
+  // The rate is always stated the way the settings screen states it: how many
+  // LYD one USD costs. Which side of the division that lands on is exactly what
+  // convertAmount already decides, at the typed rate rather than the saved one.
+  const exchangeResult =
+    hasValidRate && amount && parseFloat(amount) > 0
+      ? convertAmount(parseFloat(amount), currency, exchangeTo, exchangeRateValue)
+      : null;
+  // Stored to 2dp, so the derived rate stays reproducible from the two legs.
+  const exchangeToAmount = exchangeResult === null ? null : roundMoney(exchangeResult);
+
+  // Picking a drained card that still holds withdrawn cash pre-selects "paid
+  // from cash", because there is nothing left on the card to spend. Only a
+  // suggestion — the kind is stored on the row, never re-derived from the
+  // balance, so back-dating an edit cannot silently retag old expenses.
+  useEffect(() => {
+    if (editingId || !walletId) return;
+    const w = wallets.find((x) => x.id === walletId);
+    if (!w) return;
+    // Per currency: a wallet can be out of LYD while still holding USD cash,
+    // and the compartment to suggest depends on which one is being spent.
+    const { onCard, inCash } = walletStats(w, currency);
+    setExpenseKind(onCard <= 0 && inCash > 0 ? "cash_spend" : "wallet_spend");
+    // transactionType is a dependency because the exchange tab offers no
+    // "cash withdrawal" option; carrying that choice over from an expense would
+    // leave the form holding a kind its own picker cannot show.
+  }, [walletId, editingId, currency, transactionType]);
+
+  // Start an exchange from the rate the dashboard already uses, so the common
+  // case is a correction rather than a blank field.
+  useEffect(() => {
+    if (transactionType === "exchange" && !exchangeRateInput) {
+      setExchangeRateInput(String(exchangeRate));
+    }
+  }, [transactionType]);
+
+  // What the wallet is worth in total. Pickers and archive checks want this, so
+  // that a card sitting at zero with cash withdrawn from it stays selectable.
+  // Sums every currency it holds, converted at the display rate — otherwise a
+  // wallet that exchanged all its LYD into USD would read as empty and archive
+  // itself out of the list.
+  const getWalletCurrentBalance = (wallet: any) =>
+    walletTotals(wallet, incomes, expenses).reduce(
+      (acc, b) => acc + (b.currency === wallet.currency ? b.total : convertTo(b.total, b.currency, wallet.currency)),
+      0,
     );
-    const wExpenses = expenses.filter(
-      (exp) => exp.walletId === wallet.id && exp.currency === wallet.currency,
-    );
-    const totalIncomes = wIncomes.reduce((acc, curr) => acc + curr.amount, 0);
-    const totalExpenses = wExpenses.reduce((acc, curr) => acc + curr.amount, 0);
-    return wallet.initialBalance + totalIncomes - totalExpenses;
-  };
+
+  // What an expense of this kind can actually draw on, in the currency being
+  // spent. Cash already withdrawn cannot be spent off the card again, USD
+  // cannot be spent out of the LYD bucket, and vice versa.
+  const availableFor = (wallet: any, kind: ExpenseKind, curr: "LYD" | "USD" = currency) =>
+    kind === "cash_spend" ? walletStats(wallet, curr).inCash : walletStats(wallet, curr).onCard;
 
   const showConfirm = (
     title: string,
@@ -234,24 +381,36 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
       ) {
         setDropdownOpen(false);
       }
-      if (
-        walletFilterRef.current &&
-        !walletFilterRef.current.contains(target)
-      ) {
-        setWalletFilterOpen(false);
+
+      // Check if the click is inside any portal-rendered filter modal
+      let isInsidePortalFilter = false;
+      if (target instanceof Element) {
+        isInsidePortalFilter = !!target.closest(".filter-modal-container");
+      } else if (target.nodeType === Node.TEXT_NODE && target.parentElement) {
+        isInsidePortalFilter = !!target.parentElement.closest(".filter-modal-container");
       }
-      if (
-        categoryFilterRef.current &&
-        !categoryFilterRef.current.contains(target)
-      ) {
-        setCategoryFilterOpen(false);
+
+      if (!isInsidePortalFilter) {
+        if (
+          walletFilterRef.current &&
+          !walletFilterRef.current.contains(target)
+        ) {
+          setWalletFilterOpen(false);
+        }
+        if (
+          categoryFilterRef.current &&
+          !categoryFilterRef.current.contains(target)
+        ) {
+          setCategoryFilterOpen(false);
+        }
+        if (
+          priorityFilterRef.current &&
+          !priorityFilterRef.current.contains(target)
+        ) {
+          setPriorityFilterOpen(false);
+        }
       }
-      if (
-        priorityFilterRef.current &&
-        !priorityFilterRef.current.contains(target)
-      ) {
-        setPriorityFilterOpen(false);
-      }
+
       if (
         walletSelectDropdownRef.current &&
         !walletSelectDropdownRef.current.contains(target)
@@ -315,7 +474,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
 
       const newId = await addCategory(
         catName,
-        transactionType,
+        transactionType === "exchange" ? "expense" : transactionType,
         randomColor,
         randomIcon,
       );
@@ -335,13 +494,106 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
     setDropdownOpen(false);
   };
 
+  // A failed save used to only reach the console, so the form reset and jumped
+  // to the history tab as if it had worked and the entry was simply gone.
+  const reportSaveFailure = (err: unknown) => {
+    console.error(err);
+    alert(
+      language === "ar"
+        ? "تعذّر حفظ الحركة. لم يتم تسجيل أي شيء — حاول مجددًا، وإذا كانت هناك صور مرفقة فجرّب إزالة بعضها."
+        : "The transaction could not be saved. Nothing was recorded — try again, and if receipts are attached try removing some.",
+    );
+  };
+
+  /**
+   * Records an exchange as one movement: both legs land in the same wallet,
+   * in different currencies, under one transfer id.
+   *
+   * Validation is against the compartment the money actually leaves, not the
+   * wallet total — a card at zero holding withdrawn cash cannot be swiped, and
+   * a wallet holding only USD cannot pay out LYD.
+   */
+  const handleExchangeSubmit = async (numericAmount: number) => {
+    const wallet = wallets.find((w) => w.id === walletId);
+    if (!wallet || exchangeToAmount === null || exchangeToAmount <= 0) return;
+
+    const available = availableFor(wallet, expenseKind, currency);
+    if (available < numericAmount) {
+      alert(
+        language === "ar"
+          ? `الرصيد المتاح بالـ${currency} هو ${available.toLocaleString()} فقط، وهو أقل من ${numericAmount.toLocaleString()}.`
+          : `Only ${available.toLocaleString()} ${currency} is available to exchange, less than ${numericAmount.toLocaleString()}.`,
+      );
+      return;
+    }
+
+    const rateLabel = (numericAmount / exchangeToAmount).toFixed(2);
+    const fallbackOut =
+      language === "ar"
+        ? `صرافة ${numericAmount} ${currency} إلى ${exchangeToAmount} ${exchangeTo}`
+        : `Exchange ${numericAmount} ${currency} to ${exchangeToAmount} ${exchangeTo}`;
+
+    try {
+      await addTransfer({
+        fromWalletId: wallet.id,
+        toWalletId: wallet.id,
+        fromAmount: numericAmount,
+        fromCurrency: currency,
+        toAmount: exchangeToAmount,
+        toCurrency: exchangeTo,
+        date,
+        titleOut: title.trim() || fallbackOut,
+        titleIn: title.trim() || fallbackOut,
+        notes: notes
+          ? `${notes}\n(${currency}→${exchangeTo} @ ${rateLabel})`
+          : `(${currency}→${exchangeTo} @ ${rateLabel})`,
+        imageUrl,
+        fromKind: expenseKind,
+      });
+
+      // Only after both legs are safely written: a rate change that outlived a
+      // failed exchange would silently re-value every USD row for nothing.
+      if (syncDisplayRate && hasValidRate && exchangeRateValue !== exchangeRate) {
+        await setExchangeRate(exchangeRateValue);
+      }
+
+      resetForm();
+      setActiveSubTab("history");
+    } catch (err) {
+      reportSaveFailure(err);
+    }
+  };
+
   // Submit main consolidated ledger entry
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    // Disabling the save button is not enough: pressing Enter in any field
+    // submits the form directly, which would save the transaction without the
+    // photo that is still on its way to the bucket.
+    if (uploadingReceipts) {
+      alert(
+        language === "ar"
+          ? "جارٍ رفع الصور — انتظر حتى ينتهي الرفع قبل الحفظ."
+          : "Receipts are still uploading — wait for them to finish before saving.",
+      );
+      return;
+    }
     const isNewWalletOptionActive = createAndTopupWallet && transactionType === "income" && !editingId;
-    if (!amount || !title || !selectedCatId || (!isNewWalletOptionActive && !walletId)) return;
+    // An exchange has no category of the user's choosing — both legs are filed
+    // under the shared transfer category — and its title is generated, so it
+    // requires only a wallet, an amount and a rate.
+    const requiredFieldsMissing =
+      transactionType === "exchange"
+        ? !amount || !walletId || !hasValidRate
+        : !amount || !title || !selectedCatId || (!isNewWalletOptionActive && !walletId);
+    if (requiredFieldsMissing) return;
     const numericAmount = parseFloat(amount);
     if (isNaN(numericAmount) || numericAmount <= 0) return;
+
+    if (transactionType === "exchange") {
+      await handleExchangeSubmit(numericAmount);
+      return;
+    }
 
     try {
       let finalWalletId = walletId;
@@ -360,13 +612,21 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
       if (!editingId && transactionType === "expense") {
         const w = wallets.find((w) => w.id === finalWalletId);
         if (w) {
-          const currentBal = getWalletCurrentBalance(w);
+          // Against the compartment being drawn on, not the wallet total: a card
+          // at zero holding withdrawn cash must not look like it can be swiped.
+          const currentBal = availableFor(w, expenseKind);
           if (currentBal < numericAmount) {
             const remainingAmount = currentBal > 0 ? numericAmount - currentBal : numericAmount;
-            const availableWallets = wallets.filter((ow) => 
-               ow.id !== finalWalletId && 
-               ow.currency === w.currency && 
-               getWalletCurrentBalance(ow) >= remainingAmount
+            // In the currency actually being spent, not the wallet's headline
+            // total: a wallet holding 88 LYD and 100 USD cannot cover a 500 LYD
+            // shortfall however large its converted total looks. This also
+            // replaces the old `ow.currency === w.currency` test, which asked
+            // about the wallet's primary currency rather than the one it is
+            // being asked to pay in — a wallet whose USD came from an exchange
+            // has no LYD row and scores zero here on its own.
+            const availableWallets = wallets.filter((ow) =>
+               ow.id !== finalWalletId &&
+               walletStats(ow, currency).total >= remainingAmount
             );
 
             setOverdraftData({
@@ -402,6 +662,9 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                 imageUrl,
                 priority,
                 finalWalletId,
+                undefined,
+                undefined,
+                expenseKind,
               );
             }
           } else {
@@ -447,6 +710,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
               imageUrl,
               priority,
               finalWalletId,
+              expenseKind,
             );
           }
         }
@@ -478,13 +742,16 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
             imageUrl,
             priority,
             finalWalletId,
+            undefined,
+            undefined,
+            expenseKind,
           );
         }
       }
       resetForm();
       setActiveSubTab("history");
     } catch (err) {
-      console.error(err);
+      reportSaveFailure(err);
     }
   };
 
@@ -500,7 +767,10 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
         notes,
         imageUrl,
         priority,
-        overdraftData.originalWallet.id
+        overdraftData.originalWallet.id,
+        undefined,
+        undefined,
+        expenseKind,
       );
 
       setOverdraftModalOpen(false);
@@ -508,7 +778,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
       resetForm();
       setActiveSubTab("history");
     } catch (err) {
-      console.error(err);
+      reportSaveFailure(err);
     }
   };
 
@@ -529,10 +799,14 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
           notes ? `${notes}\n(Partial payment)` : `(Partial payment)`,
           imageUrl,
           priority,
-          originalWallet.id
+          originalWallet.id,
+          undefined,
+          undefined,
+          expenseKind,
         );
 
-        // Transaction 2: Remaining from alternative wallet
+        // The covering leg comes off a different wallet's own card, so it is
+        // ordinary spending there whatever compartment the original drew on.
         await addExpense(
           remainingAmount,
           currency,
@@ -564,7 +838,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
       resetForm();
       setActiveSubTab("history");
     } catch (err) {
-      console.error(err);
+      reportSaveFailure(err);
     }
   };
 
@@ -573,11 +847,12 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
     setEditingType(tx.type);
     setTransactionType(tx.type);
     setTitle(tx.title);
-    setAmount(tx.amount.toString());
+    setAmount(((tx as any).isRefunded ? ((tx as any).originalAmount || tx.amount) : tx.amount).toString());
     setCurrency(tx.currency);
     setDate(tx.date);
     setSelectedCatId(tx.categoryId);
     setWalletId(tx.walletId || "");
+    setExpenseKind(tx.expenseKind || "wallet_spend");
     setPriority(tx.priority || "medium");
     setImageUrl(tx.imageUrl || "");
 
@@ -607,12 +882,17 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
     setNotes("");
     setSelectedCatId("");
     setWalletId("");
+    setExpenseKind("wallet_spend");
     setTypedCategoryQuery("");
     setPriority("medium");
     setImageUrl("");
     setCreateAndTopupWallet(false);
     setNewWalletName("");
     setNewWalletColor("emerald");
+    // The rate box refills from settings on the next visit to the exchange tab;
+    // leaving a stale one behind would quietly price the following exchange.
+    setExchangeRateInput("");
+    setSyncDisplayRate(true);
   };
 
   // Drag & drop file loaders
@@ -626,51 +906,6 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
     }
   };
 
-  const compressAndResizeImage = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const img = new Image();
-        img.onload = () => {
-          const canvas = document.createElement("canvas");
-          const ctx = canvas.getContext("2d");
-          if (!ctx) {
-            resolve(event.target?.result as string);
-            return;
-          }
-
-          const maxDim = 1020; // Auto-resize large images preserving superb quality
-          let width = img.width;
-          let height = img.height;
-
-          if (width > maxDim || height > maxDim) {
-            if (width > height) {
-              height = Math.round((height * maxDim) / width);
-              width = maxDim;
-            } else {
-              width = Math.round((width * maxDim) / height);
-              height = maxDim;
-            }
-          }
-
-          canvas.width = width;
-          canvas.height = height;
-          ctx.drawImage(img, 0, 0, width, height);
-
-          // Compress to lightweight JPEG at 0.82 quality
-          const dataUrl = canvas.toDataURL("image/jpeg", 0.82);
-          resolve(dataUrl);
-        };
-        img.onerror = () => {
-          resolve(event.target?.result as string);
-        };
-        img.src = event.target?.result as string;
-      };
-      reader.onerror = (err) => reject(err);
-      reader.readAsDataURL(file);
-    });
-  };
-
   const processFiles = async (files: FileList | File[]) => {
     const validFiles = Array.from(files).filter((file) => file.type.startsWith("image/"));
     if (validFiles.length === 0) {
@@ -682,15 +917,51 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
       return;
     }
 
+    if (!user) return;
+
+    // Process one photo at a time. Decoding several full-resolution camera
+    // images concurrently creates a large memory spike on mobile devices.
+    // One bad file must not discard the photos already uploaded beside it.
+    setUploadingReceipts(true);
+    const uploadedPaths: string[] = [];
+    let failed = 0;
     try {
-      const promises = validFiles.map((file) => compressAndResizeImage(file));
-      const processedImages = await Promise.all(promises);
-      
-      const currentArr = imageUrl ? imageUrl.split("|").filter(Boolean) : [];
-      const updatedImages = [...currentArr, ...processedImages];
-      setImageUrl(updatedImages.join("|"));
-    } catch (error) {
-      console.error("Error compressing/resizing images:", error);
+      for (const file of validFiles) {
+        try {
+          uploadedPaths.push(await uploadReceipt(await fileToReceiptJpeg(file), user.id));
+        } catch (error) {
+          failed++;
+          console.error("Receipt upload failed:", file.name, error);
+        }
+      }
+    } finally {
+      setUploadingReceipts(false);
+    }
+
+    const updatedImages = [...receiptEntries(imageUrl), ...uploadedPaths];
+
+    // Paths are short, so this only ever bites on a row still holding legacy
+    // Base64. Overflowing image_url makes the INSERT fail and takes the whole
+    // transaction down with it, so refuse the extra photos here instead.
+    const { kept, dropped } = packReceiptImages(updatedImages);
+    setImageUrl(kept.join("|"));
+
+    if (failed > 0 || dropped > 0) {
+      alert(
+        language === "ar"
+          ? [
+              failed > 0 ? `تعذّر رفع ${failed} صورة.` : "",
+              dropped > 0 ? `تم تجاوز الحد الأقصى للمرفقات، ولم تُضف ${dropped} صورة.` : "",
+            ]
+              .filter(Boolean)
+              .join(" ")
+          : [
+              failed > 0 ? `${failed} image(s) could not be uploaded.` : "",
+              dropped > 0 ? `Attachment size limit reached — ${dropped} image(s) were not added.` : "",
+            ]
+              .filter(Boolean)
+              .join(" "),
+      );
     }
   };
 
@@ -704,15 +975,38 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      processFiles(e.target.files);
-    }
+    const files = e.target.files ? Array.from(e.target.files) : [];
+    // Reset immediately so taking the same photo again still fires `change`,
+    // and so the native camera input does not retain the large File object.
+    e.target.value = "";
+    if (files.length > 0) void processFiles(files);
   };
+
+  // A transfer is two rows in the ledger but one movement in the world, so the
+  // history shows it once. The income leg is folded into its expense leg and
+  // dropped from the list; the pair rides along as `transferPair` for the row to
+  // render. The legs keep `type: "expense"` deliberately — a transfer really is
+  // an outflow from the source, and inventing a third type here would mean
+  // every filter, badge and action below had to learn about it.
+  const transferInLegs = new Map(
+    incomes.filter((inc) => inc.transferId).map((inc) => [inc.transferId as string, inc]),
+  );
+  const pairedTransferIds = new Set(
+    expenses.filter((exp) => exp.transferId).map((exp) => exp.transferId as string),
+  );
 
   // Consolidate Incomes & Expenses under a single list
   const consolidatedTransactions = [
-    ...incomes.map((inc) => ({ ...inc, type: "income" as const })),
-    ...expenses.map((exp) => ({ ...exp, type: "expense" as const })),
+    // An income leg whose expense leg is gone stays visible on its own: it is a
+    // real row affecting a real balance, and hiding it would hide the damage.
+    ...incomes
+      .filter((inc) => !inc.transferId || !pairedTransferIds.has(inc.transferId))
+      .map((inc) => ({ ...inc, type: "income" as const })),
+    ...expenses.map((exp) => ({
+      ...exp,
+      type: "expense" as const,
+      transferPair: exp.transferId ? transferInLegs.get(exp.transferId) : undefined,
+    })),
   ]
     .filter((tx) => !hideHistoricalData || !tx.isHistorical)
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
@@ -723,7 +1017,16 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
       tx.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       (tx.notes && tx.notes.toLowerCase().includes(searchQuery.toLowerCase()));
     const matchCat = categoryFilter ? tx.categoryId === categoryFilter : true;
-    const matchType = typeFilter === "all" ? true : tx.type === typeFilter;
+    // Transfer legs ride in the list as expenses so every badge and action keeps
+    // working, but the whole point of the feature is that they are not spending
+    // — so "Expenses" must not show them, and they get a pill of their own.
+    const isTransfer = !!(tx as any).transferPair;
+    const matchType =
+      typeFilter === "all"
+        ? true
+        : typeFilter === "transfer"
+          ? isTransfer
+          : tx.type === typeFilter && !isTransfer;
     const matchPriority = priorityFilter ? tx.priority === priorityFilter : true;
     const matchWallet = walletFilter ? tx.walletId === walletFilter : true;
     return matchSearch && matchCat && matchType && matchPriority && matchWallet;
@@ -771,19 +1074,57 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
   };
 
   return (
-    <div className="space-y-6 animate-fade-in pb-16">
+    <div 
+      className="space-y-6 animate-fade-in pb-16"
+      onTouchStart={(e) => {
+        e.stopPropagation();
+        const touch = e.touches[0];
+        (e.currentTarget as any).startX = touch.clientX;
+        (e.currentTarget as any).startY = touch.clientY;
+      }}
+      onTouchMove={(e) => e.stopPropagation()}
+      onTouchEnd={(e) => {
+        e.stopPropagation();
+        const startX = (e.currentTarget as any).startX;
+        const startY = (e.currentTarget as any).startY;
+        if (startX === undefined || startY === undefined) return;
+        
+        const touchEnd = e.changedTouches[0].clientX;
+        const touchEndY = e.changedTouches[0].clientY;
+        
+        const diffX = startX - touchEnd;
+        const diffY = startY - touchEndY;
+        
+        if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 40) {
+          const swipeableTabs = ['new', 'history', 'refunds', 'dues'] as const;
+          const currentIndex = swipeableTabs.indexOf(activeSubTab);
+          if (currentIndex !== -1) {
+            const isRtl = language === 'ar';
+            const goNext = isRtl ? diffX < 0 : diffX > 0;
+            
+            if (goNext && currentIndex + 1 < swipeableTabs.length) {
+              setActiveSubTab(swipeableTabs[currentIndex + 1]);
+            } else if (!goNext && currentIndex - 1 >= 0) {
+              setActiveSubTab(swipeableTabs[currentIndex - 1]);
+            }
+          }
+        }
+      }}
+    >
       {/* 1. Glassmorphic Header Banner */}
 
       {/* Telegram-inspired top navigation tabs (2 tabs: New and History) */}
       <div className="flex justify-center mt-2 mb-6">
-        <div className="inline-flex p-1.5 bg-slate-100/70 dark:bg-slate-900/60 backdrop-blur-md rounded-2xl border border-slate-200/40 dark:border-slate-800/60 w-full max-w-md relative shadow-sm">
+        <div 
+          className="inline-flex p-1.5 bg-slate-100/70 dark:bg-slate-900/60 backdrop-blur-md rounded-2xl border border-slate-200/40 dark:border-slate-800/60 w-full max-w-2xl relative shadow-sm overflow-x-auto whitespace-nowrap"
+        >
           <button
             type="button"
             id="new-tx-tab"
             onClick={() => {
               setActiveSubTab('new');
             }}
-            className={`flex-1 py-3 text-xs font-black rounded-xl transition-all duration-300 relative z-10 flex items-center justify-center gap-2 cursor-pointer ${
+            className={`flex-1 min-w-min px-4 py-3 text-xs font-black rounded-xl transition-all duration-300 relative z-10 flex items-center justify-center gap-2 cursor-pointer ${
               activeSubTab === 'new'
                 ? 'bg-white dark:bg-slate-850 text-brand-slate dark:text-white shadow-md font-black'
                 : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-white font-bold'
@@ -798,7 +1139,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
             onClick={() => {
               setActiveSubTab('history');
             }}
-            className={`flex-1 py-3 text-xs font-black rounded-xl transition-all duration-300 relative z-10 flex items-center justify-center gap-2 cursor-pointer ${
+            className={`flex-1 min-w-min px-4 py-3 text-xs font-black rounded-xl transition-all duration-300 relative z-10 flex items-center justify-center gap-2 cursor-pointer ${
               activeSubTab === 'history'
                 ? 'bg-white dark:bg-slate-850 text-brand-slate dark:text-white shadow-md font-black'
                 : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-white font-bold'
@@ -814,6 +1155,52 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                 : 'bg-slate-200/50 dark:bg-slate-800 text-slate-500 font-bold'
             }`}>
               {consolidatedTransactions.length}
+            </span>
+          </button>
+          <button
+            type="button"
+            id="refunds-tx-tab"
+            onClick={() => {
+              setActiveSubTab('refunds');
+            }}
+            className={`flex-1 min-w-min px-4 py-3 text-xs font-black rounded-xl transition-all duration-300 relative z-10 flex items-center justify-center gap-2 cursor-pointer ${
+              activeSubTab === 'refunds'
+                ? 'bg-white dark:bg-slate-850 text-brand-slate dark:text-white shadow-md font-black'
+                : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-white font-bold'
+            }`}
+          >
+            <AlertTriangle className={`w-3.5 h-3.5 transition-transform ${activeSubTab === 'refunds' ? 'text-emerald-500' : 'text-slate-400'}`} />
+            <span>{(t as any).refundsTab || (language === 'ar' ? 'الاستردادات' : 'Refunds')}</span>
+            
+            <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-black ${
+              activeSubTab === 'refunds' 
+                ? 'bg-emerald-500/20 text-emerald-800 dark:text-emerald-400 font-black' 
+                : 'bg-slate-200/50 dark:bg-slate-800 text-slate-500 font-bold'
+            }`}>
+              {expenses.filter(e => e.isRefunded || ((e as any).originalAmount && (e as any).originalAmount > e.amount)).length}
+            </span>
+          </button>
+          <button
+            type="button"
+            id="dues-tx-tab"
+            onClick={() => {
+              setActiveSubTab('dues');
+            }}
+            className={`flex-1 min-w-min px-4 py-3 text-xs font-black rounded-xl transition-all duration-300 relative z-10 flex items-center justify-center gap-2 cursor-pointer ${
+              activeSubTab === 'dues'
+                ? 'bg-white dark:bg-slate-850 text-brand-slate dark:text-white shadow-md font-black'
+                : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-white font-bold'
+            }`}
+          >
+            <AlertTriangle className={`w-3.5 h-3.5 transition-transform ${activeSubTab === 'dues' ? 'text-rose-500' : 'text-slate-400'}`} />
+            <span>{language === 'ar' ? 'المستحقات' : 'Dues'}</span>
+            
+            <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-black ${
+              activeSubTab === 'dues' 
+                ? 'bg-rose-500/20 text-rose-800 dark:text-rose-400 font-black' 
+                : 'bg-slate-200/50 dark:bg-slate-800 text-slate-500 font-bold'
+            }`}>
+              {expenses.filter(e => e.isDue && !e.isRefunded).length}
             </span>
           </button>
         </div>
@@ -872,7 +1259,47 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
             </div>
 
             {/* Segmented Control Selector for Type - Highly Animated */}
-            <div className="grid grid-cols-2 p-1.5 bg-slate-100/60 dark:bg-slate-950/80 rounded-2xl border border-white/20 dark:border-slate-800/40 relative">
+            <div 
+              className="grid grid-cols-3 p-1.5 bg-slate-100/60 dark:bg-slate-950/80 rounded-2xl border border-white/20 dark:border-slate-800/40 relative"
+              onTouchStart={(e) => {
+                e.stopPropagation();
+                const touch = e.touches[0];
+                (e.currentTarget as any).startX = touch.clientX;
+                (e.currentTarget as any).startY = touch.clientY;
+              }}
+              onTouchMove={(e) => e.stopPropagation()}
+              onTouchEnd={(e) => {
+                e.stopPropagation();
+                const startX = (e.currentTarget as any).startX;
+                const startY = (e.currentTarget as any).startY;
+                if (startX === undefined || startY === undefined) return;
+                
+                const touchEnd = e.changedTouches[0].clientX;
+                const touchEndY = e.changedTouches[0].clientY;
+                
+                const diffX = startX - touchEnd;
+                const diffY = startY - touchEndY;
+                
+                if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 40) {
+                  const swipeableTypes = ['expense', 'income', 'exchange'] as const;
+                  const currentIndex = swipeableTypes.indexOf(transactionType as typeof swipeableTypes[number]);
+                  if (currentIndex !== -1) {
+                    const isRtl = language === 'ar';
+                    const goNext = isRtl ? diffX < 0 : diffX > 0;
+                    
+                    if (goNext && currentIndex + 1 < swipeableTypes.length) {
+                      setTransactionType(swipeableTypes[currentIndex + 1]);
+                      setSelectedCatId("");
+                      setTypedCategoryQuery("");
+                    } else if (!goNext && currentIndex - 1 >= 0) {
+                      setTransactionType(swipeableTypes[currentIndex - 1]);
+                      setSelectedCatId("");
+                      setTypedCategoryQuery("");
+                    }
+                  }
+                }
+              }}
+            >
               <button
                 type="button"
                 onClick={() => {
@@ -887,7 +1314,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                 }`}
               >
                 <ArrowUpRight className="w-3.5 h-3.5 stroke-[3]" />
-                <span>{language === "ar" ? "مصروف (صادر)" : "Expense (Outgoing)"}</span>
+                <span>{language === "ar" ? "مصروف" : "Expense"}</span>
               </button>
               <button
                 type="button"
@@ -903,7 +1330,31 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                 }`}
               >
                 <ArrowDownLeft className="w-3.5 h-3.5 stroke-[3]" />
-                <span>{language === "ar" ? "دخل (وارد)" : "Income (Incoming)"}</span>
+                <span>{language === "ar" ? "دخل" : "Income"}</span>
+              </button>
+              {/* Neither red nor green: an exchange is a movement, and colouring
+                  it like spending or earning would state the opposite of what
+                  the rest of this feature exists to say. */}
+              <button
+                type="button"
+                onClick={() => {
+                  // Submitting an exchange writes two new rows rather than
+                  // updating anything, so carrying a half-finished edit into
+                  // this tab would silently abandon it. Clear it instead.
+                  if (editingId) resetForm();
+                  setTransactionType("exchange");
+                  setSelectedCatId("");
+                  setTypedCategoryQuery("");
+                }}
+                aria-pressed={transactionType === "exchange"}
+                className={`py-3 rounded-xl text-xs font-black transition-all duration-300 cursor-pointer flex items-center justify-center gap-1.5 ${
+                  transactionType === "exchange"
+                    ? "bg-brand-teal text-white shadow-lg shadow-brand-teal/15"
+                    : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white"
+                }`}
+              >
+                <ArrowRightLeft className="w-3.5 h-3.5 stroke-[3]" />
+                <span>{language === "ar" ? "صرافة" : "Exchange"}</span>
               </button>
             </div>
 
@@ -956,14 +1407,95 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                   {/* Interactive Quick Add Pads (calculator inspiration) - Semantic Icon */}
                   <div className="flex-shrink-0">
                     <div className="w-14 h-14 bg-brand-teal/5 dark:bg-brand-teal/10 rounded-2xl flex items-center justify-center border border-brand-teal/10 text-brand-teal cursor-default">
-                      {transactionType === 'income' ? <ArrowDownLeft className="w-5 h-5 text-emerald-500" /> : <ArrowUpRight className="w-5 h-5 text-rose-500" />}
+                      {transactionType === 'exchange' ? <ArrowRightLeft className="w-5 h-5 text-brand-teal" /> : transactionType === 'income' ? <ArrowDownLeft className="w-5 h-5 text-emerald-500" /> : <ArrowUpRight className="w-5 h-5 text-rose-500" />}
                     </div>
                   </div>
 
                 </div>
 
+                {/* The exchange's only extra input. The amount above is always
+                    the "from" side; the "to" side is derived, never typed, so
+                    the two legs can never disagree about the rate. */}
+                {transactionType === "exchange" && (
+                  <div className="w-full max-w-md mt-4 flex flex-col gap-3">
+                    <div className="flex items-center gap-2">
+                      <label
+                        htmlFor="exchange-rate"
+                        className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 shrink-0"
+                      >
+                        {language === "ar" ? "سعر الصرف" : "Exchange rate"}
+                      </label>
+                      <div className="flex-1 flex items-center gap-2 h-11 px-3 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/60 dark:border-slate-800 focus-within:ring-2 focus-within:ring-brand-teal/30 transition-all">
+                        <span className="text-[11px] font-bold text-slate-400 shrink-0" style={{ direction: "ltr" }}>
+                          1 USD =
+                        </span>
+                        <input
+                          id="exchange-rate"
+                          type="number"
+                          step="any"
+                          min="0"
+                          inputMode="decimal"
+                          required
+                          value={exchangeRateInput}
+                          onChange={(e) => setExchangeRateInput(e.target.value)}
+                          className="w-full min-w-0 bg-transparent text-base font-black font-mono tabular-nums text-slate-900 dark:text-white outline-none"
+                          style={{ direction: "ltr" }}
+                        />
+                        <span className="text-[11px] font-bold text-slate-400 shrink-0">
+                          {language === "ar" ? "د.ل" : "LYD"}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* The "to" side, stated rather than entered. aria-live so a
+                        screen reader hears the converted figure change, since it
+                        is the number the user is actually deciding on. */}
+                    <div
+                      aria-live="polite"
+                      className="flex items-center justify-center gap-2.5 py-2.5 px-3 rounded-2xl bg-brand-teal/5 dark:bg-brand-teal/10 border border-brand-teal/15"
+                    >
+                      {exchangeToAmount !== null && exchangeToAmount > 0 ? (
+                        <>
+                          <span className="text-sm font-black font-mono tabular-nums text-slate-500 dark:text-slate-400" style={{ direction: "ltr" }}>
+                            {parseFloat(amount).toLocaleString(undefined, { maximumFractionDigits: 2 })} {currency}
+                          </span>
+                          <ArrowRightLeft className="w-3.5 h-3.5 text-brand-teal shrink-0" aria-hidden="true" />
+                          <span className="text-lg font-black font-mono tabular-nums text-brand-teal" style={{ direction: "ltr" }}>
+                            {exchangeToAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {exchangeTo}
+                          </span>
+                        </>
+                      ) : (
+                        <span className="text-[11px] font-bold text-slate-400 dark:text-slate-500">
+                          {language === "ar"
+                            ? "أدخل المبلغ وسعر الصرف لحساب الناتج"
+                            : "Enter an amount and a rate to see the result"}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Merged totals are converted at the settings rate, so
+                        leaving it behind after a real exchange makes the
+                        dashboard report a loss that never happened. */}
+                    {hasValidRate && exchangeRateValue !== exchangeRate && (
+                      <label className="flex items-center gap-2.5 cursor-pointer py-1 min-h-11">
+                        <input
+                          type="checkbox"
+                          checked={syncDisplayRate}
+                          onChange={(e) => setSyncDisplayRate(e.target.checked)}
+                          className="w-4 h-4 shrink-0 accent-brand-teal cursor-pointer"
+                        />
+                        <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 leading-relaxed">
+                          {language === "ar"
+                            ? `حدّث سعر العرض من ${exchangeRate} إلى ${exchangeRateValue} أيضاً`
+                            : `Also update the display rate from ${exchangeRate} to ${exchangeRateValue}`}
+                        </span>
+                      </label>
+                    )}
+                  </div>
+                )}
+
                 {/* Amount Guidance tag */}
-                {amount && parseFloat(amount) > 0 && (
+                {transactionType !== "exchange" && amount && parseFloat(amount) > 0 && (
                   <div className="text-[10px] font-bold text-slate-400 dark:text-slate-500 mt-2 flex items-center gap-1">
                     <span>
                       {language === "ar" ? "سيتم تسجيل" : "Will log"}
@@ -985,19 +1517,31 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                 <div className="flex flex-col gap-2">
                   <label className="text-xs font-black text-slate-500 dark:text-slate-400 flex items-center gap-1">
                     <span>{language === "ar" ? "بيان العملية / الغرض" : "Transaction Title / Purpose"}</span>
-                    <span className="text-rose-500">*</span>
+                    {transactionType === "exchange" ? (
+                      <span className="text-slate-400 font-medium">
+                        {language === "ar" ? "(اختياري)" : "(optional)"}
+                      </span>
+                    ) : (
+                      <span className="text-rose-500">*</span>
+                    )}
                   </label>
                   <div className="relative">
                     <FileSpreadsheet className="absolute top-3.5 right-3.5 rtl:right-auto rtl:left-3.5 w-4.5 h-4.5 text-slate-400" />
                     <input
                       type="text"
-                      required
+                      required={transactionType !== "exchange"}
                       value={title}
                       onChange={(e) => setTitle(e.target.value)}
                       placeholder={
-                        transactionType === "income"
-                          ? t.incomeTitleArEn
-                          : t.expenseTitlePlaceholder
+                        transactionType === "exchange"
+                          ? exchangeToAmount !== null && exchangeToAmount > 0
+                            ? `${language === "ar" ? "صرافة" : "Exchange"} ${amount} ${currency} → ${exchangeToAmount} ${exchangeTo}`
+                            : language === "ar"
+                              ? "يُكتب تلقائياً من مبلغ الصرافة"
+                              : "Filled in from the exchange amounts"
+                          : transactionType === "income"
+                            ? t.incomeTitleArEn
+                            : t.expenseTitlePlaceholder
                       }
                       dir="auto"
                       className="w-full glass-input pl-10 pr-10 rtl:pr-10 rtl:pl-10 py-3.5 text-sm rounded-2xl focus:outline-none focus:ring-2 focus:ring-brand-teal/40 dark:text-white font-medium"
@@ -1005,8 +1549,13 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                   </div>
                 </div>
 
-                {/* 2. Custom Category Selector & Quick Recs */}
-                <div className="flex flex-col gap-2 relative" ref={dropdownRef}>
+                {/* 2. Custom Category Selector & Quick Recs. Hidden for an
+                    exchange: both legs are filed under the shared transfer
+                    category, so there is nothing here for the user to decide. */}
+                <div
+                  className={`flex-col gap-2 relative ${transactionType === "exchange" ? "hidden" : "flex"}`}
+                  ref={dropdownRef}
+                >
                   <label className="text-xs font-black text-slate-500 dark:text-slate-400 flex items-center gap-1">
                     <span>{t.categorySelector}</span>
                     <span className="text-rose-500">*</span>
@@ -1184,7 +1733,14 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                 )}
 
                 {!createAndTopupWallet && (() => {
-                  const activeWallets = wallets.filter(w => !w.isHidden || w.id === walletId);
+                  const activeWallets = wallets.filter(w => {
+                    if (w.id === walletId) return true;
+                    // For income transactions, allow selecting archived (empty/hidden) wallets
+                    if (transactionType === "income") return true;
+                    if (w.isHidden) return false;
+                    if (getWalletCurrentBalance(w) <= 0) return false;
+                    return true;
+                  });
                   return activeWallets.length > 0 ? (
                     (() => {
                       const isMany = activeWallets.length > 4;
@@ -1206,6 +1762,9 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                           {displayed.map((w) => {
                             const isSelected = walletId === w.id;
+                            const isArchivedEmpty = getWalletCurrentBalance(w) <= 0;
+                            const isHidden = w.isHidden;
+                            const isArchived = isArchivedEmpty || isHidden;
                             return (
                               <button
                                 key={w.id}
@@ -1215,10 +1774,17 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                                   isSelected
                                     ? "bg-brand-slate text-white dark:bg-white dark:text-brand-slate border-transparent shadow-md scale-[1.03] ring-2 ring-brand-teal/40"
                                     : "bg-slate-50/75 dark:bg-slate-900/40 border-slate-100 dark:border-slate-850 hover:bg-slate-100 dark:hover:bg-slate-850 text-slate-700 dark:text-slate-300"
-                                }`}
+                                } ${isArchived && !isSelected ? "opacity-60" : ""}`}
                               >
                                 <div className="flex items-start justify-between gap-1.5 mb-2 w-full">
-                                  <span className="text-xs font-extrabold truncate max-w-[80%]">{w.name}</span>
+                                  <span className="text-xs font-extrabold truncate max-w-[80%] flex flex-col">
+                                    <span className="truncate">{w.name}</span>
+                                    {isArchived && (
+                                      <span className="text-[9px] text-slate-400 dark:text-slate-500 font-bold mt-0.5">
+                                        {language === "ar" ? "(مؤرشفة)" : "(Archived)"}
+                                      </span>
+                                    )}
+                                  </span>
                                   <div className={`p-1 rounded-lg ${isSelected ? "bg-white/10 text-white dark:bg-slate-900/10 dark:text-slate-800" : "bg-slate-200/20 text-slate-400"}`}>
                                     <Wallet className="w-3.5 h-3.5" />
                                   </div>
@@ -1304,6 +1870,9 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                                         })
                                         .map((w) => {
                                           const isSel = walletId === w.id;
+                                          const isArchivedEmpty = getWalletCurrentBalance(w) <= 0;
+                                          const isHidden = w.isHidden;
+                                          const isArchived = isArchivedEmpty || isHidden;
                                           return (
                                             <button
                                               key={w.id}
@@ -1317,11 +1886,13 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                                                 isSel
                                                   ? "bg-brand-teal/15 text-brand-teal dark:bg-brand-teal/25"
                                                   : "hover:bg-slate-50 dark:hover:bg-slate-850 text-slate-700 dark:text-slate-200"
-                                              }`}
+                                              } ${isArchived ? "opacity-60" : ""}`}
                                             >
                                               <div className="flex items-center gap-2 truncate">
                                                 <Wallet className="w-3.5 h-3.5 text-brand-teal flex-shrink-0" />
-                                                <span className="truncate">{w.name} ({w.currency})</span>
+                                                <span className="truncate">
+                                                  {w.name} {isArchived && (language === "ar" ? "(مؤرشفة) " : "(Archived) ")} ({w.currency})
+                                                </span>
                                               </div>
                                               <span className="text-[10px] font-mono font-black text-slate-400">
                                                 {getWalletCurrentBalance(w).toLocaleString()}
@@ -1341,6 +1912,76 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                   ) : (
                     <div className="p-4 rounded-2xl bg-amber-500/5 border border-dashed border-amber-500/10 text-center text-xs text-amber-500">
                       {language === "ar" ? "لا توجد أي محافظ مفعلة. يرجى تهيئة محفظة واحدة على الأقل" : "No wallets configured. Please provision a wallet first"}
+                    </div>
+                  );
+                })()}
+
+                {/* Which compartment of the wallet this expense touches. Hidden
+                    until a wallet is picked, and "paid from cash" only appears
+                    once there is cash to pay from. An exchange draws on a
+                    compartment in exactly the same way, so it gets the picker
+                    too — the money has to leave the card or the hand. */}
+                {(transactionType === "expense" || transactionType === "exchange") && walletId && (() => {
+                  const w = wallets.find((x) => x.id === walletId);
+                  if (!w) return null;
+                  const { onCard, inCash } = walletStats(w, currency);
+                  const isExchange = transactionType === "exchange";
+                  const kinds: { kind: ExpenseKind; ar: string; en: string; hint: string }[] = [
+                    {
+                      kind: "wallet_spend",
+                      ar: isExchange ? "من البطاقة" : "مصروف عادي",
+                      en: isExchange ? "From the card" : "Normal expense",
+                      hint: `${onCard.toLocaleString()} ${currency}`,
+                    },
+                    // Withdrawing is a movement inside one currency; an exchange
+                    // is already a movement, and chaining the two in one row
+                    // would leave no way to say what the money became.
+                    ...(isExchange
+                      ? []
+                      : [{
+                          kind: "cash_withdrawal" as ExpenseKind,
+                          ar: "سحب نقدي",
+                          en: "Cash withdrawal",
+                          hint: language === "ar" ? "يبقى معك" : "you keep it",
+                        }]),
+                    ...(inCash !== 0 || expenseKind === "cash_spend"
+                      ? [{
+                          kind: "cash_spend" as ExpenseKind,
+                          ar: isExchange ? "من النقد" : "دفعت من النقد",
+                          en: isExchange ? "From cash in hand" : "Paid from cash",
+                          hint: `${inCash.toLocaleString()} ${currency}`,
+                        }]
+                      : []),
+                  ];
+                  return (
+                    <div className="mt-4">
+                      <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-2">
+                        {language === "ar" ? "نوع الحركة على المحفظة" : "Effect on the wallet"}
+                      </label>
+                      <div className="flex flex-wrap gap-2">
+                        {kinds.map((k) => (
+                          <button
+                            key={k.kind}
+                            type="button"
+                            onClick={() => setExpenseKind(k.kind)}
+                            className={`px-3.5 py-2 rounded-2xl text-xs font-bold cursor-pointer transition-all border ${
+                              expenseKind === k.kind
+                                ? "bg-brand-slate text-white dark:bg-white dark:text-brand-slate border-transparent shadow-md"
+                                : "bg-slate-50/75 dark:bg-slate-900/40 border-slate-100 dark:border-slate-850 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-850"
+                            }`}
+                          >
+                            {language === "ar" ? k.ar : k.en}
+                            <span className="ms-1.5 font-mono font-medium opacity-60">{k.hint}</span>
+                          </button>
+                        ))}
+                      </div>
+                      {expenseKind === "cash_withdrawal" && (
+                        <p className="mt-2 text-[10px] font-bold text-amber-500">
+                          {language === "ar"
+                            ? "يخرج المبلغ من البطاقة ويبقى ملكك نقداً — لا يُحتسب إنفاقاً."
+                            : "Leaves the card but stays yours as cash — not counted as spending."}
+                        </p>
+                      )}
                     </div>
                   );
                 })()}
@@ -1420,22 +2061,32 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                   {imageUrl ? (
                     <div className="flex flex-col gap-3 p-3 bg-slate-50 dark:bg-slate-900 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800">
                       <div className="flex flex-wrap gap-2.5">
-                        {imageUrl.split("|").filter(Boolean).map((imgUrl, idx) => (
+                        {receiptEntries(imageUrl).map((imgUrl, idx) => (
                           <div key={idx} className="relative group w-16 h-16 rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-white/50 shadow-xs transition-all hover:scale-[1.03]">
-                            <img
-                              src={imgUrl}
-                              alt={`Receipt ${idx + 1}`}
-                              className="w-full h-full object-cover cursor-pointer"
-                              onClick={() => {
-                                setPreviewImagesList([imgUrl]);
-                                setCurrentPreviewIndex(0);
-                              }}
-                              referrerPolicy="no-referrer"
-                            />
+                            {receiptSrc(imgUrl) ? (
+                              <img
+                                src={receiptSrc(imgUrl)}
+                                alt={`Receipt ${idx + 1}`}
+                                className="w-full h-full object-cover cursor-pointer"
+                                onClick={() => {
+                                  setPreviewImagesList([imgUrl]);
+                                  setCurrentPreviewIndex(0);
+                                }}
+                                referrerPolicy="no-referrer"
+                              />
+                            ) : (
+                              <div className="w-full h-full bg-slate-200 dark:bg-slate-800 animate-pulse" />
+                            )}
+                            {/* ponytail: drops the reference, leaves the object
+                                in the bucket. Deleting here would destroy the
+                                receipt of a row the user then cancels out of,
+                                and of anything sitting in Trash pointing at the
+                                same path. Sweep orphans with a scheduled job if
+                                storage cost ever shows up. */}
                             <button
                               type="button"
                               onClick={() => {
-                                const currentArr = imageUrl.split("|").filter(Boolean);
+                                const currentArr = receiptEntries(imageUrl);
                                 currentArr.splice(idx, 1);
                                 setImageUrl(currentArr.join("|"));
                               }}
@@ -1468,10 +2119,17 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                         </button>
                       </div>
                       <p className="text-[10px] text-slate-400 dark:text-slate-500 font-bold">
-                        {language === "ar" 
-                          ? `تم إرفاق ${imageUrl.split("|").filter(Boolean).length} صور. اضغط على أي صورة لمعاينتها بنقاء.`
-                          : `Attached ${imageUrl.split("|").filter(Boolean).length} documents. Click any to preview.`}
+                        {language === "ar"
+                          ? `تم إرفاق ${receiptEntries(imageUrl).length} صور. اضغط على أي صورة لمعاينتها بنقاء.`
+                          : `Attached ${receiptEntries(imageUrl).length} documents. Click any to preview.`}
                       </p>
+                      {receiptsUnavailable && (
+                        <p className="text-[10px] text-rose-500 font-bold">
+                          {language === "ar"
+                            ? "تعذّر تحميل صور المرفقات. المرفقات نفسها ما زالت محفوظة."
+                            : "Receipt images could not be loaded. The attachments themselves are still saved."}
+                        </p>
+                      )}
                       <input
                         ref={fileInputRef}
                         type="file"
@@ -1576,11 +2234,18 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                 >
                   {t.cancel}
                 </button>
+                {/* Saving mid-upload would store the transaction without the
+                    photo still on its way to the bucket. */}
                 <button
                   type="submit"
-                  className="px-12 py-3.5 bg-brand-slate text-white dark:bg-white dark:text-brand-slate hover:opacity-90 font-black text-xs rounded-2xl cursor-pointer transition-all active:scale-95 shadow-md shadow-brand-slate/15 dark:shadow-none"
+                  disabled={uploadingReceipts}
+                  className="px-12 py-3.5 bg-brand-slate text-white dark:bg-white dark:text-brand-slate hover:opacity-90 font-black text-xs rounded-2xl cursor-pointer transition-all active:scale-95 shadow-md shadow-brand-slate/15 dark:shadow-none disabled:opacity-50 disabled:cursor-wait"
                 >
-                  {t.save}
+                  {uploadingReceipts
+                    ? language === "ar"
+                      ? "جارٍ رفع الصور..."
+                      : "Uploading receipts..."
+                    : t.save}
                 </button>
               </div>
 
@@ -1650,13 +2315,14 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                     animate={{ height: "auto", opacity: 1, marginTop: 14 }}
                     exit={{ height: 0, opacity: 0, marginTop: 0 }}
                     transition={{ duration: 0.25, ease: "easeInOut" }}
-                    className="overflow-hidden space-y-3.5"
+                    className="space-y-3.5"
+                    style={{ overflow: isFiltersExpanded ? "visible" : "hidden" }}
                   >
                     <div className="pt-3.5 border-t border-slate-100 dark:border-slate-800/40 space-y-3.5">
                       {/* Type & Search Row */}
                       <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
                         {/* Segmented Filter control (All vs Income vs Expense) */}
-                        <div className="md:col-span-5 grid grid-cols-3 p-1 bg-slate-100/50 dark:bg-slate-950/50 rounded-xl border border-white/10 dark:border-slate-900/30">
+                        <div className="md:col-span-5 grid grid-cols-4 p-1 bg-slate-100/50 dark:bg-slate-950/50 rounded-xl border border-white/10 dark:border-slate-900/30">
                           {[
                             { id: "all" as const, label: language === "ar" ? "الكل" : "All" },
                             {
@@ -1666,6 +2332,10 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                             {
                               id: "expense" as const,
                               label: language === "ar" ? "الصادر فقط" : "Expenses",
+                            },
+                            {
+                              id: "transfer" as const,
+                              label: language === "ar" ? "تحويلات" : "Transfers",
                             },
                           ].map((pill) => (
                             <button
@@ -1725,43 +2395,75 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                             <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-250 ${walletFilterOpen ? "rotate-180" : ""}`} />
                           </button>
 
-                          <AnimatePresence>
-                            {walletFilterOpen && (
-                              <motion.div
-                                initial={{ opacity: 0, y: 5, scale: 0.98 }}
-                                animate={{ opacity: 1, y: 0, scale: 1 }}
-                                exit={{ opacity: 0, y: 5, scale: 0.98 }}
-                                transition={{ duration: 0.15 }}
-                                className="absolute top-11 left-0 right-0 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md border border-slate-200 dark:border-slate-800/80 rounded-2xl shadow-xl z-50 max-h-56 overflow-y-auto divide-y divide-slate-100/60 dark:divide-slate-900/60"
-                              >
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setWalletFilter("");
-                                    setWalletFilterOpen(false);
-                                  }}
-                                  className="w-full px-3.5 py-3 text-start text-xs font-bold text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-900 cursor-pointer flex items-center justify-between"
-                                >
-                                  <span>{language === "ar" ? "كل المحافظ" : "All Wallets"}</span>
-                                  {!walletFilter && <Check className="w-3.5 h-3.5 text-brand-teal stroke-[3]" />}
-                                </button>
-                                {wallets.map((w) => (
-                                  <button
-                                    key={w.id}
-                                    type="button"
-                                    onClick={() => {
-                                      setWalletFilter(w.id);
-                                      setWalletFilterOpen(false);
-                                    }}
-                                    className="w-full px-3.5 py-3 text-start text-xs font-black text-slate-800 dark:text-white hover:bg-slate-50 dark:hover:bg-slate-900 cursor-pointer flex items-center justify-between"
+                          {createPortal(
+                            <AnimatePresence>
+                              {walletFilterOpen && (
+                                <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 filter-modal-container" dir={language === "ar" ? "rtl" : "ltr"}>
+                                  <motion.div
+                                    initial={{ opacity: 0 }}
+                                    animate={{ opacity: 1 }}
+                                    exit={{ opacity: 0 }}
+                                    onClick={() => setWalletFilterOpen(false)}
+                                    className="absolute inset-0 bg-slate-900/60 dark:bg-black/85 backdrop-blur-xs"
+                                  />
+                                  <motion.div
+                                    initial={{ opacity: 0, scale: 0.95, y: 15 }}
+                                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                                    exit={{ opacity: 0, scale: 0.95, y: 15 }}
+                                    transition={{ type: "spring", duration: 0.3 }}
+                                    className="relative w-full max-w-sm bg-white dark:bg-slate-900 rounded-[2rem] shadow-2xl border border-slate-100 dark:border-slate-800 overflow-hidden z-10 flex flex-col max-h-[80vh]"
                                   >
-                                    <span className="truncate">{w.name} ({w.currency})</span>
-                                    {walletFilter === w.id && <Check className="w-3.5 h-3.5 text-brand-teal stroke-[3]" />}
-                                  </button>
-                                ))}
-                              </motion.div>
-                            )}
-                          </AnimatePresence>
+                                    {/* Header */}
+                                    <div className="p-5 border-b border-slate-100 dark:border-slate-800/60 flex items-center justify-between bg-slate-50 dark:bg-slate-900/50">
+                                      <div className="flex items-center gap-2.5">
+                                        <Wallet className="w-4 h-4 text-brand-teal" />
+                                        <span className="font-black text-sm text-slate-850 dark:text-slate-150">
+                                          {language === "ar" ? "تصفية حسب المحفظة" : "Filter by Wallet"}
+                                        </span>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => setWalletFilterOpen(false)}
+                                        className="p-1.5 rounded-xl text-slate-400 hover:bg-slate-150 dark:hover:bg-slate-800 transition-colors"
+                                      >
+                                        <X className="w-4.5 h-4.5" />
+                                      </button>
+                                    </div>
+
+                                    {/* List */}
+                                    <div className="overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800/40 p-2.5 max-h-[50vh] scrollbar-thin">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setWalletFilter("");
+                                          setWalletFilterOpen(false);
+                                        }}
+                                        className="w-full px-4 py-3 text-start text-xs font-bold text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-850/50 rounded-xl cursor-pointer flex items-center justify-between"
+                                      >
+                                        <span>{language === "ar" ? "كل المحافظ" : "All Wallets"}</span>
+                                        {!walletFilter && <Check className="w-4 h-4 text-brand-teal stroke-[3]" />}
+                                      </button>
+                                      {wallets.map((w) => (
+                                        <button
+                                          key={w.id}
+                                          type="button"
+                                          onClick={() => {
+                                            setWalletFilter(w.id);
+                                            setWalletFilterOpen(false);
+                                          }}
+                                          className="w-full px-4 py-3 text-start text-xs font-black text-slate-800 dark:text-white hover:bg-slate-50 dark:hover:bg-slate-850/50 rounded-xl cursor-pointer flex items-center justify-between"
+                                        >
+                                          <span className="truncate">{w.name} ({w.currency})</span>
+                                          {walletFilter === w.id && <Check className="w-4 h-4 text-brand-teal stroke-[3]" />}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </motion.div>
+                                </div>
+                              )}
+                            </AnimatePresence>,
+                            document.body
+                          )}
                         </div>
 
                         {/* 2. Custom Category Selection Filter */}
@@ -1788,58 +2490,90 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                             <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-250 ${categoryFilterOpen ? "rotate-180" : ""}`} />
                           </button>
 
-                          <AnimatePresence>
-                            {categoryFilterOpen && (
-                              <motion.div
-                                initial={{ opacity: 0, y: 5, scale: 0.98 }}
-                                animate={{ opacity: 1, y: 0, scale: 1 }}
-                                exit={{ opacity: 0, y: 5, scale: 0.98 }}
-                                transition={{ duration: 0.15 }}
-                                className="absolute top-11 left-0 right-0 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md border border-slate-200 dark:border-slate-800/80 rounded-2xl shadow-xl z-50 max-h-56 overflow-y-auto divide-y divide-slate-100/60 dark:divide-slate-900/60"
-                              >
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setCategoryFilter("");
-                                    setCategoryFilterOpen(false);
-                                  }}
-                                  className="w-full px-3.5 py-3 text-start text-xs font-bold text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-900 cursor-pointer flex items-center justify-between"
-                                >
-                                  <span>{language === "ar" ? "كل التصنيفات" : "All Categories"}</span>
-                                  {!categoryFilter && <Check className="w-3.5 h-3.5 text-brand-teal stroke-[3]" />}
-                                </button>
-                                {categories.map((c) => {
-                                  const isSelected = categoryFilter === c.id;
-                                  const cleanName = c.name.split(" / ")[language === "ar" ? 0 : 1] || c.name;
-                                  return (
-                                    <button
-                                      key={c.id}
-                                      type="button"
-                                      onClick={() => {
-                                        setCategoryFilter(c.id);
-                                        setCategoryFilterOpen(false);
-                                      }}
-                                      className={`w-full px-3.5 py-3 text-start text-xs font-black hover:bg-slate-50 dark:hover:bg-slate-900 cursor-pointer flex items-center justify-between ${
-                                        isSelected ? "text-brand-teal" : "text-slate-800 dark:text-white"
-                                      }`}
-                                    >
-                                      <div className="flex items-center gap-2 truncate">
-                                        <span className={`text-[9px] px-1.5 py-0.5 rounded-md font-bold ${
-                                          c.type === "income" 
-                                            ? "bg-emerald-500/10 text-emerald-600 dark:bg-emerald-500/20 dark:text-emerald-400" 
-                                            : "bg-rose-500/10 text-rose-500 dark:bg-rose-500/20 dark:text-rose-400"
-                                        }`}>
-                                          {c.type === "income" ? (language === "ar" ? "وارد" : "In") : language === "ar" ? "صادر" : "Out"}
+                          {createPortal(
+                            <AnimatePresence>
+                              {categoryFilterOpen && (
+                                <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 filter-modal-container" dir={language === "ar" ? "rtl" : "ltr"}>
+                                  <motion.div
+                                    initial={{ opacity: 0 }}
+                                    animate={{ opacity: 1 }}
+                                    exit={{ opacity: 0 }}
+                                    onClick={() => setCategoryFilterOpen(false)}
+                                    className="absolute inset-0 bg-slate-900/60 dark:bg-black/85 backdrop-blur-xs"
+                                  />
+                                  <motion.div
+                                    initial={{ opacity: 0, scale: 0.95, y: 15 }}
+                                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                                    exit={{ opacity: 0, scale: 0.95, y: 15 }}
+                                    transition={{ type: "spring", duration: 0.3 }}
+                                    className="relative w-full max-w-sm bg-white dark:bg-slate-900 rounded-[2rem] shadow-2xl border border-slate-100 dark:border-slate-800 overflow-hidden z-10 flex flex-col max-h-[80vh]"
+                                  >
+                                    {/* Header */}
+                                    <div className="p-5 border-b border-slate-100 dark:border-slate-800/60 flex items-center justify-between bg-slate-50 dark:bg-slate-900/50">
+                                      <div className="flex items-center gap-2.5">
+                                        <Tag className="w-4 h-4 text-brand-teal" />
+                                        <span className="font-black text-sm text-slate-850 dark:text-slate-150">
+                                          {language === "ar" ? "تصفية حسب التصنيف" : "Filter by Category"}
                                         </span>
-                                        <span className="truncate">{cleanName}</span>
                                       </div>
-                                      {isSelected && <Check className="w-3.5 h-3.5 text-brand-teal stroke-[3] flex-shrink-0" />}
-                                    </button>
-                                  );
-                                })}
-                              </motion.div>
-                            )}
-                          </AnimatePresence>
+                                      <button
+                                        type="button"
+                                        onClick={() => setCategoryFilterOpen(false)}
+                                        className="p-1.5 rounded-xl text-slate-400 hover:bg-slate-150 dark:hover:bg-slate-800 transition-colors"
+                                      >
+                                        <X className="w-4.5 h-4.5" />
+                                      </button>
+                                    </div>
+
+                                    {/* List */}
+                                    <div className="overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800/40 p-2.5 max-h-[50vh] scrollbar-thin">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setCategoryFilter("");
+                                          setCategoryFilterOpen(false);
+                                        }}
+                                        className="w-full px-4 py-3 text-start text-xs font-bold text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-850/50 rounded-xl cursor-pointer flex items-center justify-between"
+                                      >
+                                        <span>{language === "ar" ? "كل التصنيفات" : "All Categories"}</span>
+                                        {!categoryFilter && <Check className="w-4 h-4 text-brand-teal stroke-[3]" />}
+                                      </button>
+                                      {categories.map((c) => {
+                                        const isSelected = categoryFilter === c.id;
+                                        const cleanName = c.name.split(" / ")[language === "ar" ? 0 : 1] || c.name;
+                                        return (
+                                          <button
+                                            key={c.id}
+                                            type="button"
+                                            onClick={() => {
+                                              setCategoryFilter(c.id);
+                                              setCategoryFilterOpen(false);
+                                            }}
+                                            className={`w-full px-4 py-3 text-start text-xs font-black hover:bg-slate-50 dark:hover:bg-slate-850/50 rounded-xl cursor-pointer flex items-center justify-between ${
+                                              isSelected ? "text-brand-teal" : "text-slate-800 dark:text-white"
+                                            }`}
+                                          >
+                                            <div className="flex items-center gap-2 truncate">
+                                              <span className={`text-[9px] px-1.5 py-0.5 rounded-md font-bold ${
+                                                c.type === "income" 
+                                                  ? "bg-emerald-500/10 text-emerald-600 dark:bg-emerald-500/20 dark:text-emerald-400" 
+                                                  : "bg-rose-500/10 text-rose-500 dark:bg-rose-500/20 dark:text-rose-400"
+                                              }`}>
+                                                {c.type === "income" ? (language === "ar" ? "وارد" : "In") : language === "ar" ? "صادر" : "Out"}
+                                              </span>
+                                              <span className="truncate">{cleanName}</span>
+                                            </div>
+                                            {isSelected && <Check className="w-4 h-4 text-brand-teal stroke-[3] flex-shrink-0" />}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  </motion.div>
+                                </div>
+                              )}
+                            </AnimatePresence>,
+                            document.body
+                          )}
                         </div>
 
                         {/* 3. Custom Priority filter */}
@@ -1868,71 +2602,103 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                             <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-250 ${priorityFilterOpen ? "rotate-180" : ""}`} />
                           </button>
 
-                          <AnimatePresence>
-                            {priorityFilterOpen && (
-                              <motion.div
-                                initial={{ opacity: 0, y: 5, scale: 0.98 }}
-                                animate={{ opacity: 1, y: 0, scale: 1 }}
-                                exit={{ opacity: 0, y: 5, scale: 0.98 }}
-                                transition={{ duration: 0.15 }}
-                                className="absolute top-11 left-0 right-0 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md border border-slate-200 dark:border-slate-800/80 rounded-2xl shadow-xl z-50 max-h-56 overflow-y-auto divide-y divide-slate-100/60 dark:divide-slate-900/60"
-                              >
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setPriorityFilter("");
-                                    setPriorityFilterOpen(false);
-                                  }}
-                                  className="w-full px-3.5 py-3 text-start text-xs font-bold text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-900 cursor-pointer flex items-center justify-between"
-                                >
-                                  <span>{language === "ar" ? "كل المستويات" : "All Levels"}</span>
-                                  {!priorityFilter && <Check className="w-3.5 h-3.5 text-brand-teal stroke-[3]" />}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setPriorityFilter("high");
-                                    setPriorityFilterOpen(false);
-                                  }}
-                                  className="w-full px-3.5 py-3 text-start text-xs font-black text-rose-500 hover:bg-slate-50 dark:hover:bg-slate-900 cursor-pointer flex items-center justify-between"
-                                >
-                                  <div className="flex items-center gap-2">
-                                    <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
-                                    <span>{language === "ar" ? "مرتفعة جداً" : "Urgent / High"}</span>
-                                  </div>
-                                  {priorityFilter === "high" && <Check className="w-3.5 h-3.5 text-rose-500 stroke-[3]" />}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setPriorityFilter("medium");
-                                    setPriorityFilterOpen(false);
-                                  }}
-                                  className="w-full px-3.5 py-3 text-start text-xs font-black text-teal-600 dark:text-teal-400 hover:bg-slate-50 dark:hover:bg-slate-900 cursor-pointer flex items-center justify-between"
-                                >
-                                  <div className="flex items-center gap-2">
-                                    <span className="w-1.5 h-1.5 rounded-full bg-brand-teal" />
-                                    <span>{language === "ar" ? "متوسطة" : "General / Medium"}</span>
-                                  </div>
-                                  {priorityFilter === "medium" && <Check className="w-3.5 h-3.5 text-brand-teal stroke-[3]" />}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setPriorityFilter("low");
-                                    setPriorityFilterOpen(false);
-                                  }}
-                                  className="w-full px-3.5 py-3 text-start text-xs font-black text-emerald-500 hover:bg-slate-50 dark:hover:bg-slate-900 cursor-pointer flex items-center justify-between"
-                                >
-                                  <div className="flex items-center gap-2">
-                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                                    <span>{language === "ar" ? "منخفضة" : "Optional / Low"}</span>
-                                  </div>
-                                  {priorityFilter === "low" && <Check className="w-3.5 h-3.5 text-emerald-500 stroke-[3]" />}
-                                </button>
-                              </motion.div>
-                            )}
-                          </AnimatePresence>
+                          {createPortal(
+                            <AnimatePresence>
+                              {priorityFilterOpen && (
+                                <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 filter-modal-container" dir={language === "ar" ? "rtl" : "ltr"}>
+                                  <motion.div
+                                    initial={{ opacity: 0 }}
+                                    animate={{ opacity: 1 }}
+                                    exit={{ opacity: 0 }}
+                                    onClick={() => setPriorityFilterOpen(false)}
+                                    className="absolute inset-0 bg-slate-900/60 dark:bg-black/85 backdrop-blur-xs"
+                                  />
+                                  <motion.div
+                                    initial={{ opacity: 0, scale: 0.95, y: 15 }}
+                                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                                    exit={{ opacity: 0, scale: 0.95, y: 15 }}
+                                    transition={{ type: "spring", duration: 0.3 }}
+                                    className="relative w-full max-w-sm bg-white dark:bg-slate-900 rounded-[2rem] shadow-2xl border border-slate-100 dark:border-slate-800 overflow-hidden z-10 flex flex-col max-h-[80vh]"
+                                  >
+                                    {/* Header */}
+                                    <div className="p-5 border-b border-slate-100 dark:border-slate-800/60 flex items-center justify-between bg-slate-50 dark:bg-slate-900/50">
+                                      <div className="flex items-center gap-2.5">
+                                        <AlertTriangle className="w-4 h-4 text-brand-teal" />
+                                        <span className="font-black text-sm text-slate-850 dark:text-slate-150">
+                                          {language === "ar" ? "تصفية حسب الأهمية" : "Filter by Priority"}
+                                        </span>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => setPriorityFilterOpen(false)}
+                                        className="p-1.5 rounded-xl text-slate-400 hover:bg-slate-150 dark:hover:bg-slate-800 transition-colors"
+                                      >
+                                        <X className="w-4.5 h-4.5" />
+                                      </button>
+                                    </div>
+
+                                    {/* List */}
+                                    <div className="overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800/40 p-2.5 max-h-[50vh] scrollbar-thin">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setPriorityFilter("");
+                                          setPriorityFilterOpen(false);
+                                        }}
+                                        className="w-full px-4 py-3.5 text-start text-xs font-bold text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-850/50 rounded-xl cursor-pointer flex items-center justify-between"
+                                      >
+                                        <span>{language === "ar" ? "كل المستويات" : "All Levels"}</span>
+                                        {!priorityFilter && <Check className="w-4 h-4 text-brand-teal stroke-[3]" />}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setPriorityFilter("high");
+                                          setPriorityFilterOpen(false);
+                                        }}
+                                        className="w-full px-4 py-3.5 text-start text-xs font-black text-rose-500 hover:bg-slate-50 dark:hover:bg-slate-850/50 rounded-xl cursor-pointer flex items-center justify-between"
+                                      >
+                                        <div className="flex items-center gap-2">
+                                          <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
+                                          <span>{language === "ar" ? "مرتفعة جداً" : "Urgent / High"}</span>
+                                        </div>
+                                        {priorityFilter === "high" && <Check className="w-4 h-4 text-rose-500 stroke-[3]" />}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setPriorityFilter("medium");
+                                          setPriorityFilterOpen(false);
+                                        }}
+                                        className="w-full px-4 py-3.5 text-start text-xs font-black text-teal-600 dark:text-teal-400 hover:bg-slate-50 dark:hover:bg-slate-850/50 rounded-xl cursor-pointer flex items-center justify-between"
+                                      >
+                                        <div className="flex items-center gap-2">
+                                          <span className="w-1.5 h-1.5 rounded-full bg-brand-teal" />
+                                          <span>{language === "ar" ? "متوسطة" : "General / Medium"}</span>
+                                        </div>
+                                        {priorityFilter === "medium" && <Check className="w-4 h-4 text-brand-teal stroke-[3]" />}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setPriorityFilter("low");
+                                          setPriorityFilterOpen(false);
+                                        }}
+                                        className="w-full px-4 py-3.5 text-start text-xs font-black text-emerald-500 hover:bg-slate-50 dark:hover:bg-slate-850/50 rounded-xl cursor-pointer flex items-center justify-between"
+                                      >
+                                        <div className="flex items-center gap-2">
+                                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                          <span>{language === "ar" ? "منخفضة" : "Optional / Low"}</span>
+                                        </div>
+                                        {priorityFilter === "low" && <Check className="w-4 h-4 text-emerald-500 stroke-[3]" />}
+                                      </button>
+                                    </div>
+                                  </motion.div>
+                                </div>
+                              )}
+                            </AnimatePresence>,
+                            document.body
+                          )}
                         </div>
                       </div>
                     </div>
@@ -2000,12 +2766,16 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                         {/* Circle directional indicators */}
                         <div
                           className={`w-11 h-11 rounded-2xl flex items-center justify-center flex-shrink-0 shadow-xs border ${
-                            tx.type === "income"
-                              ? "bg-brand-green/20 text-emerald-600 border-brand-green/30 dark:bg-brand-green/10 dark:text-brand-green"
-                              : "bg-rose-50 dark:bg-rose-950/20 text-rose-500 border-rose-250/20 dark:border-rose-900/10"
+                            (tx as any).transferPair
+                              ? "bg-brand-teal/10 text-brand-teal border-brand-teal/20"
+                              : tx.type === "income"
+                                ? "bg-brand-green/20 text-emerald-600 border-brand-green/30 dark:bg-brand-green/10 dark:text-brand-green"
+                                : "bg-rose-50 dark:bg-rose-950/20 text-rose-500 border-rose-250/20 dark:border-rose-900/10"
                           }`}
                         >
-                          {tx.type === "income" ? (
+                          {(tx as any).transferPair ? (
+                            <ArrowRightLeft className="w-5 h-5 stroke-[2.5]" />
+                          ) : tx.type === "income" ? (
                             <ArrowUpRight className="w-5 h-5 stroke-[2.5]" />
                           ) : (
                             <ArrowDownLeft className="w-5 h-5 stroke-[2.5]" />
@@ -2033,12 +2803,18 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                             {/* Transaction Type label */}
                             <span
                               className={`text-[9px] font-black px-1.5 py-0.5 rounded-md uppercase ${
-                                tx.type === "income"
-                                  ? "bg-brand-green/20 text-emerald-800 dark:bg-brand-green/10 dark:text-brand-green"
-                                  : "bg-brand-slate text-white dark:bg-white/10 dark:text-white"
+                                (tx as any).transferPair
+                                  ? "bg-brand-teal/10 text-brand-teal"
+                                  : tx.type === "income"
+                                    ? "bg-brand-green/20 text-emerald-800 dark:bg-brand-green/10 dark:text-brand-green"
+                                    : "bg-brand-slate text-white dark:bg-white/10 dark:text-white"
                               }`}
                             >
-                              {tx.type === "income"
+                              {(tx as any).transferPair
+                                ? (tx as any).transferPair.currency === tx.currency
+                                  ? language === "ar" ? "تحويل" : "Transfer"
+                                  : language === "ar" ? "صرافة" : "Exchange"
+                                : tx.type === "income"
                                 ? language === "ar"
                                   ? "وارد"
                                   : "Income"
@@ -2046,6 +2822,19 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                                   ? "صادر"
                                   : "Expense"}
                             </span>
+
+                            {/* A withdrawal sits in the feed as an outflow of the
+                                card, so say plainly that the money is still yours. */}
+                            {(tx as any).expenseKind === "cash_withdrawal" && (
+                              <span className="text-[9px] font-black px-1.5 py-0.5 rounded-md uppercase bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 border border-amber-250/20 dark:border-amber-900/10">
+                                {language === "ar" ? "سحب نقدي — تحوّل لنقد" : "Withdrawal — became cash"}
+                              </span>
+                            )}
+                            {(tx as any).expenseKind === "cash_spend" && (
+                              <span className="text-[9px] font-black px-1.5 py-0.5 rounded-md uppercase bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400">
+                                {language === "ar" ? "من النقد" : "From cash"}
+                              </span>
+                            )}
 
                             {/* Category badge */}
                             <span
@@ -2142,22 +2931,86 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
 
                       {/* Right: Sum value, and actions */}
                       <div className="flex sm:flex-col justify-between sm:justify-center items-center sm:items-end gap-3 self-stretch sm:self-auto pt-3 sm:pt-0 border-t sm:border-t-0 border-slate-100 dark:border-slate-800/40">
-                        <span
-                          className={`font-black text-base ${
-                            tx.type === "income"
-                              ? "text-emerald-500" // palette custom positive green
-                              : "text-brand-slate dark:text-white font-extrabold"
-                          }`}
-                        >
-                          {tx.type === "income" ? "+" : "-"}{" "}
-                          {tx.amount.toLocaleString(undefined, {
-                            minimumFractionDigits: 2,
-                          })}{" "}
-                          {tx.currency === "LYD" ? t.lydSymbol : t.usdSymbol}
-                        </span>
+                        <div className="flex flex-col items-end">
+                          {(tx as any).transferPair ? (
+                            // Both halves on one line, because the movement is
+                            // the thing that happened — showing only the outflow
+                            // would read as money lost.
+                            <span
+                              className="font-black text-base text-brand-slate dark:text-white flex items-center gap-1.5 whitespace-nowrap"
+                              style={{ direction: "ltr" }}
+                            >
+                              <span className="text-slate-400 dark:text-slate-500 font-bold text-sm tabular-nums">
+                                {tx.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}{" "}
+                                {tx.currency}
+                              </span>
+                              <ArrowRightLeft className="w-3.5 h-3.5 text-brand-teal shrink-0" aria-hidden="true" />
+                              <span className="text-brand-teal tabular-nums">
+                                {(tx as any).transferPair.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}{" "}
+                                {(tx as any).transferPair.currency}
+                              </span>
+                            </span>
+                          ) : (
+                          <span
+                            className={`font-black text-base ${
+                              tx.type === "income"
+                                ? "text-emerald-500" // palette custom positive green
+                                : (tx as any).isRefunded
+                                  ? "text-brand-slate dark:text-white line-through decoration-rose-500 decoration-2"
+                                  : "text-brand-slate dark:text-white font-extrabold"
+                            }`}
+                          >
+                            {tx.type === "income" ? "+" : "-"}{" "}
+                            {((tx as any).isRefunded ? ((tx as any).originalAmount || 0) : tx.amount).toLocaleString(undefined, {
+                              minimumFractionDigits: 2,
+                            })}{" "}
+                            {tx.currency === "LYD" ? t.lydSymbol : t.usdSymbol}
+                          </span>
+                          )}
+                          {/* A label as well as a colour, so the movement reads
+                              as a movement without relying on the teal alone. */}
+                          {(tx as any).transferPair && (
+                            <span className="text-[10px] font-black text-brand-teal bg-brand-teal/5 dark:bg-brand-teal/10 px-2 py-0.5 rounded-full mt-1 border border-brand-teal/15 flex items-center gap-1">
+                              {(tx as any).transferPair.currency === tx.currency
+                                ? language === "ar" ? "تحويل" : "Transfer"
+                                : `${language === "ar" ? "صرافة" : "Exchange"} @ ${(tx.amount / (tx as any).transferPair.amount).toFixed(2)}`}
+                            </span>
+                          )}
+                          {!(tx as any).isRefunded && (tx as any).originalAmount && (tx as any).originalAmount > tx.amount && (
+                            <span className="text-[10px] font-black text-amber-500 bg-amber-50 dark:bg-amber-950/20 px-2 py-0.5 rounded-full mt-0.5 border border-amber-100 dark:border-amber-900/30">
+                              {language === 'ar' ? 'مسترد جزئياً' : 'Partially Refunded'}
+                            </span>
+                          )}
+                          {(tx as any).isRefunded && (
+                             <span className="text-[10px] font-black text-emerald-500 bg-emerald-50 dark:bg-emerald-950/20 px-2 py-0.5 rounded-full mt-0.5 border border-emerald-100 dark:border-emerald-900/30">
+                               {t.refundedStatus}
+                             </span>
+                          )}
+                        </div>
 
                         {/* Actions container */}
                         <div className="flex items-center gap-1.5">
+                          {/* Refund and due are meaningless on a withdrawal, and
+                              refunding one zeroes its amount — which would delete
+                              the cash it produced. */}
+                          {tx.type === "expense" && !(tx as any).isRefunded && (tx as any).expenseKind !== "cash_withdrawal" && !(tx as any).transferPair && (
+                            <button
+                              onClick={() => toggleExpenseDue(tx.id, !(tx as any).isDue)}
+                              className={`p-2 rounded-xl transition-colors cursor-pointer border ${(tx as any).isDue ? 'bg-rose-50 text-rose-500 border-rose-200/50 hover:bg-rose-100 dark:bg-rose-950/30 dark:border-rose-900/30 dark:hover:bg-rose-900/50' : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-rose-500 border-transparent hover:border-rose-500/10'}`}
+                              title={(tx as any).isDue ? (language === 'ar' ? 'إلغاء كمستحق' : 'Remove Due Status') : (language === 'ar' ? 'تحديد كمستحق (مطلوب)' : 'Mark as Due (Pending)')}
+                            >
+                              <Wallet className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          {tx.type === "expense" && (tx as any).expenseKind !== "cash_withdrawal" && !(tx as any).transferPair && (
+                             <button
+                               onClick={() => toggleExpenseRefund(tx.id, !(tx as any).isRefunded)}
+                               className={`p-2 rounded-xl transition-colors cursor-pointer border ${(tx as any).isRefunded ? 'bg-amber-50 text-amber-500 border-amber-200/50 hover:bg-amber-100 dark:bg-amber-950/30 dark:border-amber-900/30 dark:hover:bg-amber-900/50' : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-amber-500 border-transparent hover:border-amber-500/10'}`}
+                               title={(tx as any).isRefunded ? t.unrefundAction : t.refundAction}
+                             >
+                               <Layers className="w-3.5 h-3.5" />
+                             </button>
+                          )}
                           {tx.imageUrl && (
                             <button
                               onClick={() => {
@@ -2173,20 +3026,30 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                               <Eye className="w-3.5 h-3.5" />
                             </button>
                           )}
-                          <button
-                            onClick={() => handleEditClick(tx)}
-                            className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 rounded-xl transition-colors cursor-pointer border border-transparent hover:border-white/20"
-                            title={t.edit}
-                          >
-                            <Edit2 className="w-3.5 h-3.5" />
-                          </button>
+                          {/* A transfer is not editable. Its two legs encode the
+                              rate between them, so changing one amount would
+                              silently restate a rate the other leg still
+                              contradicts. Delete the pair and re-enter it. */}
+                          {!(tx as any).transferPair && (
+                            <button
+                              onClick={() => handleEditClick(tx)}
+                              className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 rounded-xl transition-colors cursor-pointer border border-transparent hover:border-white/20"
+                              title={t.edit}
+                            >
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                           <button
                             onClick={() => {
                               showConfirm(
                                 language === "ar" ? "حذف المعاملة" : "Delete Transaction",
-                                language === "ar"
-                                  ? `هل أنت متأكد من حذف هذه المعاملة ("${tx.title}") نهائياً؟ لا يمكن استعادة السجل المالي لاحقاً.`
-                                  : `Are you sure you want to delete this transaction ("${tx.title}") permanently? This action cannot be reversed.`,
+                                (tx as any).transferPair
+                                  ? language === "ar"
+                                    ? `سيتم حذف طرفَي هذه الحركة معاً ("${tx.title}") — الصادر والوارد — لأن حذف طرف واحد يترك المال وقد خرج ولم يصل. متابعة؟`
+                                    : `Both legs of this movement ("${tx.title}") will be deleted together — the outgoing and the incoming — because removing one leg alone leaves the money having left and never arrived. Continue?`
+                                  : language === "ar"
+                                    ? `هل أنت متأكد من حذف هذه المعاملة ("${tx.title}") نهائياً؟ لا يمكن استعادة السجل المالي لاحقاً.`
+                                    : `Are you sure you want to delete this transaction ("${tx.title}") permanently? This action cannot be reversed.`,
                                 async () => {
                                   if (tx.type === "income") {
                                     await deleteIncome(tx.id);
@@ -2325,6 +3188,191 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
         )}
       </AnimatePresence>
 
+      <AnimatePresence mode="wait">
+        {activeSubTab === 'refunds' && (
+          <motion.div
+            key="refunds-list"
+            initial={{ opacity: 0, y: 15 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 15 }}
+            transition={{ duration: 0.25 }}
+            className="space-y-4"
+          >
+            <div className="glass-card rounded-3xl p-4">
+              <h3 className="font-extrabold text-sm text-brand-slate dark:text-white mb-4 px-2">
+                {(t as any).refundsTab || (language === 'ar' ? 'الاستردادات' : 'Refunds')}
+              </h3>
+              
+              {expenses.filter(e => (e as any).isRefunded || ((e as any).originalAmount && (e as any).originalAmount > e.amount)).length > 0 ? (
+                <div className="space-y-3">
+                  {expenses.filter(e => (e as any).isRefunded || ((e as any).originalAmount && (e as any).originalAmount > e.amount)).sort((a,b) => new Date((b as any).refundedAt || b.updatedAt || b.date).getTime() - new Date((a as any).refundedAt || a.updatedAt || a.date).getTime()).map(exp => (
+                    <div
+                      key={exp.id}
+                      className="group flex flex-col p-4 bg-white/50 dark:bg-slate-800/50 hover:bg-white dark:hover:bg-slate-800 rounded-3xl border border-slate-100 dark:border-slate-800/60 shadow-sm hover:shadow-md transition-all cursor-default"
+                    >
+                      <div className="flex justify-between items-start">
+                        <div className="flex gap-4">
+                          <div className="w-12 h-12 rounded-2xl bg-amber-50 dark:bg-amber-900/20 text-amber-500 border border-amber-100 dark:border-amber-800/30 flex items-center justify-center font-bold text-lg shadow-inner">
+                            <AlertTriangle className="w-6 h-6" />
+                          </div>
+                          <div>
+                            <h4 className="font-extrabold text-sm text-brand-slate dark:text-white">{exp.title}</h4>
+                            <p className="text-xs text-slate-500 font-medium">
+                              {language === 'ar' ? 'آخر تحديث:' : 'Last updated:'} {new Date((exp as any).refundedAt || exp.updatedAt || exp.date).toLocaleString(language === 'ar' ? 'ar-LY' : 'en-US', { dateStyle: 'medium', timeStyle: 'short' })}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex flex-col items-end gap-1">
+                          <div className="flex flex-col items-end text-[11px] font-bold bg-slate-50 dark:bg-slate-800/50 p-2 rounded-xl w-full min-w-[140px] border border-slate-100 dark:border-slate-700/50">
+                            <div className="flex justify-between w-full text-slate-500 mb-1">
+                              <span>{language === 'ar' ? 'الكلي:' : 'Total:'}</span>
+                              <span className="line-through decoration-rose-500/50 decoration-2 ml-2">
+                                {((exp as any).originalAmount || exp.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                              </span>
+                            </div>
+                            <div className="flex justify-between w-full text-emerald-600 dark:text-emerald-400 mb-1">
+                              <span>{language === 'ar' ? 'المُسترد:' : 'Recovered:'}</span>
+                              <span className="ml-2">
+                                {(((exp as any).originalAmount || exp.amount) - exp.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                              </span>
+                            </div>
+                            <div className="flex justify-between w-full text-rose-600 dark:text-rose-400 border-t border-slate-200 dark:border-slate-700 pt-1 mt-1">
+                              <span>{language === 'ar' ? 'الباقي:' : 'Remaining:'}</span>
+                              <span className="ml-2">
+                                {exp.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                              </span>
+                            </div>
+                          </div>
+                          <span className={`text-[9px] font-black px-2 py-0.5 rounded-full mt-1 border ${
+                            (exp as any).isRefunded 
+                              ? 'text-emerald-500 bg-emerald-50 dark:bg-emerald-950/20 border-emerald-100 dark:border-emerald-900/30' 
+                              : 'text-amber-500 bg-amber-50 dark:bg-amber-950/20 border-amber-100 dark:border-amber-900/30'
+                          }`}>
+                            {(exp as any).isRefunded ? t.refundedStatus : (language === 'ar' ? 'مسترد جزئياً' : 'Partially Refunded')}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="mt-4 flex justify-end">
+                        <button
+                          onClick={() => toggleExpenseRefund(exp.id, false)}
+                          className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                        >
+                          {t.unrefundAction}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-20 text-slate-400 text-xs font-semibold">
+                  {language === 'ar' ? 'لا توجد استردادات مسجلة بعد.' : 'No refunds recorded yet.'}
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence mode="wait">
+        {activeSubTab === 'dues' && (
+          <motion.div
+            key="dues-list"
+            initial={{ opacity: 0, y: 15 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 15 }}
+            transition={{ duration: 0.25 }}
+            className="space-y-4"
+          >
+            <div className="glass-card rounded-3xl p-4">
+              <div className="flex items-center justify-between mb-4 px-2">
+                <h3 className="font-extrabold text-sm text-brand-slate dark:text-white">
+                  {language === 'ar' ? 'المستحقات (مطلوبة من الآخرين)' : 'Dues (Owed to you)'}
+                </h3>
+                <span className="text-xs font-black bg-rose-50 text-rose-500 px-3 py-1.5 rounded-xl border border-rose-100 dark:bg-rose-950/20 dark:border-rose-900/30">
+                  {language === 'ar' ? 'الإجمالي المتبقي:' : 'Remaining Total:'} {expenses.filter(e => e.isDue && !e.isRefunded && e.currency === globalCurrency).reduce((acc, curr) => acc + curr.amount, 0).toLocaleString(undefined, { minimumFractionDigits: 2 })} {globalCurrency === 'LYD' ? t.lydSymbol : t.usdSymbol}
+                </span>
+              </div>
+              
+              {expenses.filter(e => e.isDue && !e.isRefunded).length > 0 ? (
+                <div className="space-y-3">
+                  {expenses.filter(e => e.isDue && !e.isRefunded).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map(exp => (
+                    <div
+                      key={exp.id}
+                      className="group flex flex-col p-4 bg-white/50 dark:bg-slate-800/50 hover:bg-white dark:hover:bg-slate-800 rounded-3xl border border-rose-100 dark:border-rose-900/20 shadow-sm hover:shadow-md transition-all cursor-default"
+                    >
+                      <div className="flex justify-between items-start">
+                        <div className="flex gap-4">
+                          <div className="w-12 h-12 rounded-2xl bg-rose-50 dark:bg-rose-900/20 text-rose-500 border border-rose-100 dark:border-rose-800/30 flex items-center justify-center font-bold text-lg shadow-inner">
+                            <Wallet className="w-6 h-6" />
+                          </div>
+                          <div>
+                            <h4 className="font-extrabold text-sm text-brand-slate dark:text-white">{exp.title}</h4>
+                            <p className="text-xs text-slate-500 font-medium mt-1">
+                              {new Date(exp.date).toLocaleDateString(language === 'ar' ? 'ar-LY' : 'en-US', { dateStyle: 'medium' })}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex flex-col items-end gap-1">
+                          {(exp as any).originalAmount && (exp as any).originalAmount > exp.amount ? (
+                            <div className="flex flex-col items-end text-[11px] font-bold bg-slate-50 dark:bg-slate-800/50 p-2 rounded-xl w-full min-w-[140px] border border-slate-100 dark:border-slate-700/50">
+                              <div className="flex justify-between w-full text-slate-500 mb-1">
+                                <span>{language === 'ar' ? 'الكلي:' : 'Total:'}</span>
+                                <span className="line-through decoration-rose-500/50 decoration-2 ml-2">
+                                  {((exp as any).originalAmount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                </span>
+                              </div>
+                              <div className="flex justify-between w-full text-emerald-600 dark:text-emerald-400 mb-1">
+                                <span>{language === 'ar' ? 'المُسترد:' : 'Recovered:'}</span>
+                                <span className="ml-2">
+                                  {(((exp as any).originalAmount) - exp.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                </span>
+                              </div>
+                              <div className="flex justify-between w-full text-rose-600 dark:text-rose-400 border-t border-slate-200 dark:border-slate-700 pt-1 mt-1">
+                                <span>{language === 'ar' ? 'الباقي:' : 'Remaining:'}</span>
+                                <span className="ml-2">
+                                  {exp.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })} {exp.currency === 'LYD' ? t.lydSymbol : t.usdSymbol}
+                                </span>
+                              </div>
+                            </div>
+                          ) : (
+                            <span className="font-black text-rose-600 dark:text-rose-400 text-base">
+                              {exp.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })} {exp.currency === 'LYD' ? t.lydSymbol : t.usdSymbol}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="mt-4 flex justify-end gap-2">
+                        <button
+                          onClick={() => {
+                            setRecoverDueId(exp.id);
+                            const rem = exp.amount;
+                            setRecoverDueMax(rem);
+                            setRecoverDueAmount(rem.toString());
+                          }}
+                          className="px-5 py-2.5 bg-brand-teal text-white rounded-xl text-xs font-bold transition-all hover:scale-[1.02] active:scale-95 shadow-md shadow-brand-teal/20 cursor-pointer"
+                        >
+                          {language === 'ar' ? 'استرداد المستحق (أو جزء منه)' : 'Recover Due'}
+                        </button>
+                        <button
+                          onClick={() => toggleExpenseDue(exp.id, false)}
+                          className="px-5 py-2.5 bg-brand-slate text-white dark:bg-white dark:text-brand-slate rounded-xl text-xs font-bold transition-all hover:scale-[1.02] active:scale-95 shadow-md cursor-pointer"
+                        >
+                          {language === 'ar' ? 'العفو' : 'Forgive'}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-20 text-slate-400 text-xs font-semibold">
+                  {language === 'ar' ? 'لا توجد مستحقات مسجلة.' : 'No dues recorded.'}
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* 5. Glassmorphic Modal for receipt photo previews / slideshow gallery */}
       <AnimatePresence>
         {previewImagesList.length > 0 && (
@@ -2364,12 +3412,24 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
 
               {/* Main image preview with carousel controls */}
               <div className="relative w-full flex items-center justify-center bg-black/10 dark:bg-black/40 rounded-2xl p-2 border border-slate-200/50 dark:border-slate-800 overflow-hidden min-h-[300px]">
-                <img
-                  src={previewImagesList[currentPreviewIndex]}
-                  alt="Full Receipt Photo"
-                  className="max-h-[60vh] w-auto object-contain rounded-xl shadow-xl transition-all duration-300"
-                  referrerPolicy="no-referrer"
-                />
+                {receiptSrc(previewImagesList[currentPreviewIndex]) ? (
+                  <img
+                    src={receiptSrc(previewImagesList[currentPreviewIndex])}
+                    alt="Full Receipt Photo"
+                    className="max-h-[60vh] w-auto object-contain rounded-xl shadow-xl transition-all duration-300"
+                    referrerPolicy="no-referrer"
+                  />
+                ) : (
+                  <p className="text-xs font-bold text-slate-400 py-24">
+                    {receiptsUnavailable
+                      ? language === "ar"
+                        ? "تعذّر تحميل هذا المرفق."
+                        : "This receipt could not be loaded."
+                      : language === "ar"
+                        ? "جارٍ التحميل..."
+                        : "Loading..."}
+                  </p>
+                )}
 
                 {/* Left/Right Buttons if more than 1 image */}
                 {previewImagesList.length > 1 && (
@@ -2419,12 +3479,16 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                           : "border-transparent opacity-50 hover:opacity-100"
                       }`}
                     >
-                      <img
-                        src={url}
-                        alt={`Slide ${idx + 1}`}
-                        className="w-full h-full object-cover"
-                        referrerPolicy="no-referrer"
-                      />
+                      {receiptSrc(url) ? (
+                        <img
+                          src={receiptSrc(url)}
+                          alt={`Slide ${idx + 1}`}
+                          className="w-full h-full object-cover"
+                          referrerPolicy="no-referrer"
+                        />
+                      ) : (
+                        <div className="w-full h-full bg-slate-200 dark:bg-slate-800 animate-pulse" />
+                      )}
                       <span className="absolute bottom-0 inset-x-0 bg-black/40 text-[8px] text-white text-center font-mono">
                         {idx + 1}
                       </span>
@@ -2570,6 +3634,101 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                       : (overdraftData.currentBalance > 0 ? "Split & Record" : "Pay from Alternative")}
                   </button>
                 )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* 7. Recover Due Modal */}
+      <AnimatePresence>
+        {recoverDueId && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setRecoverDueId(null)}
+              className="absolute inset-0 bg-slate-950/70 backdrop-blur-md cursor-pointer"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="glass-modal max-w-sm w-full rounded-3xl overflow-hidden p-6 z-10 relative bg-white dark:bg-slate-900 shadow-2xl flex flex-col gap-4 border border-brand-teal/20"
+            >
+              <div className="flex items-center gap-3 pb-4 border-b border-brand-teal/10">
+                <div className="w-10 h-10 rounded-full bg-brand-teal/10 text-brand-teal flex items-center justify-center flex-shrink-0">
+                  <Wallet className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-800 dark:text-white">
+                    {language === "ar" ? "استرداد المستحق" : "Recover Due"}
+                  </h3>
+                  <p className="text-xs text-slate-500 font-medium">
+                    {language === "ar" ? "إدخال المبلغ المدفوع" : "Enter paid amount"}
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="text-xs font-bold text-slate-500 block mb-1">
+                    {language === "ar" ? "المبلغ المسترد" : "Recovered Amount"}
+                  </label>
+                  <input
+                    type="number"
+                    step="any"
+                    value={recoverDueAmount}
+                    onChange={(e) => {
+                      // restrict to max amount
+                      const val = Number(e.target.value);
+                      if (val > recoverDueMax) {
+                        setRecoverDueAmount(recoverDueMax.toString());
+                      } else {
+                        setRecoverDueAmount(e.target.value);
+                      }
+                    }}
+                    className="w-full bg-slate-50 dark:bg-slate-800 border-none rounded-xl px-4 py-3 text-lg font-black text-brand-slate dark:text-white focus:ring-2 focus:ring-brand-teal outline-none transition-all"
+                    placeholder="0.00"
+                  />
+                  <div className="flex justify-between items-center mt-2">
+                    <span className="text-xs text-slate-400">
+                      {language === "ar" ? "الحد الأقصى:" : "Max:"} {recoverDueMax.toLocaleString()}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setRecoverDueAmount(recoverDueMax.toString())}
+                      className="text-[10px] font-bold px-2 py-1 bg-brand-teal/10 text-brand-teal rounded-lg cursor-pointer hover:bg-brand-teal/20 transition-colors"
+                    >
+                      {language === "ar" ? "كامل المبلغ" : "Full Amount"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-col sm:flex-row justify-end gap-2 pt-4 border-t border-slate-100 dark:border-slate-800/40">
+                <button
+                  type="button"
+                  onClick={() => setRecoverDueId(null)}
+                  className="px-4 py-2 text-xs font-bold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors cursor-pointer"
+                >
+                  {language === "ar" ? "إلغاء" : "Cancel"}
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const amount = Number(recoverDueAmount);
+                    if (amount > 0 && recoverDueId) {
+                      await recoverDue(recoverDueId, amount);
+                      setRecoverDueId(null);
+                    }
+                  }}
+                  disabled={!recoverDueAmount || Number(recoverDueAmount) <= 0}
+                  className="px-4 py-2 bg-brand-teal text-white text-xs font-bold rounded-xl shadow-lg shadow-brand-teal/20 hover:opacity-90 disabled:opacity-50 transition-all cursor-pointer"
+                >
+                  {language === "ar" ? "تأكيد الاسترداد" : "Confirm Recovery"}
+                </button>
               </div>
             </motion.div>
           </div>

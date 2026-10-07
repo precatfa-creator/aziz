@@ -92,6 +92,11 @@ export const translations = {
     successExpenseAdded: "تم إضافة سجل المصروف بنجاح",
     successExpenseUpdated: "تم تحديث سجل المصروف بنجاح",
     successExpenseDeleted: "تم حذف سجل المصروف بنجاح",
+    refundAction: "استرداد المبلغ",
+    unrefundAction: "إلغاء الاسترداد",
+    refundedStatus: "مصروف مسترد",
+    refundTooltip: "استرداد قيمة العملية وإرجاعها للمحفظة",
+    refundsTab: "الاستردادات",
 
     // Future Purchases
     purchasesTitle: "المشتريات القادمة (قائمة الأمنيات)",
@@ -294,6 +299,11 @@ export const translations = {
     successExpenseAdded: "Expense logged successfully",
     successExpenseUpdated: "Expense updated successfully",
     successExpenseDeleted: "Expense deleted successfully",
+    refundAction: "Refund",
+    unrefundAction: "Undo Refund",
+    refundedStatus: "Refunded",
+    refundTooltip: "Mark as refunded and return funds to wallet",
+    refundsTab: "Refunds",
 
     // Future Purchases
     purchasesTitle: "Upcoming Purchases (Wishlist)",

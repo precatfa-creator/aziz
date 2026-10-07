@@ -5,20 +5,27 @@
 
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
+import { authHeader } from '../supabase';
 import { 
   BarChart3, 
   Download, 
-  Sparkles, 
+  BrainCircuit, 
   Calendar, 
+  ArrowRightLeft,
   TrendingUp, 
   TrendingDown, 
   FileSpreadsheet, 
   HelpCircle,
   Clock,
   Briefcase,
-  AlertCircle
+  AlertCircle,
+  Send
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import { buildLedgerContext } from '../lib/aiContext';
+import { trimChatHistory, type ChatTurn } from '../lib/chatHistory';
+import { apiUrl } from '../lib/apiUrl';
+import { isSpending } from '../lib/walletBalance';
 
 export const Reports: React.FC = () => {
   const { 
@@ -40,10 +47,11 @@ export const Reports: React.FC = () => {
   const [activeGrouping, setActiveGrouping] = useState<'week' | 'month' | 'year'>('month');
   const [activeCurrency, setActiveCurrency] = useState<'LYD' | 'USD'>('LYD');
 
-  // AI Advisor States
+  // AI Advisor States — one-shot advice and chat replies share a single thread.
   const [aiLoading, setAiLoading] = useState(false);
-  const [aiResponse, setAiResponse] = useState<string | null>(null);
+  const [aiMessages, setAiMessages] = useState<ChatTurn[]>([]);
   const [aiError, setAiError] = useState<string | null>(null);
+  const [chatInput, setChatInput] = useState('');
 
   // Time Utility: Get week number from date
   const getWeekNumber = (dStr: string) => {
@@ -60,36 +68,41 @@ export const Reports: React.FC = () => {
   const getAggregatedData = () => {
     const reportList: Record<string, { income: number; expense: number; txs: any[] }> = {};
 
-    // Inward Incomes
-    incomes.filter(i => i.currency === activeCurrency).forEach(inc => {
-      let groupKey = inc.date.substring(0, 4); // default year
+    const transferInLegs = new Map(
+      incomes.filter(inc => inc.transferId).map(inc => [inc.transferId as string, inc]),
+    );
+    const pairedTransferIds = new Set(
+      expenses.filter(exp => exp.transferId).map(exp => exp.transferId as string),
+    );
+    const transactions = [
+      ...incomes
+        .filter(inc => !inc.transferId || !pairedTransferIds.has(inc.transferId))
+        .map(inc => ({ ...inc, type: 'income' as const })),
+      ...expenses.map(exp => ({
+        ...exp,
+        type: 'expense' as const,
+        transferPair: exp.transferId ? transferInLegs.get(exp.transferId) : undefined,
+      })),
+    ].filter(tx =>
+      tx.currency === activeCurrency ||
+      ('transferPair' in tx && tx.transferPair?.currency === activeCurrency),
+    );
+
+    transactions.forEach(tx => {
+      let groupKey = tx.date.substring(0, 4);
       if (activeGrouping === 'month') {
-        groupKey = inc.date.substring(0, 7); // YYYY-MM
+        groupKey = tx.date.substring(0, 7);
       } else if (activeGrouping === 'week') {
-        groupKey = getWeekNumber(inc.date);
+        groupKey = getWeekNumber(tx.date);
       }
 
       if (!reportList[groupKey]) {
         reportList[groupKey] = { income: 0, expense: 0, txs: [] };
       }
-      reportList[groupKey].income += inc.amount;
-      reportList[groupKey].txs.push({ ...inc, type: 'income' });
-    });
 
-    // Outward Expenses
-    expenses.filter(e => e.currency === activeCurrency).forEach(exp => {
-      let groupKey = exp.date.substring(0, 4);
-      if (activeGrouping === 'month') {
-        groupKey = exp.date.substring(0, 7);
-      } else if (activeGrouping === 'week') {
-        groupKey = getWeekNumber(exp.date);
-      }
-
-      if (!reportList[groupKey]) {
-        reportList[groupKey] = { income: 0, expense: 0, txs: [] };
-      }
-      reportList[groupKey].expense += exp.amount;
-      reportList[groupKey].txs.push({ ...exp, type: 'expense' });
+      if (tx.type === 'income' && !tx.transferId) reportList[groupKey].income += tx.amount;
+      if (tx.type === 'expense' && isSpending(tx)) reportList[groupKey].expense += tx.amount;
+      reportList[groupKey].txs.push(tx);
     });
 
     return Object.entries(reportList)
@@ -116,8 +129,23 @@ export const Reports: React.FC = () => {
     let csvContent = '\uFEFF' + headers; // Add BOM for excel Arabic encoding
 
     const allRecords = [
-      ...incomes.map(i => ({ ...i, type: language === 'ar' ? 'إيراد' : 'Income' })),
-      ...expenses.map(e => ({ ...e, type: language === 'ar' ? 'مصروف' : 'Expense' }))
+      ...incomes.map(i => ({
+        ...i,
+        type: i.transferId
+          ? (language === 'ar' ? 'تحويل وارد' : 'Transfer in')
+          : (language === 'ar' ? 'إيراد' : 'Income'),
+      })),
+      // Three outcomes, not two: `isSpending` is false for a withdrawal and for
+      // a transfer alike, and labelling an exchange "cash withdrawal" would
+      // describe the wrong event in the user's own export.
+      ...expenses.map(e => ({
+        ...e,
+        type: e.transferId
+          ? (language === 'ar' ? 'تحويل صادر' : 'Transfer out')
+          : !isSpending(e)
+            ? (language === 'ar' ? 'سحب نقدي' : 'Cash withdrawal')
+            : (language === 'ar' ? 'مصروف' : 'Expense'),
+      }))
     ].sort((x, y) => x.date.localeCompare(y.date));
 
     allRecords.forEach(rec => {
@@ -140,38 +168,75 @@ export const Reports: React.FC = () => {
     document.body.removeChild(link);
   };
 
-  // ASK AI ADVISOR SERVER-SIDE TRIGGER (Conforming strictly to full-stack Gemini instructions)
-  const triggerAiAdvisory = async () => {
+  // Single call path for both the one-shot advice button and the chat box.
+  // `messages` present => chat mode server-side; absent => original advice.
+  const callAdvisor = async (messages?: ChatTurn[]) => {
     setAiLoading(true);
-    setAiResponse(null);
     setAiError(null);
 
+    const currencyIncomes = incomes.filter(i => i.currency === activeCurrency && !i.transferId);
+    // The advisor is asked how much is being spent; a withdrawal is not spending
+    // and would otherwise read as an extra month of outgoings.
+    const currencyExpenses = expenses.filter(e => e.currency === activeCurrency && isSpending(e));
+
     try {
-      const response = await fetch('/api/ai/advise', {
+      const response = await fetch(apiUrl('/api/ai/advise'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
         body: JSON.stringify({
-          incomes: incomes.filter(i => i.currency === activeCurrency),
-          expenses: expenses.filter(e => e.currency === activeCurrency),
+          // The server only sums these — send amounts, not whole rows, so ids
+          // and timestamps never cross the wire. Detail goes via `ledger`.
+          incomes: currencyIncomes.map(i => ({ amount: i.amount })),
+          expenses: currencyExpenses.map(e => ({ amount: e.amount })),
           jamiyaCount: savingsGroups.filter(g => !g.isArchived).length,
           wishlistCount: plannedPurchases.filter(p => !p.isPurchased).length,
           language,
-          defaultCurrency: activeCurrency
+          defaultCurrency: activeCurrency,
+          ...(messages
+            ? {
+                messages,
+                ledger: buildLedgerContext(currencyIncomes, currencyExpenses, categories, language),
+              }
+            : {}),
         }),
       });
 
-      const resData = await response.json();
-      if (!response.ok) {
-        throw new Error(resData.error || 'Server rejected requesting advisor.');
+      // The endpoint isn't there at all under plain `vite dev`/`vite preview`,
+      // which used to surface as a bare "Unexpected end of JSON input".
+      const raw = await response.text();
+      let resData: any = null;
+      try {
+        resData = raw ? JSON.parse(raw) : null;
+      } catch {
+        throw new Error(
+          `${language === 'ar' ? 'رد غير صالح من الخادم' : 'Invalid server response'} (HTTP ${response.status}): ${raw.slice(0, 120) || (language === 'ar' ? 'رد فارغ' : 'empty body')}`,
+        );
+      }
+      if (!response.ok || !resData) {
+        throw new Error(
+          resData?.error ||
+            `${language === 'ar' ? 'رفض الخادم الطلب' : 'Server rejected the request'} (HTTP ${response.status})`,
+        );
       }
 
-      setAiResponse(resData.advice);
+      setAiMessages(prev => [...(messages ? prev : []), { role: 'model', text: resData.advice }]);
     } catch (err: any) {
       console.error(err);
       setAiError(err.message || 'Failed connecting with AI Advisor.');
     } finally {
       setAiLoading(false);
     }
+  };
+
+  const triggerAiAdvisory = () => callAdvisor();
+
+  const sendChat = () => {
+    const text = chatInput.trim();
+    if (!text || aiLoading) return;
+    const next = trimChatHistory(aiMessages, text);
+    setAiMessages(prev => [...prev, { role: 'user' as const, text }]);
+    setChatInput('');
+    callAdvisor(next);
   };
 
   return (
@@ -202,7 +267,7 @@ export const Reports: React.FC = () => {
         <div className="flex justify-between items-start gap-4">
           <div className="space-y-1">
             <h3 className="font-exrabold text-sm sm:text-base text-emerald-400 flex items-center gap-2">
-              <Sparkles className="w-5 h-5 animate-pulse" />
+              <BrainCircuit className="w-5 h-5 animate-pulse" />
               {language === 'ar' ? 'زاوية عزيز الفكرية | مستشارك المالي' : "Aziz's Advisor Corner"}
             </h3>
             <p className="text-xs text-slate-400 max-w-xl">
@@ -217,7 +282,7 @@ export const Reports: React.FC = () => {
             disabled={aiLoading}
             className="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white font-black text-xs rounded-xl shadow-lg disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
           >
-            <Sparkles className="w-3.5 h-3.5" />
+            <BrainCircuit className="w-3.5 h-3.5" />
             <span>{aiLoading ? (language === 'ar' ? 'تحليل...' : 'Drafting...') : (language === 'ar' ? 'استشارة فورية' : 'Ask Advisor')}</span>
           </button>
         </div>
@@ -234,14 +299,50 @@ export const Reports: React.FC = () => {
           </div>
         )}
 
-        {/* AI Returns rendering with Markdown support */}
-        {aiResponse && (
-          <div className="p-5 bg-white/5 border border-white/10 rounded-2xl text-xs sm:text-sm text-slate-200 space-y-2 animate-in fade-in duration-300">
-            <div className="markdown-body">
-              <ReactMarkdown>{aiResponse}</ReactMarkdown>
-            </div>
+        {/* Conversation: one-shot advice and chat replies share this thread */}
+        {aiMessages.length > 0 && (
+          <div className="space-y-2 max-h-96 overflow-y-auto">
+            {aiMessages.map((m, i) => (
+              <div
+                key={i}
+                className={
+                  m.role === 'user'
+                    ? 'p-3 bg-emerald-500/15 border border-emerald-500/25 rounded-2xl text-xs sm:text-sm text-emerald-100 ms-auto max-w-[85%] w-fit'
+                    : 'p-5 bg-white/5 border border-white/10 rounded-2xl text-xs sm:text-sm text-slate-200 space-y-2'
+                }
+              >
+                {m.role === 'user' ? (
+                  <span>{m.text}</span>
+                ) : (
+                  <div className="markdown-body">
+                    <ReactMarkdown>{m.text}</ReactMarkdown>
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
         )}
+
+        {/* Ask anything about your own ledger */}
+        <div className="flex items-center gap-2">
+          <input
+            value={chatInput}
+            onChange={e => setChatInput(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') sendChat(); }}
+            placeholder={language === 'ar'
+              ? 'اسأل عن بياناتك… مثلاً: كم صرفت على الطعام هذا الشهر؟'
+              : 'Ask about your data… e.g. how much did I spend on food this month?'}
+            className="flex-1 min-w-0 px-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-xs sm:text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-emerald-500/50"
+          />
+          <button
+            onClick={sendChat}
+            disabled={aiLoading || !chatInput.trim()}
+            className="px-4 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white font-black text-xs rounded-xl shadow-lg disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer flex items-center gap-1.5 flex-shrink-0"
+          >
+            <Send className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">{language === 'ar' ? 'إرسال' : 'Send'}</span>
+          </button>
+        </div>
 
         {/* Error message */}
         {aiError && (
@@ -369,6 +470,7 @@ export const Reports: React.FC = () => {
                 <div className="divide-y divide-slate-100 dark:divide-slate-800 max-h-60 overflow-y-auto">
                   {grp.txs.map((tx: any) => {
                     const isInc = tx.type === 'income';
+                    const transferPair = tx.transferPair;
                     return (
                       <div key={tx.id} className="p-4 flex justify-between items-center text-xs hover:bg-slate-55/10">
                         <div className="space-y-0.5">
@@ -376,6 +478,14 @@ export const Reports: React.FC = () => {
                             <span className="font-semibold text-slate-900 dark:text-white" dir="auto">
                               {tx.title}
                             </span>
+                            {transferPair && (
+                              <span className="inline-flex items-center gap-1 text-[9px] font-black text-brand-teal bg-brand-teal/5 dark:bg-brand-teal/10 px-1.5 py-0.5 rounded border border-brand-teal/15">
+                                <ArrowRightLeft className="w-3 h-3" aria-hidden="true" />
+                                {transferPair.currency === tx.currency
+                                  ? language === 'ar' ? 'تحويل' : 'Transfer'
+                                  : language === 'ar' ? 'صرافة' : 'Exchange'}
+                              </span>
+                            )}
                             {tx.isHistorical && (
                               <span className="text-[9px] font-bold bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 px-1.5 py-0.5 rounded border border-amber-250/20 dark:border-amber-900/10">
                                 {language === 'ar' ? 'بيانات قديمة/مستوردة' : 'Imported'}
@@ -392,9 +502,17 @@ export const Reports: React.FC = () => {
                           </span>
                         </div>
 
-                        <span className={`font-black ${isInc ? 'text-emerald-500' : 'text-slate-800 dark:text-slate-205'}`}>
-                          {isInc ? '+' : '-'} {tx.amount.toLocaleString()} {activeCurrency === 'LYD' ? t.lydSymbol : t.usdSymbol}
-                        </span>
+                        {transferPair ? (
+                          <span className="font-black text-brand-teal flex items-center gap-1.5 whitespace-nowrap" style={{ direction: 'ltr' }}>
+                            {tx.amount.toLocaleString()} {tx.currency}
+                            <ArrowRightLeft className="w-3.5 h-3.5" aria-hidden="true" />
+                            {transferPair.amount.toLocaleString()} {transferPair.currency}
+                          </span>
+                        ) : (
+                          <span className={`font-black ${isInc ? 'text-emerald-500' : 'text-slate-800 dark:text-slate-205'}`}>
+                            {isInc ? '+' : '-'} {tx.amount.toLocaleString()} {tx.currency === 'LYD' ? t.lydSymbol : t.usdSymbol}
+                          </span>
+                        )}
                       </div>
                     );
                   })}

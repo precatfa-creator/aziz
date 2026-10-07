@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
-import { Plus, Search, Calendar, Trash2, Edit2, X, CreditCard, Tag, Sparkles } from 'lucide-react';
+import { Plus, Search, Calendar, Trash2, Edit2, X, CreditCard, Tag } from 'lucide-react';
 import { ConfirmModal } from './ConfirmModal';
 
 export const ExpenseManager: React.FC = () => {
@@ -17,6 +17,7 @@ export const ExpenseManager: React.FC = () => {
     addExpense, 
     updateExpense, 
     deleteExpense,
+    toggleExpenseRefund,
     addCategory 
   } = useApp();
 
@@ -157,7 +158,7 @@ export const ExpenseManager: React.FC = () => {
   const handleEditClick = (exp: any) => {
     setEditingId(exp.id);
     setTitle(exp.title);
-    setAmount(exp.amount.toString());
+    setAmount((exp.isRefunded ? (exp.originalAmount || exp.amount) : exp.amount).toString());
     setCurrency(exp.currency);
     setDate(exp.date);
     setSelectedCatId(exp.categoryId);
@@ -494,11 +495,23 @@ export const ExpenseManager: React.FC = () => {
 
                   {/* Pricing and Actions */}
                   <div className="flex sm:flex-col justify-between sm:justify-center items-center sm:items-end gap-3 self-stretch sm:self-auto pt-3 sm:pt-0 border-t sm:border-t-0 border-slate-100 dark:border-slate-800">
-                    <span className="font-black text-sm sm:text-base text-slate-900 dark:text-white">
-                      - {exp.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })} {exp.currency === 'LYD' ? t.lydSymbol : t.usdSymbol}
+                    <span className={`font-black text-sm sm:text-base text-slate-900 dark:text-white ${exp.isRefunded ? 'line-through decoration-rose-500 decoration-2' : ''}`}>
+                      - {(exp.isRefunded ? (exp.originalAmount || 0) : exp.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })} {exp.currency === 'LYD' ? t.lydSymbol : t.usdSymbol}
                     </span>
+                    {exp.isRefunded && (
+                       <span className="text-[10px] font-black text-emerald-500 bg-emerald-50 dark:bg-emerald-950/20 px-2 py-0.5 rounded-full mt-0.5 border border-emerald-100 dark:border-emerald-900/30">
+                         {t.refundedStatus}
+                       </span>
+                    )}
 
                     <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => toggleExpenseRefund(exp.id, !exp.isRefunded)}
+                        className={`p-1.5 rounded-lg transition-colors cursor-pointer ${exp.isRefunded ? 'bg-amber-50 text-amber-500 hover:bg-amber-100 dark:bg-amber-950/30 dark:hover:bg-amber-900/50' : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 hover:text-amber-500'}`}
+                        title={exp.isRefunded ? t.unrefundAction : t.refundAction}
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+                      </button>
                       <button
                         onClick={() => handleEditClick(exp)}
                         className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 rounded-lg transition-colors cursor-pointer"

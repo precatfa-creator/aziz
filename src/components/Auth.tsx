@@ -5,7 +5,8 @@
 
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { 
+import { LoginModal } from './LoginModal';
+import {
   Wallet, 
   Globe, 
   Shield, 
@@ -34,10 +35,11 @@ import {
 } from 'lucide-react';
 
 export const Auth: React.FC = () => {
-  const { loginWithGoogle, language, setLanguage, t } = useApp();
+  const { language, setLanguage, t } = useApp();
   const [activePreviewTab, setActivePreviewTab] = useState<'dashboard' | 'expenses' | 'jamiya' | 'purchases' | 'reports'>('dashboard');
   const [previewCurrency, setPreviewCurrency] = useState<'LYD' | 'USD'>('LYD');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [loginModalOpen, setLoginModalOpen] = useState(false);
 
   // Scroll handler helper to smooth scroll to landing IDs
   const scrollToId = (id: string) => {
@@ -59,7 +61,7 @@ export const Auth: React.FC = () => {
       heroTitle: "رتّب دخلك، مصروفاتك، وجمعياتك في مكان واحد",
       heroSecondary: "مع عزيز، قراراتك المالية تصبح أوضح",
       heroSubtitle: "عزيز يساعدك على تسجيل دخلك ومصاريفك، متابعة مشترياتك القادمة، إدارة الجمعيات التشاركية، ومراقبة أموالك بالدينار الليبي والدولار بطريقة سهلة وآمنة.",
-      ctaGoogle: "ابدأ مجاناً باستخدام Google",
+      ctaGoogle: "تسجيل الدخول",
       ctaWatch: "شاهد كيف يعمل عزيز",
       currencyLyd: "رؤية الأرصدة بـ د.ل",
       currencyUsd: "رؤية الأرصدة بـ $",
@@ -217,7 +219,7 @@ export const Auth: React.FC = () => {
       ],
       finalCtaTitle: "ابدأ تنظيم أمورك المالية بطريقة ذكية اليوم",
       finalCtaSubtitle: "خطوة واحدة تضمن لك راحة البال ومراقبة مصروفاتك بشكل مرتب وبسيط.",
-      finalCtaBtn: "تسجيل الدخول الآمن بواسطة Google",
+      finalCtaBtn: "تسجيل الدخول الآمن",
       finalCtaNote: "مجاني وبسيط للبدء — لا توجد أي بطاقات مصرفية مطلوبة.",
       rights: "جميع الحقوق محفوظة لعزيز © 2026. رتب دخلك ومستقبلك بحكمة.",
       aboutTitle: "عزيز: رفيقك المالي العربي",
@@ -232,7 +234,7 @@ export const Auth: React.FC = () => {
       heroTitle: "Host your income, expenses, and savings groups in one place",
       heroSecondary: "With Aziz, your daily financial choices become clearer",
       heroSubtitle: "Aziz helps you manage your streams of income, logs daily expenditures, plans long-term wishlist targets, hosts rotating collaborative savings circles, and keeps dual cash tabs in Libyan Dinars & USD.",
-      ctaGoogle: "Start Free with Google Sign In",
+      ctaGoogle: "Sign In",
       ctaWatch: "See How It Works",
       currencyLyd: "Display in LYD (د.ل)",
       currencyUsd: "Display in USD ($)",
@@ -390,7 +392,7 @@ export const Auth: React.FC = () => {
       ],
       finalCtaTitle: "Take Control of Your Personal Wealth Today with Aziz",
       finalCtaSubtitle: "A single clean click connects you to modern income monitors, savings coordinators, and smart reports.",
-      finalCtaBtn: "Embark safely via Google",
+      finalCtaBtn: "Secure Sign In",
       finalCtaNote: "Completely free to start — no payment credentials, bank cards or subscription required.",
       rights: "All Rights Reserved to Aziz © 2026. Conscious wealth building.",
       aboutTitle: "Aziz: Your Friendly Financial Assistant",
@@ -410,9 +412,7 @@ export const Auth: React.FC = () => {
           
           {/* Brand Logo */}
           <div className="flex items-center gap-2 cursor-pointer" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
-            <div className="bg-emerald-500 text-white p-2.5 rounded-2xl flex items-center justify-center shadow-md shadow-emerald-500/20">
-              <Coins className="w-5 h-5" />
-            </div>
+            <img src="/logo-mark.png" alt="Aziz Logo" className="w-10 h-10 object-contain dark:invert" />
             <span className="font-extrabold text-xl text-slate-900 dark:text-white transition-colors tracking-tight flex items-center gap-1.5 font-sans">
               <span>{language === 'ar' ? 'عزيز' : 'Aziz'}</span>
               <span className="text-emerald-500 font-bold">|</span>
@@ -467,7 +467,7 @@ export const Auth: React.FC = () => {
 
             {/* Quick App Login */}
             <button 
-              onClick={loginWithGoogle}
+              onClick={() => setLoginModalOpen(true)}
               className="px-5 py-2.5 bg-slate-900 dark:bg-white text-white dark:text-slate-950 hover:bg-slate-800 dark:hover:bg-slate-100 rounded-2xl font-bold text-sm shadow-md shadow-slate-900/10 transition-all cursor-pointer hover:-translate-y-0.5"
             >
               {currentLangText.startNow}
@@ -523,7 +523,7 @@ export const Auth: React.FC = () => {
             </button>
 
             <button 
-              onClick={loginWithGoogle}
+              onClick={() => setLoginModalOpen(true)}
               className="w-full py-3.5 bg-emerald-500 text-white rounded-2xl font-bold text-center shadow-lg shadow-emerald-500/10 cursor-pointer"
             >
               {currentLangText.finalCtaBtn}
@@ -560,15 +560,10 @@ export const Auth: React.FC = () => {
             {/* Action Buttons */}
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4 pt-4">
               <button
-                onClick={loginWithGoogle}
+                onClick={() => setLoginModalOpen(true)}
                 className="flex items-center justify-center gap-3 px-6 py-4 bg-emerald-500 hover:bg-emerald-600 text-white font-extrabold rounded-2xl shadow-lg shadow-emerald-500/20 hover:-translate-y-0.5 transition-all text-base cursor-pointer"
               >
-                <svg className="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24">
-                  <path
-                    fill="#FFFFFF"
-                    d="M12.24 10.285V14.4h6.887c-.648 2.41-2.519 4.114-5.136 4.114A5.99 5.99 0 0 1 7.99 12.5a5.99 5.99 0 0 1 6.002-6.015c1.614 0 3.084.623 4.194 1.638l3.221-3.22C19.458 3.12 16.03 2 12 2 6.477 2 2 6.477 2 12s4.477 10 10 10c5.5 0 10-4.5 10-10a9.7 9.7 0 0 0-.25-2.285H12.24Z"
-                  />
-                </svg>
+                <Lock className="w-5 h-5 flex-shrink-0" />
                 <span>{currentLangText.ctaGoogle}</span>
               </button>
 
@@ -1288,7 +1283,7 @@ export const Auth: React.FC = () => {
               </p>
             </div>
             <button 
-              onClick={loginWithGoogle}
+              onClick={() => setLoginModalOpen(true)}
               className="px-5 py-2 bg-emerald-500 hover:bg-emerald-600 text-white font-extrabold rounded-xl text-xs flex items-center gap-1.5 transition-all cursor-pointer shadow-md shadow-emerald-500/10"
             >
               <span>{currentLangText.ctaGoogle}</span>
@@ -1326,7 +1321,7 @@ export const Auth: React.FC = () => {
 
               <div className="pt-2">
                 <button
-                  onClick={loginWithGoogle}
+                  onClick={() => setLoginModalOpen(true)}
                   className="px-6 py-4 bg-slate-900 dark:bg-white text-white dark:text-slate-950 hover:bg-slate-800 dark:hover:bg-slate-100 font-black rounded-2xl shadow-lg shadow-slate-900/15 cursor-pointer text-sm"
                 >
                   {currentLangText.jamiyaExplanationBtn}
@@ -1472,15 +1467,10 @@ export const Auth: React.FC = () => {
 
           <div className="flex flex-col items-center gap-4">
             <button
-              onClick={loginWithGoogle}
+              onClick={() => setLoginModalOpen(true)}
               className="px-8 py-5 bg-emerald-500 hover:bg-emerald-600 text-white font-extrabold rounded-2.5xl flex items-center gap-3 shadow-xl shadow-emerald-500/15 hover:-translate-y-0.5 transition-all text-base sm:text-lg cursor-pointer cursor-pointer"
             >
-              <svg className="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24">
-                <path
-                  fill="#FFFFFF"
-                  d="M12.24 10.285V14.4h6.887c-.648 2.41-2.519 4.114-5.136 4.114A5.99 5.99 0 0 1 7.99 12.5a5.99 5.99 0 0 1 6.002-6.015c1.614 0 3.084.623 4.194 1.638l3.221-3.22C19.458 3.12 16.03 2 12 2 6.477 2 2 6.477 2 12s4.477 10 10 10c5.5 0 10-4.5 10-10a9.7 9.7 0 0 0-.25-2.285H12.24Z"
-                />
-              </svg>
+              <Lock className="w-5 h-5 flex-shrink-0" />
               <span>{currentLangText.finalCtaBtn}</span>
             </button>
             <p className="text-xs text-slate-400 font-bold leading-relaxed block">
@@ -1511,6 +1501,7 @@ export const Auth: React.FC = () => {
         </div>
       </footer>
 
+      <LoginModal isOpen={loginModalOpen} onClose={() => setLoginModalOpen(false)} />
     </div>
   );
 };

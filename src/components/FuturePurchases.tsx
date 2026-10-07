@@ -259,11 +259,49 @@ export const FuturePurchases: React.FC = () => {
   });
 
   return (
-    <div className="space-y-6 animate-fade-in pb-16 font-sans">
+    <div 
+      className="space-y-6 animate-fade-in pb-16 font-sans"
+      onTouchStart={(e) => {
+        e.stopPropagation();
+        const touch = e.touches[0];
+        (e.currentTarget as any).startX = touch.clientX;
+        (e.currentTarget as any).startY = touch.clientY;
+      }}
+      onTouchMove={(e) => e.stopPropagation()}
+      onTouchEnd={(e) => {
+        e.stopPropagation();
+        const startX = (e.currentTarget as any).startX;
+        const startY = (e.currentTarget as any).startY;
+        if (startX === undefined || startY === undefined) return;
+        
+        const touchEnd = e.changedTouches[0].clientX;
+        const touchEndY = e.changedTouches[0].clientY;
+        
+        const diffX = startX - touchEnd;
+        const diffY = startY - touchEndY;
+        
+        if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 40) {
+          const swipeableTabs = ['overview', 'history'] as const;
+          const currentIndex = swipeableTabs.indexOf(activeSubTab);
+          if (currentIndex !== -1) {
+            const isRtl = language === 'ar';
+            const goNext = isRtl ? diffX < 0 : diffX > 0;
+            
+            if (goNext && currentIndex + 1 < swipeableTabs.length) {
+              setActiveSubTab(swipeableTabs[currentIndex + 1]);
+            } else if (!goNext && currentIndex - 1 >= 0) {
+              setActiveSubTab(swipeableTabs[currentIndex - 1]);
+            }
+          }
+        }
+      }}
+    >
       
       {/* Top navigation tabs */}
       <div className="flex justify-center mt-2 mb-6">
-        <div className="inline-flex p-1.5 bg-slate-100/70 dark:bg-slate-900/60 backdrop-blur-md rounded-2xl border border-slate-200/40 dark:border-slate-800/60 w-full max-w-md relative shadow-sm">
+        <div 
+          className="inline-flex p-1.5 bg-slate-100/70 dark:bg-slate-900/60 backdrop-blur-md rounded-2xl border border-slate-200/40 dark:border-slate-800/60 w-full max-w-md relative shadow-sm"
+        >
           <button
             type="button"
             onClick={() => setActiveSubTab('overview')}

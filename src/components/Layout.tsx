@@ -3,7 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { Capacitor } from '@capacitor/core';
+import { App as CapacitorApp } from '@capacitor/app';
 import { useApp } from '../context/AppContext';
 import { Sidebar } from './Sidebar';
 import { Auth } from './Auth';
@@ -16,7 +18,7 @@ import { Reports } from './Reports';
 import { Settings } from './Settings';
 import { WalletManager } from './WalletManager';
 import { TrashPage } from './TrashPage';
-import { Coins, Loader2, Bell, Info, Trash2, CheckCheck, Languages } from 'lucide-react';
+import { Coins, Loader2, Bell, Info, Trash2, CheckCheck, Languages, Sun, Moon } from 'lucide-react';
 import { AboutModal } from './AboutModal';
 import { ProductTour } from './ProductTour';
 
@@ -25,6 +27,8 @@ export const Layout: React.FC = () => {
     user, 
     loading, 
     language, 
+    theme,
+    toggleTheme,
     profile, 
     t, 
     notifications,
@@ -97,15 +101,47 @@ export const Layout: React.FC = () => {
 
   const unreadCount = notifications ? notifications.filter(n => !n.isRead).length : 0;
 
-  // 1. Interactive heartbeat loader while Firebase is fetching user sessions
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+
+    let disposed = false;
+    let removeListener: (() => Promise<void>) | undefined;
+
+    void CapacitorApp.addListener('backButton', () => {
+      if (showNotificationDropdown) {
+        setShowNotificationDropdown(false);
+      } else if (showAboutModal) {
+        setShowAboutModal(false);
+      } else if (currentTab !== 'dashboard') {
+        setCurrentTab('dashboard');
+      } else {
+        void CapacitorApp.exitApp();
+      }
+    }).then((handle) => {
+      if (disposed) {
+        void handle.remove();
+      } else {
+        removeListener = () => handle.remove();
+      }
+    });
+
+    return () => {
+      disposed = true;
+      void removeListener?.();
+    };
+  }, [currentTab, showAboutModal, showNotificationDropdown]);
+
+  // 1. Interactive heartbeat loader while Supabase is fetching the user session
   if (loading) {
     return (
-      <div className="min-h-screen w-full flex flex-col justify-center items-center bg-slate-50 dark:bg-slate-950 font-sans gap-4 animate-fade-in text-center p-6">
-        <div className="w-14 h-14 bg-emerald-500 rounded-2xl flex items-center justify-center animate-bounce shadow-xl shadow-emerald-500/10">
-          <Coins className="w-6 h-6 text-white" />
-        </div>
-        <div className="space-y-1">
-          <h2 className="font-exrabold text-base text-slate-800 dark:text-slate-100">
+      <div className="min-h-screen w-full flex flex-col justify-center items-center bg-slate-50 dark:bg-slate-950 font-sans gap-6 text-center p-6">
+        {/* Already assembled: the inline #boot loader in index.html plays the
+            slice assembly before React mounts. Replaying it here would show the
+            same intro twice and make the wait feel twice as long. */}
+        <div className="relative w-28 h-28 loader-mark" role="img" aria-label="Aziz" />
+        <div className="relative w-44 h-[3px] rounded-full overflow-hidden bg-slate-400/20 loader-sweep loader-fade-in" />
+        <div className="space-y-1 loader-fade-in">
+          <h2 className="font-extrabold text-base text-slate-800 dark:text-slate-100">
             {language === 'ar' ? 'تحميل البيانات بأمان...' : 'Securing local records...'}
           </h2>
           <p className="text-xs text-slate-400">
@@ -160,11 +196,21 @@ export const Layout: React.FC = () => {
     >
       <ProductTour />
       {/* Floating Minimal Header */}
-      <header className="sticky top-0 z-40 bg-white/60 dark:bg-slate-950/60 backdrop-blur-md border-b border-white/40 dark:border-slate-800/60 px-4 sm:px-8 py-3.5 flex items-center justify-between shadow-xs">
-         <div className="flex items-center gap-3">
-           <div className="bg-brand-slate text-white dark:bg-white dark:text-brand-slate p-2 rounded-xl flex items-center justify-center shadow-lg">
-             <Coins className="w-4.5 h-4.5" />
-           </div>
+      <header
+        className="sticky top-0 z-40 bg-white/60 dark:bg-slate-950/60 backdrop-blur-md border-b border-white/40 dark:border-slate-800/60 px-4 sm:px-8 pb-3.5 flex items-center justify-between shadow-xs"
+        style={{ paddingTop: 'calc(0.875rem + env(safe-area-inset-top, 0px))' }}
+      >
+         <button
+           type="button"
+           onClick={() => setCurrentTab('dashboard')}
+           className="flex items-center gap-3 text-start cursor-pointer"
+           aria-label={language === 'ar' ? 'الصفحة الرئيسية' : 'Go to dashboard'}
+         >
+           <img
+             src="/logo-mark.png"
+             alt="App Logo"
+             className="w-9 h-9 object-contain dark:invert"
+           />
            <div>
              <h1 className="font-black text-sm text-slate-900 dark:text-white leading-tight">
                {t.appName}
@@ -173,9 +219,18 @@ export const Layout: React.FC = () => {
                {language === 'ar' ? 'الرفيق المالي' : 'Finance Engine'}
              </p>
            </div>
-         </div>
+         </button>
          
          <div className="flex items-center gap-3 sm:gap-4">
+            {/* Theme Switcher */}
+            <button 
+              onClick={toggleTheme}
+              className="p-2 text-slate-400 hover:text-brand-slate dark:hover:text-white transition-colors cursor-pointer flex items-center justify-center bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800/80 rounded-xl"
+              title={language === 'ar' ? (theme === 'dark' ? 'الوضع الفاتح' : 'الوضع الداكن') : (theme === 'dark' ? 'Light Mode' : 'Dark Mode')}
+            >
+              {theme === 'dark' ? <Sun className="w-4 h-4 text-emerald-500" /> : <Moon className="w-4 h-4 text-emerald-500" />}
+            </button>
+
             {/* Language Switcher */}
             <button 
               onClick={() => setLanguage(language === 'ar' ? 'en' : 'ar')}
