@@ -30,6 +30,7 @@ import {
   Pie, 
   Cell 
 } from 'recharts';
+import { isSpending, walletTotals } from '../lib/walletBalance';
 
 export interface DashboardProps {
   setCurrentTab?: (tab: string) => void;
@@ -53,6 +54,17 @@ export const Dashboard: React.FC<DashboardProps> = ({ setCurrentTab }) => {
 
   const incomes = allIncomes.filter(i => !i.isHistorical);
   const expenses = allExpenses.filter(e => !e.isHistorical);
+  // Balances need every row; the income-vs-expense stats need only the rows that
+  // are really money. A cash withdrawal changes the form of money, and a
+  // transfer or exchange changes which wallet or currency holds it — neither
+  // earns or spends anything, so both are excluded from the stats and from
+  // neither balance.
+  const spending = expenses.filter(isSpending);
+  // Deliberately `!transferId` rather than the stricter `isEarning`: opening
+  // balances have always counted toward the income stat here, and dropping them
+  // would restate every past month. That is a separate call to make — this
+  // change only removes the movements, which never belonged in the number.
+  const earnings = incomes.filter((i) => !i.transferId);
 
   const [activeCurrency, setActiveCurrency] = useState<'LYD' | 'USD' | 'MERGED'>('MERGED');
   
@@ -84,11 +96,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ setCurrentTab }) => {
     let expVal = 0;
 
     if (activeCurrency === 'MERGED') {
-      incVal = incomes.reduce((acc, curr) => acc + getMergedLYD(curr.amount, curr.currency), 0);
-      expVal = expenses.reduce((acc, curr) => acc + getMergedLYD(curr.amount, curr.currency), 0);
+      incVal = earnings.reduce((acc, curr) => acc + getMergedLYD(curr.amount, curr.currency), 0);
+      expVal = spending.reduce((acc, curr) => acc + getMergedLYD(curr.amount, curr.currency), 0);
     } else {
-      incVal = incomes.filter(i => i.currency === activeCurrency).reduce((acc, curr) => acc + curr.amount, 0);
-      expVal = expenses.filter(i => i.currency === activeCurrency).reduce((acc, curr) => acc + curr.amount, 0);
+      incVal = earnings.filter(i => i.currency === activeCurrency).reduce((acc, curr) => acc + curr.amount, 0);
+      expVal = spending.filter(i => i.currency === activeCurrency).reduce((acc, curr) => acc + curr.amount, 0);
     }
 
     return {
@@ -104,20 +116,18 @@ export const Dashboard: React.FC<DashboardProps> = ({ setCurrentTab }) => {
     
     wallets.forEach(w => {
       if (w.isHidden) return; // Exclude hidden wallets
-      
-      const wIncomes = incomes.filter(inc => inc.walletId === w.id && !inc.isOpening);
-      const wExpenses = expenses.filter(exp => exp.walletId === w.id);
-      
-      const sumInc = wIncomes.reduce((acc, curr) => acc + curr.amount, 0);
-      const sumExp = wExpenses.reduce((acc, curr) => acc + curr.amount, 0);
-      
-      const bal = w.initialBalance + sumInc - sumExp;
-      
-      if (w.currency === 'LYD') {
-        sumBalLYD += bal;
-      } else {
-        sumBalUSD += bal;
-      }
+
+      // `total`, not `onCard`: cash withdrawn from a card is still money you own,
+      // so net worth must count it even though the card itself reads zero. And
+      // one bucket per currency the wallet holds, because a wallet that
+      // exchanged part of its balance now contributes to both sides at once.
+      walletTotals(w, incomes, expenses).forEach((bal) => {
+        if (bal.currency === 'LYD') {
+          sumBalLYD += bal.total;
+        } else {
+          sumBalUSD += bal.total;
+        }
+      });
     });
 
     if (activeCurrency === 'MERGED') {
@@ -156,7 +166,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ setCurrentTab }) => {
       else if (i.date.includes('2026')) monthMap[month] = { income: val, expense: 0 };
     });
 
-    expenses.forEach(e => {
+    spending.forEach(e => {
       const month = e.date.substring(0, 7);
       const val = activeCurrency === 'MERGED' ? getMergedLYD(e.amount, e.currency) : (e.currency === activeCurrency ? e.amount : 0);
       if (monthMap[month]) monthMap[month].expense += val;
@@ -182,7 +192,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ setCurrentTab }) => {
   // Recharts: Category Spending Shares
   const getPieChartData = () => {
     const expenseShares: Record<string, number> = {};
-    expenses.forEach(e => {
+    spending.forEach(e => {
       const val = activeCurrency === 'MERGED' ? getMergedLYD(e.amount, e.currency) : (e.currency === activeCurrency ? e.amount : 0);
       if (val > 0) {
         expenseShares[e.categoryId] = (expenseShares[e.categoryId] || 0) + val;

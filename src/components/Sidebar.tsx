@@ -73,11 +73,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, setCurrentTab }) =
   }
 
   return (
-    <div className="fixed bottom-4 md:bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 w-full md:w-auto max-w-full">
+    <div
+      className="fixed left-1/2 -translate-x-1/2 z-50 px-4 w-full md:w-auto max-w-full"
+      style={{ bottom: 'calc(1rem + env(safe-area-inset-bottom, 0px))' }}
+    >
       <nav 
         ref={navRef}
         className="driver-tour-sidebar glass-modal shadow-2xl rounded-[2rem] mx-auto flex items-center justify-start md:justify-center gap-1 sm:gap-2 px-3 py-2.5 overflow-x-auto scrollbar-hide max-w-full border border-white/40 dark:border-slate-800/60 transition-colors"
-        style={{ paddingBottom: 'calc(0.6rem + env(safe-area-inset-bottom))' }}
       >
         {menuItems.map((item) => {
           const Icon = item.icon;

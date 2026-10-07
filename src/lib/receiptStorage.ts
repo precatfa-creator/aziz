@@ -15,6 +15,7 @@
 
 import { supabase } from '../supabase';
 import { isInlineReceipt, receiptEntries, receiptPath } from './receiptImages';
+import { validateReceiptUpload } from './receiptUpload';
 
 export const RECEIPTS_BUCKET = 'receipts';
 
@@ -23,10 +24,11 @@ const SIGNED_URL_TTL_SECONDS = 3600;
 
 /** Uploads one receipt and returns the path to store in image_url. */
 export const uploadReceipt = async (blob: Blob, userId: string): Promise<string> => {
+  const contentType = validateReceiptUpload(blob);
   const path = receiptPath(userId);
   const { error } = await supabase.storage
     .from(RECEIPTS_BUCKET)
-    .upload(path, blob, { contentType: blob.type || 'image/jpeg' });
+    .upload(path, blob, { contentType, upsert: false });
   // upload() reports failure in the result rather than throwing. Swallowing it
   // would save a transaction pointing at an object that was never written.
   if (error) throw error;

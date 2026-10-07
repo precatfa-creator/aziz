@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { ConfirmModal } from "./ConfirmModal";
+import { walletBalance, walletTotals } from "../lib/walletBalance";
 
 interface WalletManagerProps {
   setCurrentTab?: (tab: string) => void;
@@ -30,10 +31,8 @@ export const WalletManager: React.FC<WalletManagerProps> = ({ setCurrentTab }) =
     deleteWallet,
     incomes,
     expenses,
-    addExpense,
-    addIncome,
+    addTransfer,
     categories,
-    addCategory,
     selectedWalletFilter,
     setSelectedWalletFilter
   } = useApp();
@@ -117,19 +116,6 @@ export const WalletManager: React.FC<WalletManagerProps> = ({ setCurrentTab }) =
     setShowTransferForm(false);
   };
 
-  const getOrCreateTransferCategory = async () => {
-    let transferCat = categories.find(c => c.name.includes("تحويل") || c.name.includes("Transfer"));
-    if (transferCat) return transferCat.id;
-
-    const newId = await addCategory(
-        language === 'ar' ? 'تحويل بين المحافظ / Transfer' : 'Transfer / تحويل بين المحافظ',
-        'expense', 
-        'sky',
-        'ArrowRightLeft'
-    );
-    return newId;
-  };
-
   const handleTransferSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setTransferError("");
@@ -144,8 +130,15 @@ export const WalletManager: React.FC<WalletManagerProps> = ({ setCurrentTab }) =
     const toWallet = wallets.find(w => w.id === toWalletId);
 
     if (!fromWallet || !toWallet) return;
+    // Cross-currency wallet-to-wallet moves belong in the exchange tab, which
+    // asks for the rate. Without one there is no honest amount to credit the
+    // destination with, so this form stays same-currency.
     if (fromWallet.currency !== toWallet.currency) {
-      setTransferError(language === 'ar' ? 'يجب أن تكون المحفظتان بنفس العملة. يرجى الموازنة يدوياً أولاً.' : 'Both wallets must have the same currency.');
+      setTransferError(
+        language === 'ar'
+          ? 'المحفظتان بعملتين مختلفتين. استخدم تبويب "صرافة" في المعاملات لتحديد سعر الصرف.'
+          : 'These wallets use different currencies. Use the Exchange tab in Transactions to set a rate.',
+      );
       return;
     }
 
@@ -175,18 +168,25 @@ export const WalletManager: React.FC<WalletManagerProps> = ({ setCurrentTab }) =
     }
 
     try {
-      const catId = await getOrCreateTransferCategory();
       const titleExp = language === 'ar' ? `تحويل مالي إلى ${toWallet.name}` : `Transfer to ${toWallet.name}`;
       const titleInc = language === 'ar' ? `تحويل مالي قادم من ${fromWallet.name}` : `Transfer from ${fromWallet.name}`;
-      
-      const fullDate = `${transferDate}T${transferTime}`;
 
-      await addExpense(
-        numAmount, fromWallet.currency, titleExp, fullDate, catId, transferNotes, "", "medium", fromWallet.id, false
-      );
-      await addIncome(
-        numAmount, toWallet.currency, titleInc, fullDate, catId, transferNotes, "", "medium", toWallet.id, false, "", false
-      );
+      // Was two independent addExpense/addIncome calls: both legs counted as
+      // real spending and real income, and a failure on the second one left the
+      // money having left this wallet and arrived nowhere. addTransfer pairs
+      // them under one id and rolls the first back if the second fails.
+      await addTransfer({
+        fromWalletId: fromWallet.id,
+        toWalletId: toWallet.id,
+        fromAmount: numAmount,
+        toAmount: numAmount,
+        fromCurrency: fromWallet.currency,
+        toCurrency: toWallet.currency,
+        date: `${transferDate}T${transferTime}`,
+        titleOut: titleExp,
+        titleIn: titleInc,
+        notes: transferNotes,
+      });
 
       resetTransferForm();
     } catch (e) {
@@ -238,24 +238,16 @@ export const WalletManager: React.FC<WalletManagerProps> = ({ setCurrentTab }) =
     }
   };
 
-  // Calculate current balance for a wallet
+  // `currentBal` is what the wallet is worth, card plus any cash withdrawn from
+  // it; `totalExpenses` is everything that came off the card, withdrawals
+  // included. `others` carries the wallet's non-primary currencies so the card
+  // can show them without every caller learning about multi-currency.
   const calculateWalletStats = (wallet: any) => {
-    const wIncomes = incomes.filter(
-      (inc) => inc.walletId === wallet.id && inc.currency === wallet.currency && !inc.isOpening,
+    const b = walletBalance(wallet, incomes, expenses);
+    const others = walletTotals(wallet, incomes, expenses).filter(
+      (x) => x.currency !== wallet.currency,
     );
-    const wExpenses = expenses.filter(
-      (exp) => exp.walletId === wallet.id && exp.currency === wallet.currency,
-    );
-
-    const totalIncomes = wIncomes.reduce((acc, curr) => acc + curr.amount, 0);
-    const totalExpenses = wExpenses.reduce((acc, curr) => acc + curr.amount, 0);
-
-    return {
-      currentBal: wallet.initialBalance + totalIncomes - totalExpenses,
-      totalIncomes,
-      totalExpenses,
-      diff: totalIncomes - totalExpenses
-    };
+    return { ...b, others, currentBal: b.total, totalExpenses: b.cardConsumption };
   };
 
   return (
@@ -555,8 +547,13 @@ export const WalletManager: React.FC<WalletManagerProps> = ({ setCurrentTab }) =
       {/* Wallets Grid */}
       {(() => {
         const walletsWithStats = wallets.map((w) => ({ wallet: w, stats: calculateWalletStats(w) }));
-        const activeWallets = walletsWithStats.filter((w) => w.stats.currentBal !== 0);
-        const archivedWallets = walletsWithStats.filter((w) => w.stats.currentBal === 0);
+        // A wallet whose LYD was exchanged into USD reads zero in its primary
+        // currency while still holding money. Archiving it there would file a
+        // funded wallet away as spent.
+        const holdsMoney = (w: (typeof walletsWithStats)[number]) =>
+          w.stats.currentBal !== 0 || w.stats.others.some((o) => o.total !== 0);
+        const activeWallets = walletsWithStats.filter(holdsMoney);
+        const archivedWallets = walletsWithStats.filter((w) => !holdsMoney(w));
 
         const renderWalletCard = ({ wallet, stats }: { wallet: any; stats: any }) => {
           const isNegative = stats.currentBal < 0;
@@ -677,6 +674,42 @@ export const WalletManager: React.FC<WalletManagerProps> = ({ setCurrentTab }) =
                     {wallet.currency}
                   </span>
                 </div>
+
+                {/* A wallet that exchanged part of its balance holds two
+                    currencies at once. Shown only when one exists, so wallets
+                    that never exchanged look exactly as they did. */}
+                {stats.others.filter((o) => o.total !== 0).map((o) => (
+                  <div key={o.currency} className="mt-1.5 flex items-baseline gap-1.5">
+                    <ArrowRightLeft className="w-3 h-3 text-brand-teal self-center shrink-0" aria-hidden="true" />
+                    <span className="text-lg font-black text-brand-teal tabular-nums" style={{ direction: "ltr" }}>
+                      {o.total.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </span>
+                    <span className="text-[10px] font-bold text-slate-400">{o.currency}</span>
+                  </div>
+                ))}
+
+                {/* Split the total once part of it has been withdrawn as cash:
+                    the card can read zero while the money is still in hand. */}
+                {stats.inCash !== 0 && (
+                  <div className="mt-2 flex gap-4 text-[10px] font-bold">
+                    <div>
+                      <span className="text-slate-400 font-medium">
+                        {language === "ar" ? "على البطاقة" : "On card"}
+                      </span>{" "}
+                      <span className={stats.onCard < 0 ? "text-rose-500" : "text-slate-600 dark:text-slate-300"}>
+                        {stats.onCard.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 font-medium">
+                        {language === "ar" ? "نقداً في اليد" : "Cash in hand"}
+                      </span>{" "}
+                      <span className={stats.inCash < 0 ? "text-rose-500" : "text-amber-500"}>
+                        {stats.inCash.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                  </div>
+                )}
 
                 {/* Summary of Inflows and Outflows */}
                 <div className="mt-3 flex gap-3 text-[10px] font-bold">

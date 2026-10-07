@@ -16,10 +16,32 @@ import {
   receiptPath,
   rowsNeedingMigration,
 } from './receiptImages.ts';
+import { RECEIPT_FILE_LIMIT_BYTES, validateReceiptUpload } from './receiptUpload.ts';
 
 const UID = '11111111-2222-3333-4444-555555555555';
 const inline = 'data:image/jpeg;base64,/9j/4AAQSkZJRg==';
 const stored = `${UID}/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jpg`;
+
+// Client-side validation mirrors the private bucket's type and 5 MiB limits,
+// preventing a doomed network request while keeping legacy PNG/WebP migration.
+{
+  assert.strictEqual(validateReceiptUpload(new Blob(['jpeg'], { type: 'image/jpeg' })), 'image/jpeg');
+  assert.strictEqual(validateReceiptUpload(new Blob(['jpeg'])), 'image/jpeg');
+  assert.strictEqual(validateReceiptUpload(new Blob(['jpeg'], { type: 'image/jpg' })), 'image/jpeg');
+  assert.strictEqual(validateReceiptUpload(new Blob(['png'], { type: 'image/png' })), 'image/png');
+  assert.throws(() => validateReceiptUpload(new Blob([], { type: 'image/jpeg' })), /empty/);
+  assert.throws(
+    () => validateReceiptUpload(new Blob(['gif'], { type: 'image/gif' })),
+    /Unsupported/,
+  );
+  assert.throws(
+    () =>
+      validateReceiptUpload(
+        new Blob([new Uint8Array(RECEIPT_FILE_LIMIT_BYTES + 1)], { type: 'image/jpeg' }),
+      ),
+    /5 MiB/,
+  );
+}
 
 // The one predicate the render, export and backfill paths all branch on.
 {

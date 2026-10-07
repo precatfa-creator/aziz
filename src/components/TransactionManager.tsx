@@ -16,6 +16,7 @@ import {
   Tag,
   Wallet,
   ArrowUpRight,
+  ArrowRightLeft,
   ArrowDownLeft,
   Image as ImageIcon,
   Upload,
@@ -38,6 +39,14 @@ import { ConfirmModal } from "./ConfirmModal";
 import { isInlineReceipt, packReceiptImages, receiptEntries } from "../lib/receiptImages";
 import { resolveReceiptUrls, uploadReceipt } from "../lib/receiptStorage";
 import { fileToReceiptJpeg } from "../lib/imageDownscale";
+import {
+  convertAmount,
+  roundMoney,
+  walletBalance,
+  walletCurrencies,
+  walletTotals,
+  type ExpenseKind,
+} from "../lib/walletBalance";
 
 interface TransactionManagerProps {
   defaultType?: 'income' | 'expense';
@@ -71,6 +80,9 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
     selectedWalletFilter,
     setSelectedWalletFilter,
     currency: globalCurrency,
+    exchangeRate,
+    setExchangeRate,
+    addTransfer,
     user,
   } = useApp();
 
@@ -83,14 +95,22 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
   const [expandedTitlesTxIds, setExpandedTitlesTxIds] = useState<Record<string, boolean>>({});
 
   // Consolidation States
-  const [transactionType, setTransactionType] = useState<"income" | "expense">(
+  const [transactionType, setTransactionType] = useState<"income" | "expense" | "exchange">(
     defaultType || "expense"
   );
+  const [expenseKind, setExpenseKind] = useState<ExpenseKind>("wallet_spend");
+  // Exchange only. The amount field stays the "from" side, so the rate is the
+  // single extra input and the "to" side is always derived from the two.
+  const [exchangeRateInput, setExchangeRateInput] = useState("");
+  // A wallet holding 88 LYD and 100 USD is worth 1000 LYD only if the dashboard
+  // converts at the rate actually paid. Defaulting this on keeps the merged
+  // total honest; unticking it leaves the display rate alone.
+  const [syncDisplayRate, setSyncDisplayRate] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
   const [priorityFilter, setPriorityFilter] = useState("");
   const [walletFilter, setWalletFilter] = useState("");
-  const [typeFilter, setTypeFilter] = useState<"all" | "income" | "expense">("all",);
+  const [typeFilter, setTypeFilter] = useState<"all" | "income" | "expense" | "transfer">("all",);
   const [isFiltersExpanded, setIsFiltersExpanded] = useState(false);
 
   // Derived filter metrics
@@ -111,6 +131,10 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
       // Reset any active editing block
       setEditingId(null);
       setEditingType(null);
+      // Clearing editingId re-arms the compartment auto-preselect, so the kind
+      // has to go back to the default with it — otherwise a withdrawal that was
+      // open for editing leaves its kind behind on the next expense typed here.
+      setExpenseKind("wallet_spend");
     }
   }, [defaultType]);
 
@@ -268,17 +292,69 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
   } | null>(null);
   const [selectedAlternativeWalletId, setSelectedAlternativeWalletId] = useState("");
 
-  const getWalletCurrentBalance = (wallet: any) => {
-    const wIncomes = incomes.filter(
-      (inc) => inc.walletId === wallet.id && inc.currency === wallet.currency && !inc.isOpening,
+  const walletStats = (wallet: any, curr: "LYD" | "USD" = wallet.currency) =>
+    walletBalance(wallet, incomes, expenses, curr);
+
+  const convertTo = (v: number, from: "LYD" | "USD", to: "LYD" | "USD") =>
+    convertAmount(v, from, to, exchangeRate);
+
+  // Only two currencies exist, so the destination of an exchange is whichever
+  // one the amount is not in. No second picker, and no way to pick the same
+  // currency on both sides.
+  const exchangeTo: "LYD" | "USD" = currency === "LYD" ? "USD" : "LYD";
+  const exchangeRateValue = parseFloat(exchangeRateInput);
+  const hasValidRate = !isNaN(exchangeRateValue) && exchangeRateValue > 0;
+  // The rate is always stated the way the settings screen states it: how many
+  // LYD one USD costs. Which side of the division that lands on is exactly what
+  // convertAmount already decides, at the typed rate rather than the saved one.
+  const exchangeResult =
+    hasValidRate && amount && parseFloat(amount) > 0
+      ? convertAmount(parseFloat(amount), currency, exchangeTo, exchangeRateValue)
+      : null;
+  // Stored to 2dp, so the derived rate stays reproducible from the two legs.
+  const exchangeToAmount = exchangeResult === null ? null : roundMoney(exchangeResult);
+
+  // Picking a drained card that still holds withdrawn cash pre-selects "paid
+  // from cash", because there is nothing left on the card to spend. Only a
+  // suggestion — the kind is stored on the row, never re-derived from the
+  // balance, so back-dating an edit cannot silently retag old expenses.
+  useEffect(() => {
+    if (editingId || !walletId) return;
+    const w = wallets.find((x) => x.id === walletId);
+    if (!w) return;
+    // Per currency: a wallet can be out of LYD while still holding USD cash,
+    // and the compartment to suggest depends on which one is being spent.
+    const { onCard, inCash } = walletStats(w, currency);
+    setExpenseKind(onCard <= 0 && inCash > 0 ? "cash_spend" : "wallet_spend");
+    // transactionType is a dependency because the exchange tab offers no
+    // "cash withdrawal" option; carrying that choice over from an expense would
+    // leave the form holding a kind its own picker cannot show.
+  }, [walletId, editingId, currency, transactionType]);
+
+  // Start an exchange from the rate the dashboard already uses, so the common
+  // case is a correction rather than a blank field.
+  useEffect(() => {
+    if (transactionType === "exchange" && !exchangeRateInput) {
+      setExchangeRateInput(String(exchangeRate));
+    }
+  }, [transactionType]);
+
+  // What the wallet is worth in total. Pickers and archive checks want this, so
+  // that a card sitting at zero with cash withdrawn from it stays selectable.
+  // Sums every currency it holds, converted at the display rate — otherwise a
+  // wallet that exchanged all its LYD into USD would read as empty and archive
+  // itself out of the list.
+  const getWalletCurrentBalance = (wallet: any) =>
+    walletTotals(wallet, incomes, expenses).reduce(
+      (acc, b) => acc + (b.currency === wallet.currency ? b.total : convertTo(b.total, b.currency, wallet.currency)),
+      0,
     );
-    const wExpenses = expenses.filter(
-      (exp) => exp.walletId === wallet.id && exp.currency === wallet.currency,
-    );
-    const totalIncomes = wIncomes.reduce((acc, curr) => acc + curr.amount, 0);
-    const totalExpenses = wExpenses.reduce((acc, curr) => acc + curr.amount, 0);
-    return wallet.initialBalance + totalIncomes - totalExpenses;
-  };
+
+  // What an expense of this kind can actually draw on, in the currency being
+  // spent. Cash already withdrawn cannot be spent off the card again, USD
+  // cannot be spent out of the LYD bucket, and vice versa.
+  const availableFor = (wallet: any, kind: ExpenseKind, curr: "LYD" | "USD" = currency) =>
+    kind === "cash_spend" ? walletStats(wallet, curr).inCash : walletStats(wallet, curr).onCard;
 
   const showConfirm = (
     title: string,
@@ -398,7 +474,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
 
       const newId = await addCategory(
         catName,
-        transactionType,
+        transactionType === "exchange" ? "expense" : transactionType,
         randomColor,
         randomIcon,
       );
@@ -429,6 +505,65 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
     );
   };
 
+  /**
+   * Records an exchange as one movement: both legs land in the same wallet,
+   * in different currencies, under one transfer id.
+   *
+   * Validation is against the compartment the money actually leaves, not the
+   * wallet total — a card at zero holding withdrawn cash cannot be swiped, and
+   * a wallet holding only USD cannot pay out LYD.
+   */
+  const handleExchangeSubmit = async (numericAmount: number) => {
+    const wallet = wallets.find((w) => w.id === walletId);
+    if (!wallet || exchangeToAmount === null || exchangeToAmount <= 0) return;
+
+    const available = availableFor(wallet, expenseKind, currency);
+    if (available < numericAmount) {
+      alert(
+        language === "ar"
+          ? `الرصيد المتاح بالـ${currency} هو ${available.toLocaleString()} فقط، وهو أقل من ${numericAmount.toLocaleString()}.`
+          : `Only ${available.toLocaleString()} ${currency} is available to exchange, less than ${numericAmount.toLocaleString()}.`,
+      );
+      return;
+    }
+
+    const rateLabel = (numericAmount / exchangeToAmount).toFixed(2);
+    const fallbackOut =
+      language === "ar"
+        ? `صرافة ${numericAmount} ${currency} إلى ${exchangeToAmount} ${exchangeTo}`
+        : `Exchange ${numericAmount} ${currency} to ${exchangeToAmount} ${exchangeTo}`;
+
+    try {
+      await addTransfer({
+        fromWalletId: wallet.id,
+        toWalletId: wallet.id,
+        fromAmount: numericAmount,
+        fromCurrency: currency,
+        toAmount: exchangeToAmount,
+        toCurrency: exchangeTo,
+        date,
+        titleOut: title.trim() || fallbackOut,
+        titleIn: title.trim() || fallbackOut,
+        notes: notes
+          ? `${notes}\n(${currency}→${exchangeTo} @ ${rateLabel})`
+          : `(${currency}→${exchangeTo} @ ${rateLabel})`,
+        imageUrl,
+        fromKind: expenseKind,
+      });
+
+      // Only after both legs are safely written: a rate change that outlived a
+      // failed exchange would silently re-value every USD row for nothing.
+      if (syncDisplayRate && hasValidRate && exchangeRateValue !== exchangeRate) {
+        await setExchangeRate(exchangeRateValue);
+      }
+
+      resetForm();
+      setActiveSubTab("history");
+    } catch (err) {
+      reportSaveFailure(err);
+    }
+  };
+
   // Submit main consolidated ledger entry
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -444,9 +579,21 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
       return;
     }
     const isNewWalletOptionActive = createAndTopupWallet && transactionType === "income" && !editingId;
-    if (!amount || !title || !selectedCatId || (!isNewWalletOptionActive && !walletId)) return;
+    // An exchange has no category of the user's choosing — both legs are filed
+    // under the shared transfer category — and its title is generated, so it
+    // requires only a wallet, an amount and a rate.
+    const requiredFieldsMissing =
+      transactionType === "exchange"
+        ? !amount || !walletId || !hasValidRate
+        : !amount || !title || !selectedCatId || (!isNewWalletOptionActive && !walletId);
+    if (requiredFieldsMissing) return;
     const numericAmount = parseFloat(amount);
     if (isNaN(numericAmount) || numericAmount <= 0) return;
+
+    if (transactionType === "exchange") {
+      await handleExchangeSubmit(numericAmount);
+      return;
+    }
 
     try {
       let finalWalletId = walletId;
@@ -465,13 +612,21 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
       if (!editingId && transactionType === "expense") {
         const w = wallets.find((w) => w.id === finalWalletId);
         if (w) {
-          const currentBal = getWalletCurrentBalance(w);
+          // Against the compartment being drawn on, not the wallet total: a card
+          // at zero holding withdrawn cash must not look like it can be swiped.
+          const currentBal = availableFor(w, expenseKind);
           if (currentBal < numericAmount) {
             const remainingAmount = currentBal > 0 ? numericAmount - currentBal : numericAmount;
-            const availableWallets = wallets.filter((ow) => 
-               ow.id !== finalWalletId && 
-               ow.currency === w.currency && 
-               getWalletCurrentBalance(ow) >= remainingAmount
+            // In the currency actually being spent, not the wallet's headline
+            // total: a wallet holding 88 LYD and 100 USD cannot cover a 500 LYD
+            // shortfall however large its converted total looks. This also
+            // replaces the old `ow.currency === w.currency` test, which asked
+            // about the wallet's primary currency rather than the one it is
+            // being asked to pay in — a wallet whose USD came from an exchange
+            // has no LYD row and scores zero here on its own.
+            const availableWallets = wallets.filter((ow) =>
+               ow.id !== finalWalletId &&
+               walletStats(ow, currency).total >= remainingAmount
             );
 
             setOverdraftData({
@@ -507,6 +662,9 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                 imageUrl,
                 priority,
                 finalWalletId,
+                undefined,
+                undefined,
+                expenseKind,
               );
             }
           } else {
@@ -552,6 +710,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
               imageUrl,
               priority,
               finalWalletId,
+              expenseKind,
             );
           }
         }
@@ -583,6 +742,9 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
             imageUrl,
             priority,
             finalWalletId,
+            undefined,
+            undefined,
+            expenseKind,
           );
         }
       }
@@ -605,7 +767,10 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
         notes,
         imageUrl,
         priority,
-        overdraftData.originalWallet.id
+        overdraftData.originalWallet.id,
+        undefined,
+        undefined,
+        expenseKind,
       );
 
       setOverdraftModalOpen(false);
@@ -634,10 +799,14 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
           notes ? `${notes}\n(Partial payment)` : `(Partial payment)`,
           imageUrl,
           priority,
-          originalWallet.id
+          originalWallet.id,
+          undefined,
+          undefined,
+          expenseKind,
         );
 
-        // Transaction 2: Remaining from alternative wallet
+        // The covering leg comes off a different wallet's own card, so it is
+        // ordinary spending there whatever compartment the original drew on.
         await addExpense(
           remainingAmount,
           currency,
@@ -683,6 +852,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
     setDate(tx.date);
     setSelectedCatId(tx.categoryId);
     setWalletId(tx.walletId || "");
+    setExpenseKind(tx.expenseKind || "wallet_spend");
     setPriority(tx.priority || "medium");
     setImageUrl(tx.imageUrl || "");
 
@@ -712,12 +882,17 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
     setNotes("");
     setSelectedCatId("");
     setWalletId("");
+    setExpenseKind("wallet_spend");
     setTypedCategoryQuery("");
     setPriority("medium");
     setImageUrl("");
     setCreateAndTopupWallet(false);
     setNewWalletName("");
     setNewWalletColor("emerald");
+    // The rate box refills from settings on the next visit to the exchange tab;
+    // leaving a stale one behind would quietly price the following exchange.
+    setExchangeRateInput("");
+    setSyncDisplayRate(true);
   };
 
   // Drag & drop file loaders
@@ -807,10 +982,31 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
     if (files.length > 0) void processFiles(files);
   };
 
+  // A transfer is two rows in the ledger but one movement in the world, so the
+  // history shows it once. The income leg is folded into its expense leg and
+  // dropped from the list; the pair rides along as `transferPair` for the row to
+  // render. The legs keep `type: "expense"` deliberately — a transfer really is
+  // an outflow from the source, and inventing a third type here would mean
+  // every filter, badge and action below had to learn about it.
+  const transferInLegs = new Map(
+    incomes.filter((inc) => inc.transferId).map((inc) => [inc.transferId as string, inc]),
+  );
+  const pairedTransferIds = new Set(
+    expenses.filter((exp) => exp.transferId).map((exp) => exp.transferId as string),
+  );
+
   // Consolidate Incomes & Expenses under a single list
   const consolidatedTransactions = [
-    ...incomes.map((inc) => ({ ...inc, type: "income" as const })),
-    ...expenses.map((exp) => ({ ...exp, type: "expense" as const })),
+    // An income leg whose expense leg is gone stays visible on its own: it is a
+    // real row affecting a real balance, and hiding it would hide the damage.
+    ...incomes
+      .filter((inc) => !inc.transferId || !pairedTransferIds.has(inc.transferId))
+      .map((inc) => ({ ...inc, type: "income" as const })),
+    ...expenses.map((exp) => ({
+      ...exp,
+      type: "expense" as const,
+      transferPair: exp.transferId ? transferInLegs.get(exp.transferId) : undefined,
+    })),
   ]
     .filter((tx) => !hideHistoricalData || !tx.isHistorical)
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
@@ -821,7 +1017,16 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
       tx.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       (tx.notes && tx.notes.toLowerCase().includes(searchQuery.toLowerCase()));
     const matchCat = categoryFilter ? tx.categoryId === categoryFilter : true;
-    const matchType = typeFilter === "all" ? true : tx.type === typeFilter;
+    // Transfer legs ride in the list as expenses so every badge and action keeps
+    // working, but the whole point of the feature is that they are not spending
+    // — so "Expenses" must not show them, and they get a pill of their own.
+    const isTransfer = !!(tx as any).transferPair;
+    const matchType =
+      typeFilter === "all"
+        ? true
+        : typeFilter === "transfer"
+          ? isTransfer
+          : tx.type === typeFilter && !isTransfer;
     const matchPriority = priorityFilter ? tx.priority === priorityFilter : true;
     const matchWallet = walletFilter ? tx.walletId === walletFilter : true;
     return matchSearch && matchCat && matchType && matchPriority && matchWallet;
@@ -1055,7 +1260,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
 
             {/* Segmented Control Selector for Type - Highly Animated */}
             <div 
-              className="grid grid-cols-2 p-1.5 bg-slate-100/60 dark:bg-slate-950/80 rounded-2xl border border-white/20 dark:border-slate-800/40 relative"
+              className="grid grid-cols-3 p-1.5 bg-slate-100/60 dark:bg-slate-950/80 rounded-2xl border border-white/20 dark:border-slate-800/40 relative"
               onTouchStart={(e) => {
                 e.stopPropagation();
                 const touch = e.touches[0];
@@ -1076,8 +1281,8 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                 const diffY = startY - touchEndY;
                 
                 if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 40) {
-                  const swipeableTypes = ['expense', 'income'] as const;
-                  const currentIndex = swipeableTypes.indexOf(transactionType);
+                  const swipeableTypes = ['expense', 'income', 'exchange'] as const;
+                  const currentIndex = swipeableTypes.indexOf(transactionType as typeof swipeableTypes[number]);
                   if (currentIndex !== -1) {
                     const isRtl = language === 'ar';
                     const goNext = isRtl ? diffX < 0 : diffX > 0;
@@ -1109,7 +1314,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                 }`}
               >
                 <ArrowUpRight className="w-3.5 h-3.5 stroke-[3]" />
-                <span>{language === "ar" ? "مصروف (صادر)" : "Expense (Outgoing)"}</span>
+                <span>{language === "ar" ? "مصروف" : "Expense"}</span>
               </button>
               <button
                 type="button"
@@ -1125,7 +1330,31 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                 }`}
               >
                 <ArrowDownLeft className="w-3.5 h-3.5 stroke-[3]" />
-                <span>{language === "ar" ? "دخل (وارد)" : "Income (Incoming)"}</span>
+                <span>{language === "ar" ? "دخل" : "Income"}</span>
+              </button>
+              {/* Neither red nor green: an exchange is a movement, and colouring
+                  it like spending or earning would state the opposite of what
+                  the rest of this feature exists to say. */}
+              <button
+                type="button"
+                onClick={() => {
+                  // Submitting an exchange writes two new rows rather than
+                  // updating anything, so carrying a half-finished edit into
+                  // this tab would silently abandon it. Clear it instead.
+                  if (editingId) resetForm();
+                  setTransactionType("exchange");
+                  setSelectedCatId("");
+                  setTypedCategoryQuery("");
+                }}
+                aria-pressed={transactionType === "exchange"}
+                className={`py-3 rounded-xl text-xs font-black transition-all duration-300 cursor-pointer flex items-center justify-center gap-1.5 ${
+                  transactionType === "exchange"
+                    ? "bg-brand-teal text-white shadow-lg shadow-brand-teal/15"
+                    : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white"
+                }`}
+              >
+                <ArrowRightLeft className="w-3.5 h-3.5 stroke-[3]" />
+                <span>{language === "ar" ? "صرافة" : "Exchange"}</span>
               </button>
             </div>
 
@@ -1178,14 +1407,95 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                   {/* Interactive Quick Add Pads (calculator inspiration) - Semantic Icon */}
                   <div className="flex-shrink-0">
                     <div className="w-14 h-14 bg-brand-teal/5 dark:bg-brand-teal/10 rounded-2xl flex items-center justify-center border border-brand-teal/10 text-brand-teal cursor-default">
-                      {transactionType === 'income' ? <ArrowDownLeft className="w-5 h-5 text-emerald-500" /> : <ArrowUpRight className="w-5 h-5 text-rose-500" />}
+                      {transactionType === 'exchange' ? <ArrowRightLeft className="w-5 h-5 text-brand-teal" /> : transactionType === 'income' ? <ArrowDownLeft className="w-5 h-5 text-emerald-500" /> : <ArrowUpRight className="w-5 h-5 text-rose-500" />}
                     </div>
                   </div>
 
                 </div>
 
+                {/* The exchange's only extra input. The amount above is always
+                    the "from" side; the "to" side is derived, never typed, so
+                    the two legs can never disagree about the rate. */}
+                {transactionType === "exchange" && (
+                  <div className="w-full max-w-md mt-4 flex flex-col gap-3">
+                    <div className="flex items-center gap-2">
+                      <label
+                        htmlFor="exchange-rate"
+                        className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 shrink-0"
+                      >
+                        {language === "ar" ? "سعر الصرف" : "Exchange rate"}
+                      </label>
+                      <div className="flex-1 flex items-center gap-2 h-11 px-3 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/60 dark:border-slate-800 focus-within:ring-2 focus-within:ring-brand-teal/30 transition-all">
+                        <span className="text-[11px] font-bold text-slate-400 shrink-0" style={{ direction: "ltr" }}>
+                          1 USD =
+                        </span>
+                        <input
+                          id="exchange-rate"
+                          type="number"
+                          step="any"
+                          min="0"
+                          inputMode="decimal"
+                          required
+                          value={exchangeRateInput}
+                          onChange={(e) => setExchangeRateInput(e.target.value)}
+                          className="w-full min-w-0 bg-transparent text-base font-black font-mono tabular-nums text-slate-900 dark:text-white outline-none"
+                          style={{ direction: "ltr" }}
+                        />
+                        <span className="text-[11px] font-bold text-slate-400 shrink-0">
+                          {language === "ar" ? "د.ل" : "LYD"}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* The "to" side, stated rather than entered. aria-live so a
+                        screen reader hears the converted figure change, since it
+                        is the number the user is actually deciding on. */}
+                    <div
+                      aria-live="polite"
+                      className="flex items-center justify-center gap-2.5 py-2.5 px-3 rounded-2xl bg-brand-teal/5 dark:bg-brand-teal/10 border border-brand-teal/15"
+                    >
+                      {exchangeToAmount !== null && exchangeToAmount > 0 ? (
+                        <>
+                          <span className="text-sm font-black font-mono tabular-nums text-slate-500 dark:text-slate-400" style={{ direction: "ltr" }}>
+                            {parseFloat(amount).toLocaleString(undefined, { maximumFractionDigits: 2 })} {currency}
+                          </span>
+                          <ArrowRightLeft className="w-3.5 h-3.5 text-brand-teal shrink-0" aria-hidden="true" />
+                          <span className="text-lg font-black font-mono tabular-nums text-brand-teal" style={{ direction: "ltr" }}>
+                            {exchangeToAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {exchangeTo}
+                          </span>
+                        </>
+                      ) : (
+                        <span className="text-[11px] font-bold text-slate-400 dark:text-slate-500">
+                          {language === "ar"
+                            ? "أدخل المبلغ وسعر الصرف لحساب الناتج"
+                            : "Enter an amount and a rate to see the result"}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Merged totals are converted at the settings rate, so
+                        leaving it behind after a real exchange makes the
+                        dashboard report a loss that never happened. */}
+                    {hasValidRate && exchangeRateValue !== exchangeRate && (
+                      <label className="flex items-center gap-2.5 cursor-pointer py-1 min-h-11">
+                        <input
+                          type="checkbox"
+                          checked={syncDisplayRate}
+                          onChange={(e) => setSyncDisplayRate(e.target.checked)}
+                          className="w-4 h-4 shrink-0 accent-brand-teal cursor-pointer"
+                        />
+                        <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 leading-relaxed">
+                          {language === "ar"
+                            ? `حدّث سعر العرض من ${exchangeRate} إلى ${exchangeRateValue} أيضاً`
+                            : `Also update the display rate from ${exchangeRate} to ${exchangeRateValue}`}
+                        </span>
+                      </label>
+                    )}
+                  </div>
+                )}
+
                 {/* Amount Guidance tag */}
-                {amount && parseFloat(amount) > 0 && (
+                {transactionType !== "exchange" && amount && parseFloat(amount) > 0 && (
                   <div className="text-[10px] font-bold text-slate-400 dark:text-slate-500 mt-2 flex items-center gap-1">
                     <span>
                       {language === "ar" ? "سيتم تسجيل" : "Will log"}
@@ -1207,19 +1517,31 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                 <div className="flex flex-col gap-2">
                   <label className="text-xs font-black text-slate-500 dark:text-slate-400 flex items-center gap-1">
                     <span>{language === "ar" ? "بيان العملية / الغرض" : "Transaction Title / Purpose"}</span>
-                    <span className="text-rose-500">*</span>
+                    {transactionType === "exchange" ? (
+                      <span className="text-slate-400 font-medium">
+                        {language === "ar" ? "(اختياري)" : "(optional)"}
+                      </span>
+                    ) : (
+                      <span className="text-rose-500">*</span>
+                    )}
                   </label>
                   <div className="relative">
                     <FileSpreadsheet className="absolute top-3.5 right-3.5 rtl:right-auto rtl:left-3.5 w-4.5 h-4.5 text-slate-400" />
                     <input
                       type="text"
-                      required
+                      required={transactionType !== "exchange"}
                       value={title}
                       onChange={(e) => setTitle(e.target.value)}
                       placeholder={
-                        transactionType === "income"
-                          ? t.incomeTitleArEn
-                          : t.expenseTitlePlaceholder
+                        transactionType === "exchange"
+                          ? exchangeToAmount !== null && exchangeToAmount > 0
+                            ? `${language === "ar" ? "صرافة" : "Exchange"} ${amount} ${currency} → ${exchangeToAmount} ${exchangeTo}`
+                            : language === "ar"
+                              ? "يُكتب تلقائياً من مبلغ الصرافة"
+                              : "Filled in from the exchange amounts"
+                          : transactionType === "income"
+                            ? t.incomeTitleArEn
+                            : t.expenseTitlePlaceholder
                       }
                       dir="auto"
                       className="w-full glass-input pl-10 pr-10 rtl:pr-10 rtl:pl-10 py-3.5 text-sm rounded-2xl focus:outline-none focus:ring-2 focus:ring-brand-teal/40 dark:text-white font-medium"
@@ -1227,8 +1549,13 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                   </div>
                 </div>
 
-                {/* 2. Custom Category Selector & Quick Recs */}
-                <div className="flex flex-col gap-2 relative" ref={dropdownRef}>
+                {/* 2. Custom Category Selector & Quick Recs. Hidden for an
+                    exchange: both legs are filed under the shared transfer
+                    category, so there is nothing here for the user to decide. */}
+                <div
+                  className={`flex-col gap-2 relative ${transactionType === "exchange" ? "hidden" : "flex"}`}
+                  ref={dropdownRef}
+                >
                   <label className="text-xs font-black text-slate-500 dark:text-slate-400 flex items-center gap-1">
                     <span>{t.categorySelector}</span>
                     <span className="text-rose-500">*</span>
@@ -1588,6 +1915,76 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                     </div>
                   );
                 })()}
+
+                {/* Which compartment of the wallet this expense touches. Hidden
+                    until a wallet is picked, and "paid from cash" only appears
+                    once there is cash to pay from. An exchange draws on a
+                    compartment in exactly the same way, so it gets the picker
+                    too — the money has to leave the card or the hand. */}
+                {(transactionType === "expense" || transactionType === "exchange") && walletId && (() => {
+                  const w = wallets.find((x) => x.id === walletId);
+                  if (!w) return null;
+                  const { onCard, inCash } = walletStats(w, currency);
+                  const isExchange = transactionType === "exchange";
+                  const kinds: { kind: ExpenseKind; ar: string; en: string; hint: string }[] = [
+                    {
+                      kind: "wallet_spend",
+                      ar: isExchange ? "من البطاقة" : "مصروف عادي",
+                      en: isExchange ? "From the card" : "Normal expense",
+                      hint: `${onCard.toLocaleString()} ${currency}`,
+                    },
+                    // Withdrawing is a movement inside one currency; an exchange
+                    // is already a movement, and chaining the two in one row
+                    // would leave no way to say what the money became.
+                    ...(isExchange
+                      ? []
+                      : [{
+                          kind: "cash_withdrawal" as ExpenseKind,
+                          ar: "سحب نقدي",
+                          en: "Cash withdrawal",
+                          hint: language === "ar" ? "يبقى معك" : "you keep it",
+                        }]),
+                    ...(inCash !== 0 || expenseKind === "cash_spend"
+                      ? [{
+                          kind: "cash_spend" as ExpenseKind,
+                          ar: isExchange ? "من النقد" : "دفعت من النقد",
+                          en: isExchange ? "From cash in hand" : "Paid from cash",
+                          hint: `${inCash.toLocaleString()} ${currency}`,
+                        }]
+                      : []),
+                  ];
+                  return (
+                    <div className="mt-4">
+                      <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-2">
+                        {language === "ar" ? "نوع الحركة على المحفظة" : "Effect on the wallet"}
+                      </label>
+                      <div className="flex flex-wrap gap-2">
+                        {kinds.map((k) => (
+                          <button
+                            key={k.kind}
+                            type="button"
+                            onClick={() => setExpenseKind(k.kind)}
+                            className={`px-3.5 py-2 rounded-2xl text-xs font-bold cursor-pointer transition-all border ${
+                              expenseKind === k.kind
+                                ? "bg-brand-slate text-white dark:bg-white dark:text-brand-slate border-transparent shadow-md"
+                                : "bg-slate-50/75 dark:bg-slate-900/40 border-slate-100 dark:border-slate-850 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-850"
+                            }`}
+                          >
+                            {language === "ar" ? k.ar : k.en}
+                            <span className="ms-1.5 font-mono font-medium opacity-60">{k.hint}</span>
+                          </button>
+                        ))}
+                      </div>
+                      {expenseKind === "cash_withdrawal" && (
+                        <p className="mt-2 text-[10px] font-bold text-amber-500">
+                          {language === "ar"
+                            ? "يخرج المبلغ من البطاقة ويبقى ملكك نقداً — لا يُحتسب إنفاقاً."
+                            : "Leaves the card but stays yours as cash — not counted as spending."}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* DATE, NOTES & FILE ATTACHMENTS */}
@@ -1925,7 +2322,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                       {/* Type & Search Row */}
                       <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
                         {/* Segmented Filter control (All vs Income vs Expense) */}
-                        <div className="md:col-span-5 grid grid-cols-3 p-1 bg-slate-100/50 dark:bg-slate-950/50 rounded-xl border border-white/10 dark:border-slate-900/30">
+                        <div className="md:col-span-5 grid grid-cols-4 p-1 bg-slate-100/50 dark:bg-slate-950/50 rounded-xl border border-white/10 dark:border-slate-900/30">
                           {[
                             { id: "all" as const, label: language === "ar" ? "الكل" : "All" },
                             {
@@ -1935,6 +2332,10 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                             {
                               id: "expense" as const,
                               label: language === "ar" ? "الصادر فقط" : "Expenses",
+                            },
+                            {
+                              id: "transfer" as const,
+                              label: language === "ar" ? "تحويلات" : "Transfers",
                             },
                           ].map((pill) => (
                             <button
@@ -2365,12 +2766,16 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                         {/* Circle directional indicators */}
                         <div
                           className={`w-11 h-11 rounded-2xl flex items-center justify-center flex-shrink-0 shadow-xs border ${
-                            tx.type === "income"
-                              ? "bg-brand-green/20 text-emerald-600 border-brand-green/30 dark:bg-brand-green/10 dark:text-brand-green"
-                              : "bg-rose-50 dark:bg-rose-950/20 text-rose-500 border-rose-250/20 dark:border-rose-900/10"
+                            (tx as any).transferPair
+                              ? "bg-brand-teal/10 text-brand-teal border-brand-teal/20"
+                              : tx.type === "income"
+                                ? "bg-brand-green/20 text-emerald-600 border-brand-green/30 dark:bg-brand-green/10 dark:text-brand-green"
+                                : "bg-rose-50 dark:bg-rose-950/20 text-rose-500 border-rose-250/20 dark:border-rose-900/10"
                           }`}
                         >
-                          {tx.type === "income" ? (
+                          {(tx as any).transferPair ? (
+                            <ArrowRightLeft className="w-5 h-5 stroke-[2.5]" />
+                          ) : tx.type === "income" ? (
                             <ArrowUpRight className="w-5 h-5 stroke-[2.5]" />
                           ) : (
                             <ArrowDownLeft className="w-5 h-5 stroke-[2.5]" />
@@ -2398,12 +2803,18 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                             {/* Transaction Type label */}
                             <span
                               className={`text-[9px] font-black px-1.5 py-0.5 rounded-md uppercase ${
-                                tx.type === "income"
-                                  ? "bg-brand-green/20 text-emerald-800 dark:bg-brand-green/10 dark:text-brand-green"
-                                  : "bg-brand-slate text-white dark:bg-white/10 dark:text-white"
+                                (tx as any).transferPair
+                                  ? "bg-brand-teal/10 text-brand-teal"
+                                  : tx.type === "income"
+                                    ? "bg-brand-green/20 text-emerald-800 dark:bg-brand-green/10 dark:text-brand-green"
+                                    : "bg-brand-slate text-white dark:bg-white/10 dark:text-white"
                               }`}
                             >
-                              {tx.type === "income"
+                              {(tx as any).transferPair
+                                ? (tx as any).transferPair.currency === tx.currency
+                                  ? language === "ar" ? "تحويل" : "Transfer"
+                                  : language === "ar" ? "صرافة" : "Exchange"
+                                : tx.type === "income"
                                 ? language === "ar"
                                   ? "وارد"
                                   : "Income"
@@ -2411,6 +2822,19 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                                   ? "صادر"
                                   : "Expense"}
                             </span>
+
+                            {/* A withdrawal sits in the feed as an outflow of the
+                                card, so say plainly that the money is still yours. */}
+                            {(tx as any).expenseKind === "cash_withdrawal" && (
+                              <span className="text-[9px] font-black px-1.5 py-0.5 rounded-md uppercase bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 border border-amber-250/20 dark:border-amber-900/10">
+                                {language === "ar" ? "سحب نقدي — تحوّل لنقد" : "Withdrawal — became cash"}
+                              </span>
+                            )}
+                            {(tx as any).expenseKind === "cash_spend" && (
+                              <span className="text-[9px] font-black px-1.5 py-0.5 rounded-md uppercase bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400">
+                                {language === "ar" ? "من النقد" : "From cash"}
+                              </span>
+                            )}
 
                             {/* Category badge */}
                             <span
@@ -2508,6 +2932,25 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                       {/* Right: Sum value, and actions */}
                       <div className="flex sm:flex-col justify-between sm:justify-center items-center sm:items-end gap-3 self-stretch sm:self-auto pt-3 sm:pt-0 border-t sm:border-t-0 border-slate-100 dark:border-slate-800/40">
                         <div className="flex flex-col items-end">
+                          {(tx as any).transferPair ? (
+                            // Both halves on one line, because the movement is
+                            // the thing that happened — showing only the outflow
+                            // would read as money lost.
+                            <span
+                              className="font-black text-base text-brand-slate dark:text-white flex items-center gap-1.5 whitespace-nowrap"
+                              style={{ direction: "ltr" }}
+                            >
+                              <span className="text-slate-400 dark:text-slate-500 font-bold text-sm tabular-nums">
+                                {tx.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}{" "}
+                                {tx.currency}
+                              </span>
+                              <ArrowRightLeft className="w-3.5 h-3.5 text-brand-teal shrink-0" aria-hidden="true" />
+                              <span className="text-brand-teal tabular-nums">
+                                {(tx as any).transferPair.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}{" "}
+                                {(tx as any).transferPair.currency}
+                              </span>
+                            </span>
+                          ) : (
                           <span
                             className={`font-black text-base ${
                               tx.type === "income"
@@ -2523,6 +2966,16 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                             })}{" "}
                             {tx.currency === "LYD" ? t.lydSymbol : t.usdSymbol}
                           </span>
+                          )}
+                          {/* A label as well as a colour, so the movement reads
+                              as a movement without relying on the teal alone. */}
+                          {(tx as any).transferPair && (
+                            <span className="text-[10px] font-black text-brand-teal bg-brand-teal/5 dark:bg-brand-teal/10 px-2 py-0.5 rounded-full mt-1 border border-brand-teal/15 flex items-center gap-1">
+                              {(tx as any).transferPair.currency === tx.currency
+                                ? language === "ar" ? "تحويل" : "Transfer"
+                                : `${language === "ar" ? "صرافة" : "Exchange"} @ ${(tx.amount / (tx as any).transferPair.amount).toFixed(2)}`}
+                            </span>
+                          )}
                           {!(tx as any).isRefunded && (tx as any).originalAmount && (tx as any).originalAmount > tx.amount && (
                             <span className="text-[10px] font-black text-amber-500 bg-amber-50 dark:bg-amber-950/20 px-2 py-0.5 rounded-full mt-0.5 border border-amber-100 dark:border-amber-900/30">
                               {language === 'ar' ? 'مسترد جزئياً' : 'Partially Refunded'}
@@ -2537,7 +2990,10 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
 
                         {/* Actions container */}
                         <div className="flex items-center gap-1.5">
-                          {tx.type === "expense" && !(tx as any).isRefunded && (
+                          {/* Refund and due are meaningless on a withdrawal, and
+                              refunding one zeroes its amount — which would delete
+                              the cash it produced. */}
+                          {tx.type === "expense" && !(tx as any).isRefunded && (tx as any).expenseKind !== "cash_withdrawal" && !(tx as any).transferPair && (
                             <button
                               onClick={() => toggleExpenseDue(tx.id, !(tx as any).isDue)}
                               className={`p-2 rounded-xl transition-colors cursor-pointer border ${(tx as any).isDue ? 'bg-rose-50 text-rose-500 border-rose-200/50 hover:bg-rose-100 dark:bg-rose-950/30 dark:border-rose-900/30 dark:hover:bg-rose-900/50' : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-rose-500 border-transparent hover:border-rose-500/10'}`}
@@ -2546,7 +3002,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                               <Wallet className="w-3.5 h-3.5" />
                             </button>
                           )}
-                          {tx.type === "expense" && (
+                          {tx.type === "expense" && (tx as any).expenseKind !== "cash_withdrawal" && !(tx as any).transferPair && (
                              <button
                                onClick={() => toggleExpenseRefund(tx.id, !(tx as any).isRefunded)}
                                className={`p-2 rounded-xl transition-colors cursor-pointer border ${(tx as any).isRefunded ? 'bg-amber-50 text-amber-500 border-amber-200/50 hover:bg-amber-100 dark:bg-amber-950/30 dark:border-amber-900/30 dark:hover:bg-amber-900/50' : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-amber-500 border-transparent hover:border-amber-500/10'}`}
@@ -2570,20 +3026,30 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                               <Eye className="w-3.5 h-3.5" />
                             </button>
                           )}
-                          <button
-                            onClick={() => handleEditClick(tx)}
-                            className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 rounded-xl transition-colors cursor-pointer border border-transparent hover:border-white/20"
-                            title={t.edit}
-                          >
-                            <Edit2 className="w-3.5 h-3.5" />
-                          </button>
+                          {/* A transfer is not editable. Its two legs encode the
+                              rate between them, so changing one amount would
+                              silently restate a rate the other leg still
+                              contradicts. Delete the pair and re-enter it. */}
+                          {!(tx as any).transferPair && (
+                            <button
+                              onClick={() => handleEditClick(tx)}
+                              className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 rounded-xl transition-colors cursor-pointer border border-transparent hover:border-white/20"
+                              title={t.edit}
+                            >
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                           <button
                             onClick={() => {
                               showConfirm(
                                 language === "ar" ? "حذف المعاملة" : "Delete Transaction",
-                                language === "ar"
-                                  ? `هل أنت متأكد من حذف هذه المعاملة ("${tx.title}") نهائياً؟ لا يمكن استعادة السجل المالي لاحقاً.`
-                                  : `Are you sure you want to delete this transaction ("${tx.title}") permanently? This action cannot be reversed.`,
+                                (tx as any).transferPair
+                                  ? language === "ar"
+                                    ? `سيتم حذف طرفَي هذه الحركة معاً ("${tx.title}") — الصادر والوارد — لأن حذف طرف واحد يترك المال وقد خرج ولم يصل. متابعة؟`
+                                    : `Both legs of this movement ("${tx.title}") will be deleted together — the outgoing and the incoming — because removing one leg alone leaves the money having left and never arrived. Continue?`
+                                  : language === "ar"
+                                    ? `هل أنت متأكد من حذف هذه المعاملة ("${tx.title}") نهائياً؟ لا يمكن استعادة السجل المالي لاحقاً.`
+                                    : `Are you sure you want to delete this transaction ("${tx.title}") permanently? This action cannot be reversed.`,
                                 async () => {
                                   if (tx.type === "income") {
                                     await deleteIncome(tx.id);

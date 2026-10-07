@@ -58,9 +58,12 @@ const input = {
   ],
   incomes: [
     { id: 'i1', userId: 'u1', amount: 1200, currency: 'LYD', title: 'Salary', date: '2026-01-01', categoryId: 'c2', walletId: 'w1', notes: 'monthly', createdAt: now, updatedAt: now },
+    { id: 'i2', userId: 'u1', amount: 100, currency: 'USD', title: 'صرافة', date: '2026-01-04', categoryId: 'c2', walletId: 'w1', transferId: 'tr1', createdAt: now, updatedAt: now },
   ],
   expenses: [
     { id: 'e1', userId: 'u1', amount: 40, currency: 'LYD', title: 'Lunch', date: '2026-01-02', categoryId: 'c1', walletId: 'w1', isRefunded: false, createdAt: now, updatedAt: now },
+    { id: 'e2', userId: 'u1', amount: 500, currency: 'LYD', title: 'سحب نقدي', date: '2026-01-03', categoryId: 'c1', walletId: 'w1', expenseKind: 'cash_withdrawal', createdAt: now, updatedAt: now },
+    { id: 'e3', userId: 'u1', amount: 912, currency: 'LYD', title: 'صرافة', date: '2026-01-04', categoryId: 'c1', walletId: 'w1', transferId: 'tr1', createdAt: now, updatedAt: now },
   ],
   plannedPurchases: [
     { id: 'p1', userId: 'u1', itemName: 'Laptop', expectedPrice: 3000, currency: 'LYD', priority: 'high', categoryId: 'c1', isPurchased: false, createdAt: now, updatedAt: now },
@@ -84,8 +87,8 @@ const result = await restoreBackup(onDisk, 'u2', client);
 assert.deepEqual(result, {
   wallets: 1,
   categories: 2,
-  incomes: 1,
-  expenses: 1,
+  incomes: 2,
+  expenses: 3,
   plannedPurchases: 1,
   savingsGroups: 1,
 });
@@ -98,6 +101,22 @@ assert.equal(inserted.wallets[0].user_id, 'u2');
 assert.equal(inserted.incomes[0].title, 'Salary');
 assert.equal(inserted.incomes[0].amount, 1200);
 assert.equal(inserted.expenses[0].amount, 40);
+// A withdrawal that restores without its kind comes back as real spending and
+// silently takes the cash it produced off the wallet's total.
+assert.equal(inserted.expenses[0].expense_kind, null);
+assert.equal(inserted.expenses[1].expense_kind, 'cash_withdrawal');
+
+// An exchange whose legs restore unpaired becomes a real expense next to a real
+// income: the same money reported as both earned and spent. Both legs must land
+// on one id, and it must be a fresh one — restoring the same backup twice has to
+// produce two independent pairs, not four rows sharing two ids.
+const outLeg = inserted.expenses[2];
+const inLeg = inserted.incomes[1];
+assert.ok(outLeg.transfer_id, 'the paying leg lost its transfer id');
+assert.equal(outLeg.transfer_id, inLeg.transfer_id, 'the two legs came back unpaired');
+assert.notEqual(outLeg.transfer_id, 'tr1', 'transfer id was reused rather than remapped');
+assert.equal(inserted.expenses[0].transfer_id, null, 'an ordinary expense gained a pairing');
+assert.equal(inserted.incomes[0].transfer_id, null, 'an ordinary income gained a pairing');
 assert.equal(inserted.future_purchases[0].item_name, 'Laptop');
 assert.equal(inserted.savings_groups[0].total_amount, 6000);
 

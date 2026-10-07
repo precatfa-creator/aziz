@@ -44,6 +44,8 @@ export interface Income {
   isHistorical?: boolean;
   categoryName?: string;
   isOpening?: boolean;
+  /** Set when this row is the receiving half of a transfer or currency exchange. */
+  transferId?: string;
 }
 
 export interface Expense {
@@ -66,6 +68,10 @@ export interface Expense {
   walletId?: string;
   isHistorical?: boolean;
   categoryName?: string;
+  /** Which compartment of the wallet moved. Undefined reads as 'wallet_spend'. */
+  expenseKind?: 'wallet_spend' | 'cash_withdrawal' | 'cash_spend';
+  /** Set when this row is the paying half of a transfer or currency exchange. */
+  transferId?: string;
 }
 
 export interface Wallet {

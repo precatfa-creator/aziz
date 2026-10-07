@@ -102,6 +102,20 @@ export async function restoreBackup(
   await insertChunked(supabase, 'categories', categoryRows);
 
   // --- Incomes ---
+  // Both legs of a transfer must land on the same new id, or the pair becomes
+  // two unrelated rows and the money appears to have been earned and spent
+  // rather than moved. Remapped rather than reused so restoring one backup
+  // twice produces two independent pairs instead of four rows sharing two ids.
+  const transferMap = new Map<string, string>();
+  const mapTransferId = (id?: string): string | null => {
+    if (!id) return null;
+    const existing = transferMap.get(id);
+    if (existing) return existing;
+    const fresh = newId();
+    transferMap.set(id, fresh);
+    return fresh;
+  };
+
   const incomeRows = (backup.incomes || []).map((t) => ({
     id: newId(),
     user_id: userId,
@@ -117,6 +131,7 @@ export async function restoreBackup(
     is_historical: t.isHistorical ?? null,
     is_opening: t.isOpening ?? null,
     category_name: t.categoryName || null,
+    transfer_id: mapTransferId(t.transferId),
   }));
   await insertChunked(supabase, 'incomes', incomeRows);
 
@@ -139,6 +154,12 @@ export async function restoreBackup(
     is_refunded: t.isRefunded ?? null,
     refunded_at: t.refundedAt || null,
     is_due: t.isDue ?? null,
+    // Drop this and a restored cash withdrawal comes back as real spending,
+    // taking the cash it produced off the wallet's total with it.
+    expense_kind: t.expenseKind || null,
+    // Drop this and an exchange comes back as a real expense paired with a real
+    // income: the same money reported as both earned and spent.
+    transfer_id: mapTransferId(t.transferId),
   }));
   await insertChunked(supabase, 'expenses', expenseRows);
 

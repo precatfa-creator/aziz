@@ -3,7 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { Capacitor } from '@capacitor/core';
+import { App as CapacitorApp } from '@capacitor/app';
 import { useApp } from '../context/AppContext';
 import { Sidebar } from './Sidebar';
 import { Auth } from './Auth';
@@ -99,6 +101,36 @@ export const Layout: React.FC = () => {
 
   const unreadCount = notifications ? notifications.filter(n => !n.isRead).length : 0;
 
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+
+    let disposed = false;
+    let removeListener: (() => Promise<void>) | undefined;
+
+    void CapacitorApp.addListener('backButton', () => {
+      if (showNotificationDropdown) {
+        setShowNotificationDropdown(false);
+      } else if (showAboutModal) {
+        setShowAboutModal(false);
+      } else if (currentTab !== 'dashboard') {
+        setCurrentTab('dashboard');
+      } else {
+        void CapacitorApp.exitApp();
+      }
+    }).then((handle) => {
+      if (disposed) {
+        void handle.remove();
+      } else {
+        removeListener = () => handle.remove();
+      }
+    });
+
+    return () => {
+      disposed = true;
+      void removeListener?.();
+    };
+  }, [currentTab, showAboutModal, showNotificationDropdown]);
+
   // 1. Interactive heartbeat loader while Supabase is fetching the user session
   if (loading) {
     return (
@@ -164,7 +196,10 @@ export const Layout: React.FC = () => {
     >
       <ProductTour />
       {/* Floating Minimal Header */}
-      <header className="sticky top-0 z-40 bg-white/60 dark:bg-slate-950/60 backdrop-blur-md border-b border-white/40 dark:border-slate-800/60 px-4 sm:px-8 py-3.5 flex items-center justify-between shadow-xs">
+      <header
+        className="sticky top-0 z-40 bg-white/60 dark:bg-slate-950/60 backdrop-blur-md border-b border-white/40 dark:border-slate-800/60 px-4 sm:px-8 pb-3.5 flex items-center justify-between shadow-xs"
+        style={{ paddingTop: 'calc(0.875rem + env(safe-area-inset-top, 0px))' }}
+      >
          <button
            type="button"
            onClick={() => setCurrentTab('dashboard')}

@@ -11,6 +11,7 @@ import {
   Download, 
   BrainCircuit, 
   Calendar, 
+  ArrowRightLeft,
   TrendingUp, 
   TrendingDown, 
   FileSpreadsheet, 
@@ -23,6 +24,8 @@ import {
 import ReactMarkdown from 'react-markdown';
 import { buildLedgerContext } from '../lib/aiContext';
 import { trimChatHistory, type ChatTurn } from '../lib/chatHistory';
+import { apiUrl } from '../lib/apiUrl';
+import { isSpending } from '../lib/walletBalance';
 
 export const Reports: React.FC = () => {
   const { 
@@ -65,36 +68,41 @@ export const Reports: React.FC = () => {
   const getAggregatedData = () => {
     const reportList: Record<string, { income: number; expense: number; txs: any[] }> = {};
 
-    // Inward Incomes
-    incomes.filter(i => i.currency === activeCurrency).forEach(inc => {
-      let groupKey = inc.date.substring(0, 4); // default year
+    const transferInLegs = new Map(
+      incomes.filter(inc => inc.transferId).map(inc => [inc.transferId as string, inc]),
+    );
+    const pairedTransferIds = new Set(
+      expenses.filter(exp => exp.transferId).map(exp => exp.transferId as string),
+    );
+    const transactions = [
+      ...incomes
+        .filter(inc => !inc.transferId || !pairedTransferIds.has(inc.transferId))
+        .map(inc => ({ ...inc, type: 'income' as const })),
+      ...expenses.map(exp => ({
+        ...exp,
+        type: 'expense' as const,
+        transferPair: exp.transferId ? transferInLegs.get(exp.transferId) : undefined,
+      })),
+    ].filter(tx =>
+      tx.currency === activeCurrency ||
+      ('transferPair' in tx && tx.transferPair?.currency === activeCurrency),
+    );
+
+    transactions.forEach(tx => {
+      let groupKey = tx.date.substring(0, 4);
       if (activeGrouping === 'month') {
-        groupKey = inc.date.substring(0, 7); // YYYY-MM
+        groupKey = tx.date.substring(0, 7);
       } else if (activeGrouping === 'week') {
-        groupKey = getWeekNumber(inc.date);
+        groupKey = getWeekNumber(tx.date);
       }
 
       if (!reportList[groupKey]) {
         reportList[groupKey] = { income: 0, expense: 0, txs: [] };
       }
-      reportList[groupKey].income += inc.amount;
-      reportList[groupKey].txs.push({ ...inc, type: 'income' });
-    });
 
-    // Outward Expenses
-    expenses.filter(e => e.currency === activeCurrency).forEach(exp => {
-      let groupKey = exp.date.substring(0, 4);
-      if (activeGrouping === 'month') {
-        groupKey = exp.date.substring(0, 7);
-      } else if (activeGrouping === 'week') {
-        groupKey = getWeekNumber(exp.date);
-      }
-
-      if (!reportList[groupKey]) {
-        reportList[groupKey] = { income: 0, expense: 0, txs: [] };
-      }
-      reportList[groupKey].expense += exp.amount;
-      reportList[groupKey].txs.push({ ...exp, type: 'expense' });
+      if (tx.type === 'income' && !tx.transferId) reportList[groupKey].income += tx.amount;
+      if (tx.type === 'expense' && isSpending(tx)) reportList[groupKey].expense += tx.amount;
+      reportList[groupKey].txs.push(tx);
     });
 
     return Object.entries(reportList)
@@ -121,8 +129,23 @@ export const Reports: React.FC = () => {
     let csvContent = '\uFEFF' + headers; // Add BOM for excel Arabic encoding
 
     const allRecords = [
-      ...incomes.map(i => ({ ...i, type: language === 'ar' ? 'إيراد' : 'Income' })),
-      ...expenses.map(e => ({ ...e, type: language === 'ar' ? 'مصروف' : 'Expense' }))
+      ...incomes.map(i => ({
+        ...i,
+        type: i.transferId
+          ? (language === 'ar' ? 'تحويل وارد' : 'Transfer in')
+          : (language === 'ar' ? 'إيراد' : 'Income'),
+      })),
+      // Three outcomes, not two: `isSpending` is false for a withdrawal and for
+      // a transfer alike, and labelling an exchange "cash withdrawal" would
+      // describe the wrong event in the user's own export.
+      ...expenses.map(e => ({
+        ...e,
+        type: e.transferId
+          ? (language === 'ar' ? 'تحويل صادر' : 'Transfer out')
+          : !isSpending(e)
+            ? (language === 'ar' ? 'سحب نقدي' : 'Cash withdrawal')
+            : (language === 'ar' ? 'مصروف' : 'Expense'),
+      }))
     ].sort((x, y) => x.date.localeCompare(y.date));
 
     allRecords.forEach(rec => {
@@ -151,11 +174,13 @@ export const Reports: React.FC = () => {
     setAiLoading(true);
     setAiError(null);
 
-    const currencyIncomes = incomes.filter(i => i.currency === activeCurrency);
-    const currencyExpenses = expenses.filter(e => e.currency === activeCurrency);
+    const currencyIncomes = incomes.filter(i => i.currency === activeCurrency && !i.transferId);
+    // The advisor is asked how much is being spent; a withdrawal is not spending
+    // and would otherwise read as an extra month of outgoings.
+    const currencyExpenses = expenses.filter(e => e.currency === activeCurrency && isSpending(e));
 
     try {
-      const response = await fetch('/api/ai/advise', {
+      const response = await fetch(apiUrl('/api/ai/advise'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
         body: JSON.stringify({
@@ -445,6 +470,7 @@ export const Reports: React.FC = () => {
                 <div className="divide-y divide-slate-100 dark:divide-slate-800 max-h-60 overflow-y-auto">
                   {grp.txs.map((tx: any) => {
                     const isInc = tx.type === 'income';
+                    const transferPair = tx.transferPair;
                     return (
                       <div key={tx.id} className="p-4 flex justify-between items-center text-xs hover:bg-slate-55/10">
                         <div className="space-y-0.5">
@@ -452,6 +478,14 @@ export const Reports: React.FC = () => {
                             <span className="font-semibold text-slate-900 dark:text-white" dir="auto">
                               {tx.title}
                             </span>
+                            {transferPair && (
+                              <span className="inline-flex items-center gap-1 text-[9px] font-black text-brand-teal bg-brand-teal/5 dark:bg-brand-teal/10 px-1.5 py-0.5 rounded border border-brand-teal/15">
+                                <ArrowRightLeft className="w-3 h-3" aria-hidden="true" />
+                                {transferPair.currency === tx.currency
+                                  ? language === 'ar' ? 'تحويل' : 'Transfer'
+                                  : language === 'ar' ? 'صرافة' : 'Exchange'}
+                              </span>
+                            )}
                             {tx.isHistorical && (
                               <span className="text-[9px] font-bold bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 px-1.5 py-0.5 rounded border border-amber-250/20 dark:border-amber-900/10">
                                 {language === 'ar' ? 'بيانات قديمة/مستوردة' : 'Imported'}
@@ -468,9 +502,17 @@ export const Reports: React.FC = () => {
                           </span>
                         </div>
 
-                        <span className={`font-black ${isInc ? 'text-emerald-500' : 'text-slate-800 dark:text-slate-205'}`}>
-                          {isInc ? '+' : '-'} {tx.amount.toLocaleString()} {activeCurrency === 'LYD' ? t.lydSymbol : t.usdSymbol}
-                        </span>
+                        {transferPair ? (
+                          <span className="font-black text-brand-teal flex items-center gap-1.5 whitespace-nowrap" style={{ direction: 'ltr' }}>
+                            {tx.amount.toLocaleString()} {tx.currency}
+                            <ArrowRightLeft className="w-3.5 h-3.5" aria-hidden="true" />
+                            {transferPair.amount.toLocaleString()} {transferPair.currency}
+                          </span>
+                        ) : (
+                          <span className={`font-black ${isInc ? 'text-emerald-500' : 'text-slate-800 dark:text-slate-205'}`}>
+                            {isInc ? '+' : '-'} {tx.amount.toLocaleString()} {tx.currency === 'LYD' ? t.lydSymbol : t.usdSymbol}
+                          </span>
+                        )}
                       </div>
                     );
                   })}

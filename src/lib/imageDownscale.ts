@@ -22,52 +22,170 @@ export interface ImageSize {
   height: number;
 }
 
+export type ExifOrientation = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+
+export interface JpegMetadata extends ImageSize {
+  orientation: ExifOrientation;
+}
+
+const isExifOrientation = (value: number): value is ExifOrientation =>
+  Number.isInteger(value) && value >= 1 && value <= 8;
+
 /**
- * Reads the frame size out of a JPEG's SOF segment.
+ * Reads the orientation tag from an APP1 Exif payload.
  *
- * Camera captures are always JPEG; anything else (PNG, WebP, HEIC) returns null
- * and the caller falls back to a plain decode. Returns pre-rotation dimensions
- * — EXIF orientation is applied later, during decode, and only ever swaps the
- * two axes, so the aspect ratio this drives stays correct either way.
+ * Every offset in TIFF metadata is attacker-controlled, so all reads stay
+ * inside this one JPEG segment. Invalid/truncated metadata is ignored and the
+ * caller uses the normal, unrotated orientation.
  */
-export const readJpegSize = (bytes: Uint8Array): ImageSize | null => {
+const readExifOrientation = (
+  bytes: Uint8Array,
+  payloadStart: number,
+  payloadEnd: number,
+): ExifOrientation | null => {
+  // "Exif\0\0", an 8-byte TIFF header, then at least the IFD entry count.
+  if (payloadEnd - payloadStart < 16) return null;
+  if (
+    bytes[payloadStart] !== 0x45 ||
+    bytes[payloadStart + 1] !== 0x78 ||
+    bytes[payloadStart + 2] !== 0x69 ||
+    bytes[payloadStart + 3] !== 0x66 ||
+    bytes[payloadStart + 4] !== 0x00 ||
+    bytes[payloadStart + 5] !== 0x00
+  ) {
+    return null;
+  }
+
+  const tiffStart = payloadStart + 6;
+  const littleEndian =
+    bytes[tiffStart] === 0x49 && bytes[tiffStart + 1] === 0x49
+      ? true
+      : bytes[tiffStart] === 0x4d && bytes[tiffStart + 1] === 0x4d
+        ? false
+        : null;
+  if (littleEndian === null) return null;
+
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const readUint16 = (offset: number): number | null =>
+    offset >= tiffStart && offset + 2 <= payloadEnd
+      ? view.getUint16(offset, littleEndian)
+      : null;
+  const readUint32 = (offset: number): number | null =>
+    offset >= tiffStart && offset + 4 <= payloadEnd
+      ? view.getUint32(offset, littleEndian)
+      : null;
+
+  if (readUint16(tiffStart + 2) !== 42) return null;
+  const ifdOffset = readUint32(tiffStart + 4);
+  if (ifdOffset === null) return null;
+  const ifdStart = tiffStart + ifdOffset;
+  const entryCount = readUint16(ifdStart);
+  if (entryCount === null) return null;
+
+  // Stop at the segment boundary even if a corrupt entry count claims more.
+  const availableEntries = Math.floor((payloadEnd - (ifdStart + 2)) / 12);
+  const safeEntryCount = Math.min(entryCount, availableEntries);
+  for (let index = 0; index < safeEntryCount; index++) {
+    const entryStart = ifdStart + 2 + index * 12;
+    if (readUint16(entryStart) !== 0x0112) continue;
+
+    // Orientation is one SHORT stored inline in the four-byte value field.
+    if (readUint16(entryStart + 2) !== 3 || readUint32(entryStart + 4) !== 1) {
+      return null;
+    }
+    const orientation = readUint16(entryStart + 8);
+    return orientation !== null && isExifOrientation(orientation) ? orientation : null;
+  }
+
+  return null;
+};
+
+/**
+ * Reads frame size and display orientation without decoding the JPEG pixels.
+ *
+ * Camera captures are normally JPEG; anything else (PNG, WebP, HEIC) returns
+ * null and the caller falls back to a plain decode. Width and height are the raw
+ * SOF dimensions; `orientation` tells the caller how the decoder will display
+ * them after applying Exif metadata.
+ */
+export const readJpegMetadata = (bytes: Uint8Array): JpegMetadata | null => {
   if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return null;
 
   let offset = 2;
-  while (offset + 9 < bytes.length) {
+  let orientation: ExifOrientation = 1;
+  let frameSize: ImageSize | null = null;
+
+  while (offset + 1 < bytes.length) {
     // Segments are 0xFF followed by a marker; padding runs of 0xFF are legal.
     if (bytes[offset] !== 0xff) {
       offset++;
       continue;
     }
-    const marker = bytes[offset + 1];
-    if (marker === 0xff) {
-      offset++;
+    while (offset < bytes.length && bytes[offset] === 0xff) offset++;
+    if (offset >= bytes.length) break;
+
+    const marker = bytes[offset++];
+    if (marker === 0x00) {
+      // Byte stuffing only belongs to scan data; tolerate it in a malformed
+      // header rather than treating the following bytes as a segment length.
       continue;
+    }
+    if (marker === 0xd9 || marker === 0xda) {
+      // EOI/SOS: metadata segments cannot occur after compressed scan data.
+      break;
     }
     // Standalone markers: no length field, nothing to skip.
-    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd9)) {
-      offset += 2;
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd8)) {
       continue;
     }
+    if (offset + 2 > bytes.length) break;
 
-    const length = (bytes[offset + 2] << 8) | bytes[offset + 3];
+    const length = (bytes[offset] << 8) | bytes[offset + 1];
     if (length < 2) return null;
+    const payloadStart = offset + 2;
+    const segmentEnd = offset + length;
+    if (segmentEnd > bytes.length) {
+      // A bounded header slice can legitimately end mid-segment. Preserve a
+      // frame already found; otherwise let the caller use its safe fallback.
+      break;
+    }
+
+    if (marker === 0xe1) {
+      orientation = readExifOrientation(bytes, payloadStart, segmentEnd) ?? orientation;
+    }
 
     // SOF0/1/2/3, 5/6/7, 9/10/11, 13/14/15 all carry the frame size. 0xC4
     // (Huffman tables), 0xC8 and 0xCC are not frame headers despite the range.
     const isFrameHeader =
       marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
     if (isFrameHeader) {
-      const height = (bytes[offset + 5] << 8) | bytes[offset + 6];
-      const width = (bytes[offset + 7] << 8) | bytes[offset + 8];
-      return width > 0 && height > 0 ? { width, height } : null;
+      if (length < 9) return null;
+      const height = (bytes[payloadStart + 1] << 8) | bytes[payloadStart + 2];
+      const width = (bytes[payloadStart + 3] << 8) | bytes[payloadStart + 4];
+      if (width <= 0 || height <= 0) return null;
+      frameSize = { width, height };
     }
 
-    offset += 2 + length;
+    offset = segmentEnd;
   }
-  return null;
+
+  return frameSize ? { ...frameSize, orientation } : null;
 };
+
+/** Backwards-compatible frame-size helper used by existing checks/callers. */
+export const readJpegSize = (bytes: Uint8Array): ImageSize | null => {
+  const metadata = readJpegMetadata(bytes);
+  return metadata ? { width: metadata.width, height: metadata.height } : null;
+};
+
+/** Dimensions after the browser applies the JPEG's Exif orientation. */
+export const displayedSizeForOrientation = (
+  size: ImageSize,
+  orientation: ExifOrientation,
+): ImageSize =>
+  orientation >= 5
+    ? { width: size.height, height: size.width }
+    : { width: size.width, height: size.height };
 
 /** Longest side capped at maxDim; images already smaller are left alone. */
 export const fitWithin = (size: ImageSize, maxDim: number): ImageSize => {
@@ -144,21 +262,34 @@ export const fileToReceiptJpeg = async (
   }
 
   const header = new Uint8Array(await file.slice(0, HEADER_BYTES).arrayBuffer());
-  const size = readJpegSize(header);
-  if (!size) return downscaleViaImageElement(file, maxDim, quality);
+  const metadata = readJpegMetadata(header);
+  if (!metadata) return downscaleViaImageElement(file, maxDim, quality);
 
-  const target = fitWithin(size, maxDim);
-  // imageOrientation is what keeps a portrait receipt upright: drawImage on its
-  // own ignores the EXIF rotation flag that phone cameras set.
-  const bitmap = await createImageBitmap(file, {
-    resizeWidth: target.width,
-    resizeHeight: target.height,
-    resizeQuality: 'high',
-    imageOrientation: 'from-image',
-  });
+  // createImageBitmap applies Exif before exposing the bitmap, so rotations
+  // 5-8 need swapped target axes. Supplying the raw SOF shape here squeezes a
+  // portrait capture into a landscape rectangle.
+  const displayedSize = displayedSizeForOrientation(metadata, metadata.orientation);
+  const target = fitWithin(displayedSize, maxDim);
+
+  let bitmap: ImageBitmap;
   try {
-    // Orientation may have swapped the axes; follow the bitmap, not the header.
-    return await drawToJpeg(bitmap, { width: bitmap.width, height: bitmap.height }, quality);
+    bitmap = await createImageBitmap(file, {
+      resizeWidth: target.width,
+      resizeHeight: target.height,
+      resizeQuality: 'high',
+      imageOrientation: 'from-image',
+    });
+  } catch {
+    // Some older engines expose createImageBitmap but reject one of its resize
+    // options. Keep uploads working there via the bounded object-URL fallback.
+    return downscaleViaImageElement(file, maxDim, quality);
+  }
+  try {
+    // A browser may ignore decode-time resize hints. Cap the canvas again so a
+    // compatibility quirk cannot create a huge JPEG that exceeds Storage's
+    // five-megabyte receipt limit.
+    const outputSize = fitWithin({ width: bitmap.width, height: bitmap.height }, maxDim);
+    return await drawToJpeg(bitmap, outputSize, quality);
   } finally {
     // Frees the decoded pixels immediately instead of waiting for GC — the
     // whole point of this path on a memory-constrained WebView.

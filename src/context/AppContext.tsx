@@ -19,6 +19,7 @@ import {
   TransactionComment,
   TrashItem,
 } from "../types";
+import type { ExpenseKind } from "../lib/walletBalance";
 import { translations } from "../translations";
 
 function logSupabaseError(error: unknown, context: string) {
@@ -76,6 +77,7 @@ function mapIncome(row: any): Income {
     isHistorical: !!row.is_historical,
     categoryName: row.category_name || "",
     isOpening: !!row.is_opening,
+    transferId: row.transfer_id || undefined,
   };
 }
 
@@ -103,6 +105,8 @@ function mapExpense(row: any): Expense {
     imageUrl: row.image_url || "",
     isHistorical: !!row.is_historical,
     categoryName: row.category_name || "",
+    expenseKind: row.expense_kind || undefined,
+    transferId: row.transfer_id || undefined,
   };
 }
 
@@ -206,6 +210,76 @@ function mapTrash(row: any): TrashItem {
   };
 }
 
+type RealtimeTable =
+  | "profiles"
+  | "categories"
+  | "incomes"
+  | "expenses"
+  | "future_purchases"
+  | "savings_groups"
+  | "notifications"
+  | "wallets"
+  | "comments"
+  | "trash";
+
+const REALTIME_TABLES: RealtimeTable[] = [
+  "profiles",
+  "categories",
+  "incomes",
+  "expenses",
+  "future_purchases",
+  "savings_groups",
+  "notifications",
+  "wallets",
+  "comments",
+  "trash",
+];
+
+function getBroadcastTable(message: unknown): RealtimeTable | null {
+  const value = message as {
+    table?: unknown;
+    payload?: {
+      table?: unknown;
+      payload?: { table?: unknown };
+    };
+  };
+  const table =
+    value?.payload?.table ??
+    value?.payload?.payload?.table ??
+    value?.table;
+
+  return typeof table === "string" &&
+    REALTIME_TABLES.includes(table as RealtimeTable)
+    ? (table as RealtimeTable)
+    : null;
+}
+
+/**
+ * One movement of money, written as two rows.
+ *
+ * A same-currency wallet-to-wallet transfer and a currency exchange are the
+ * same operation — the exchange simply has a rate other than 1, and an exchange
+ * inside a single wallet has `fromWalletId === toWalletId`. Naming them
+ * separately would mean two code paths that must stay in sync forever.
+ */
+export interface TransferInput {
+  fromWalletId: string;
+  toWalletId: string;
+  fromAmount: number;
+  fromCurrency: "LYD" | "USD";
+  toAmount: number;
+  toCurrency: "LYD" | "USD";
+  /** YYYY-MM-DD, or the YYYY-MM-DDTHH:mm the wallet transfer form produces. */
+  date: string;
+  titleOut: string;
+  titleIn: string;
+  categoryId?: string;
+  notes?: string;
+  imageUrl?: string;
+  /** Which compartment of the source wallet the money leaves. */
+  fromKind?: ExpenseKind;
+}
+
 interface AppContextProps {
   user: SupabaseUser | null;
   profile: UserProfile | null;
@@ -303,6 +377,7 @@ interface AppContextProps {
     walletId?: string,
     isHistorical?: boolean,
     categoryName?: string,
+    expenseKind?: ExpenseKind,
   ) => Promise<string>;
   updateExpense: (
     id: string,
@@ -315,7 +390,9 @@ interface AppContextProps {
     imageUrl?: string,
     priority?: "low" | "medium" | "high",
     walletId?: string,
+    expenseKind?: ExpenseKind,
   ) => Promise<void>;
+  addTransfer: (t: TransferInput) => Promise<void>;
   toggleExpenseRefund: (id: string, isRefunded: boolean) => Promise<void>;
   toggleExpenseDue: (id: string, isDue: boolean) => Promise<void>;
   recoverDue: (id: string, paidAmount: number) => Promise<void>;
@@ -458,6 +535,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
   const [user, setUser] = useState<SupabaseUser | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
+  // SIGNED_IN is also emitted when Supabase re-confirms the existing session
+  // after a hidden tab becomes visible (for example, after using the camera).
+  // Keep the active id outside React state so the auth callback can distinguish
+  // that refocus event from a genuine account change without a stale closure.
+  const activeUserIdRef = React.useRef<string | null>(null);
 
   // App Config Settings (Default Fallbacks)
   const [language, setLanguage] = useState<"ar" | "en">("ar");
@@ -520,8 +602,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     localStorage.setItem("aziz_hide_historical", val ? "true" : "false");
   };
 
-  // Fetch every table once (no realtime — see migration plan for why) and
-  // populate local state. Sort orders mirror the old onSnapshot listeners.
+  // Fetch every table for initial hydration and realtime reconnect recovery.
+  // Sort orders mirror the old onSnapshot listeners.
   const fetchAllData = async () => {
     const [
       categoriesRes,
@@ -603,6 +685,81 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     setter(sort ? items.sort(sort) : items);
   };
 
+  const refreshRealtimeTable = async (
+    table: RealtimeTable,
+    uid: string,
+  ) => {
+    const ownerColumn = table === "profiles" ? "id" : "user_id";
+    const { data, error } = await supabase
+      .from(table)
+      .select("*")
+      .eq(ownerColumn, uid);
+
+    if (error) {
+      logSupabaseError(error, `${table}/realtime-refetch`);
+      return;
+    }
+    // A response started for the previous account must never land after logout
+    // or an account switch.
+    if (activeUserIdRef.current !== uid) return;
+
+    const rows = data || [];
+    switch (table) {
+      case "profiles": {
+        if (!rows[0]) return;
+        const loadedProfile = mapProfile(rows[0]);
+        setProfile(loadedProfile);
+        setLanguage(loadedProfile.preferredLanguage);
+        setCurrency(loadedProfile.preferredCurrency);
+        setExchangeRate(loadedProfile.exchangeRateUSD_LYD);
+        break;
+      }
+      case "categories":
+        setCategories(rows.map(mapCategory));
+        break;
+      case "incomes":
+        setIncomes(
+          rows.map(mapIncome).sort((x, y) => y.date.localeCompare(x.date)),
+        );
+        break;
+      case "expenses":
+        setExpenses(
+          rows.map(mapExpense).sort((x, y) => y.date.localeCompare(x.date)),
+        );
+        break;
+      case "future_purchases":
+        setPlannedPurchases(rows.map(mapFuturePurchase));
+        break;
+      case "savings_groups":
+        setSavingsGroups(rows.map(mapSavingsGroup));
+        break;
+      case "notifications":
+        setNotifications(
+          rows
+            .map(mapNotification)
+            .sort((x, y) => y.createdAt.getTime() - x.createdAt.getTime()),
+        );
+        break;
+      case "wallets":
+        setWallets(rows.map(mapWallet));
+        break;
+      case "comments":
+        setComments(
+          rows
+            .map(mapComment)
+            .sort((x, y) => x.createdAt.getTime() - y.createdAt.getTime()),
+        );
+        break;
+      case "trash":
+        setTrashItems(
+          rows
+            .map(mapTrash)
+            .sort((x, y) => y.deletedAt.getTime() - x.deletedAt.getTime()),
+        );
+        break;
+    }
+  };
+
   const loadProfileAndData = async (uid: string) => {
     // Profile and table data are independent — fire both together so the
     // loading screen costs one round trip instead of two.
@@ -643,6 +800,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
       .then(async ({ data: { session } }) => {
         if (!active) return;
         if (session?.user) {
+          activeUserIdRef.current = session.user.id;
           setUser(session.user);
           await loadProfileAndData(session.user.id);
         }
@@ -652,13 +810,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
       .finally(() => setLoading(false));
 
     const { data: authListener } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
+      (event, session) => {
         if (event === "SIGNED_IN" && session?.user) {
-          setLoading(true);
+          const userChanged = activeUserIdRef.current !== session.user.id;
+          activeUserIdRef.current = session.user.id;
+          // Keep refreshed auth metadata, but do not show the global loader or
+          // remount the app when the same session is merely re-confirmed.
           setUser(session.user);
-          await loadProfileAndData(session.user.id);
-          setLoading(false);
+          if (!userChanged) return;
+
+          setLoading(true);
+          void loadProfileAndData(session.user.id)
+            .catch((err) => console.error("Auth sign-in hydration failed:", err))
+            .finally(() => {
+              if (active && activeUserIdRef.current === session.user.id) {
+                setLoading(false);
+              }
+            });
         } else if (event === "SIGNED_OUT") {
+          activeUserIdRef.current = null;
+          setLoading(false);
           setUser(null);
           clearAllData();
         }
@@ -670,6 +841,78 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
       authListener.subscription.unsubscribe();
     };
   }, []);
+
+  // Subscribe every signed-in device to one private, per-account topic.
+  // Each event refetches only its affected table; reconnecting refetches all
+  // tables so changes made while the device was offline are also reconciled.
+  useEffect(() => {
+    if (!user) return;
+
+    const uid = user.id;
+    let disposed = false;
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+    const refreshTimers = new Map<
+      RealtimeTable,
+      ReturnType<typeof setTimeout>
+    >();
+
+    const scheduleRefresh = (table: RealtimeTable) => {
+      const existingTimer = refreshTimers.get(table);
+      if (existingTimer) clearTimeout(existingTimer);
+
+      const timer = setTimeout(() => {
+        refreshTimers.delete(table);
+        if (!disposed && activeUserIdRef.current === uid) {
+          void refreshRealtimeTable(table, uid);
+        }
+      }, 120);
+      refreshTimers.set(table, timer);
+    };
+
+    const scheduleAllRefreshes = () => {
+      REALTIME_TABLES.forEach(scheduleRefresh);
+    };
+
+    const handleDatabaseChange = (message: unknown) => {
+      const table = getBroadcastTable(message);
+      if (table) scheduleRefresh(table);
+      else scheduleAllRefreshes();
+    };
+
+    void (async () => {
+      try {
+        // With no explicit token argument, supabase-js continues using its auth
+        // callback and automatically supplies refreshed JWTs to Realtime.
+        await supabase.realtime.setAuth();
+        if (disposed || activeUserIdRef.current !== uid) return;
+
+        channel = supabase
+          .channel(`aziz:user:${uid}`, { config: { private: true } })
+          .on("broadcast", { event: "INSERT" }, handleDatabaseChange)
+          .on("broadcast", { event: "UPDATE" }, handleDatabaseChange)
+          .on("broadcast", { event: "DELETE" }, handleDatabaseChange)
+          .subscribe((status, error) => {
+            if (status === "SUBSCRIBED") {
+              scheduleAllRefreshes();
+            } else if (
+              status === "CHANNEL_ERROR" ||
+              status === "TIMED_OUT"
+            ) {
+              console.error(`Realtime ${status}:`, error);
+            }
+          });
+      } catch (error) {
+        console.error("Realtime setup failed:", error);
+      }
+    })();
+
+    return () => {
+      disposed = true;
+      refreshTimers.forEach(clearTimeout);
+      refreshTimers.clear();
+      if (channel) void supabase.removeChannel(channel);
+    };
+  }, [user?.id]);
 
   // Auth Operations
   const loginWithPassword = async (email: string, password: string) => {
@@ -810,6 +1053,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   // CATEGORY OPERATIONS
+  /** The shared home for both legs of every transfer, created on first use. */
+  const getOrCreateTransferCategory = async (): Promise<string> => {
+    const existing = categories.find(
+      (c) => c.name.includes("تحويل") || c.name.includes("Transfer"),
+    );
+    if (existing) return existing.id;
+    return addCategory(
+      "تحويل بين المحافظ / Transfer",
+      "expense",
+      "sky",
+      "ArrowRightLeft",
+    );
+  };
+
   const addCategory = async (
     name: string,
     type: "income" | "expense" | "purchase",
@@ -1014,6 +1271,37 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   };
 
+  /**
+   * Sends the other half of a transfer to the trash alongside the half the user
+   * clicked. Deleting one leg alone leaves the money having left one wallet and
+   * never arrived in the other — a silent, permanent hole in net worth. A
+   * transfer is one movement and is only ever deleted as one.
+   */
+  const trashTransferSibling = async (
+    transferId: string | undefined,
+    deletedLeg: "income" | "expense",
+  ) => {
+    if (!transferId || !user) return;
+    const siblingType = deletedLeg === "expense" ? "income" : "expense";
+    const sibling =
+      deletedLeg === "expense"
+        ? incomes.find((i) => i.transferId === transferId)
+        : expenses.find((e) => e.transferId === transferId);
+    if (!sibling) return;
+
+    const { error } = await supabase.rpc("move_to_trash", {
+      p_type: siblingType,
+      p_id: sibling.id,
+      p_deleted_by: user.email || "User",
+    });
+    if (error) {
+      logSupabaseError(error, `transfers/${transferId}/delete-sibling`);
+      return;
+    }
+    if (siblingType === "income") setIncomes((prev) => prev.filter((i) => i.id !== sibling.id));
+    else setExpenses((prev) => prev.filter((e) => e.id !== sibling.id));
+  };
+
   const deleteIncome = async (id: string) => {
     if (!user) return;
     try {
@@ -1028,6 +1316,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
       if (error) throw error;
 
       setIncomes((prev) => prev.filter((i) => i.id !== id));
+      await trashTransferSibling(item.transferId, "income");
       await refetchOne("trash", mapTrash, setTrashItems, (a, b) => b.deletedAt.getTime() - a.deletedAt.getTime());
 
       await addNotificationArEn(
@@ -1040,6 +1329,77 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     } catch (e) {
       logSupabaseError(e, `incomes/${id}`);
     }
+  };
+
+  /**
+   * Writes both legs of a transfer or exchange under one `transfer_id`.
+   *
+   * Inserts directly rather than going through addExpense/addIncome: those
+   * raise a high-expense notification and would announce a 912 LYD exchange as
+   * overspending, and neither of them can undo the other's row.
+   */
+  const addTransfer = async (t: TransferInput) => {
+    if (!user) throw new Error("Unauthorized");
+    const transferId = crypto.randomUUID();
+    // Both entry points — the wallet transfer form and the exchange tab — file
+    // their legs under one shared category, so the category filter keeps working
+    // as an escape hatch for finding movements. Resolved here rather than by
+    // each caller, which is how the two of them drifted apart before.
+    const categoryId = t.categoryId ?? (await getOrCreateTransferCategory());
+    const shared = {
+      user_id: user.id,
+      date: t.date,
+      category_id: categoryId || null,
+      notes: t.notes || null,
+      image_url: t.imageUrl || null,
+      transfer_id: transferId,
+    };
+
+    const { data: outRow, error: outError } = await supabase
+      .from("expenses")
+      .insert({
+        ...shared,
+        amount: t.fromAmount,
+        currency: t.fromCurrency,
+        title: t.titleOut,
+        wallet_id: t.fromWalletId,
+        expense_kind: t.fromKind ?? null,
+      })
+      .select()
+      .single();
+    if (outError) {
+      logSupabaseError(outError, "transfers/out");
+      throw outError;
+    }
+
+    const { data: inRow, error: inError } = await supabase
+      .from("incomes")
+      .insert({
+        ...shared,
+        amount: t.toAmount,
+        currency: t.toCurrency,
+        title: t.titleIn,
+        wallet_id: t.toWalletId,
+      })
+      .select()
+      .single();
+
+    if (inError) {
+      // The money has left the source wallet and arrived nowhere. A half-written
+      // transfer destroys value rather than duplicating it, so the first leg is
+      // removed outright — it never legitimately existed, and sending it to the
+      // trash would leave it restorable as a phantom expense.
+      const { error: rollbackError } = await supabase
+        .from("expenses")
+        .delete()
+        .eq("id", outRow.id);
+      if (rollbackError) logSupabaseError(rollbackError, "transfers/rollback");
+      logSupabaseError(inError, "transfers/in");
+      throw inError;
+    }
+
+    setExpenses((prev) => [mapExpense(outRow), ...prev].sort((x, y) => y.date.localeCompare(x.date)));
+    setIncomes((prev) => [mapIncome(inRow), ...prev].sort((x, y) => y.date.localeCompare(x.date)));
   };
 
   // EXPENSE OPERATIONS
@@ -1055,6 +1415,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     walletId?: string,
     isHistorical?: boolean,
     categoryName?: string,
+    expenseKind?: ExpenseKind,
   ): Promise<string> => {
     if (!user) throw new Error("Unauthorized");
     const { data, error } = await supabase
@@ -1072,6 +1433,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
         wallet_id: walletId || null,
         is_historical: isHistorical ?? null,
         category_name: categoryName ?? null,
+        expense_kind: expenseKind ?? null,
       })
       .select()
       .single();
@@ -1082,8 +1444,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     const created = mapExpense(data);
     setExpenses((prev) => [created, ...prev].sort((x, y) => y.date.localeCompare(x.date)));
 
-    // Budget Exceeded Reminders Alert Trigger check
-    if (amount >= 1000) {
+    // Budget Exceeded Reminders Alert Trigger check. A withdrawal moves money
+    // between the wallet's own compartments, so a large one is not overspending.
+    if (amount >= 1000 && expenseKind !== "cash_withdrawal") {
       await addNotificationArEn(
         "تنبيه مصروف مرتفع",
         "High Expense Alert",
@@ -1106,6 +1469,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     imageUrl?: string,
     priority?: "low" | "medium" | "high",
     walletId?: string,
+    expenseKind?: ExpenseKind,
   ) => {
     try {
       const { data, error } = await supabase
@@ -1120,6 +1484,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
           image_url: imageUrl ?? null,
           priority: priority ?? null,
           wallet_id: walletId ?? null,
+          expense_kind: expenseKind ?? null,
         })
         .eq("id", id)
         .select()
@@ -1151,6 +1516,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
       if (error) throw error;
 
       setExpenses((prev) => prev.filter((e) => e.id !== id));
+      await trashTransferSibling(item.transferId, "expense");
       await refetchOne("trash", mapTrash, setTrashItems, (a, b) => b.deletedAt.getTime() - a.deletedAt.getTime());
 
       await addNotificationArEn(
@@ -1839,6 +2205,35 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
               ? { table: "wallets", mapper: mapWallet, setter: setWallets as (v: any[]) => void, sort: undefined }
               : { table: "comments", mapper: mapComment, setter: setComments as (v: any[]) => void, sort: (a: TransactionComment, b: TransactionComment) => a.createdAt.getTime() - b.createdAt.getTime() };
 
+  /**
+   * Brings a transfer's other leg back with it.
+   *
+   * The harder half of paired deletion: restoring one leg on its own recreates
+   * the same hole that deleting one leg does, only in the opposite direction.
+   * Returns false when the sibling is gone for good — the 3-day purge can take
+   * one leg while the user still holds the other in the trash — so the caller
+   * can say so rather than silently restoring half a movement.
+   */
+  const restoreTransferSibling = async (
+    transferId: string | undefined,
+    restoredType: TrashItem["originalType"],
+  ): Promise<boolean> => {
+    if (!transferId) return true;
+    const sibling = trashItems.find(
+      (itm) => itm.originalType !== restoredType && itm.originalData?.transfer_id === transferId,
+    );
+    if (!sibling) return false;
+
+    const { error } = await supabase.rpc("restore_from_trash", { p_trash_id: sibling.id });
+    if (error) {
+      logSupabaseError(error, `transfers/${transferId}/restore-sibling`);
+      return false;
+    }
+    const dest = sourceTableFor(sibling.originalType);
+    await refetchOne(dest.table, dest.mapper, dest.setter, dest.sort as any);
+    return true;
+  };
+
   const restoreTrashItem = async (id: string) => {
     if (!user) return;
     try {
@@ -1850,7 +2245,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
 
       const dest = sourceTableFor(trashItem.originalType);
       await refetchOne(dest.table, dest.mapper, dest.setter, dest.sort as any);
+      const transferId = trashItem.originalData?.transfer_id as string | undefined;
+      const pairRestored = await restoreTransferSibling(transferId, trashItem.originalType);
       await refetchOne("trash", mapTrash, setTrashItems, (a, b) => b.deletedAt.getTime() - a.deletedAt.getTime());
+
+      if (transferId && !pairRestored) {
+        await addNotificationArEn(
+          "تم استعادة نصف تحويل فقط",
+          "Only half a transfer was restored",
+          "الطرف الآخر من هذا التحويل لم يعد في السلة، لذلك تمت استعادة هذا الطرف وحده. راجع أرصدة المحفظتين وأضف الطرف الناقص يدوياً.",
+          "The other leg of this transfer is no longer in the trash, so this leg was restored on its own. Check both wallet balances and re-enter the missing leg manually.",
+          "general",
+        );
+      }
 
       const titleToShow =
         trashItem.originalData.name ||
@@ -1976,6 +2383,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
         deleteCategory,
 
         addIncome,
+        addTransfer,
         updateIncome,
         deleteIncome,
 
