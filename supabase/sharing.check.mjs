@@ -116,6 +116,7 @@ await as(V, 'viewer', async () => {
   assert.equal(Number(lyd.in_cash), 250);
   assert.equal(Number(bal.find((b) => b.currency === 'USD').on_card), -10);
   assert.equal(lyd.owner_name, 'Owner');
+  assert.equal(Number(lyd.initial_balance), 1000, 'opening balance missing');
 
   const tx = (await db.query(`select * from public.viewer_wallet_transactions('${W1}')`)).rows;
   assert.equal(tx.length, 8);
@@ -147,6 +148,7 @@ await as(O, null, () => db.exec(`update public.wallet_shares set mode = 'balance
 await as(V, 'viewer', async () => {
   assert.equal((await db.query(`select * from public.viewer_wallet_transactions('${W1}')`)).rows.length, 0, 'balance mode leaked rows');
   assert.equal((await db.query(`select * from public.viewer_wallets()`)).rows.length, 2, 'balance mode lost the balance');
+  assert.equal(Number((await db.query(`select initial_balance from public.viewer_wallets() limit 1`)).rows[0].initial_balance), 1000, 'balance mode lost the opening balance');
 });
 
 // A different viewer sees nothing.

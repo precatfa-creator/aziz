@@ -20,6 +20,8 @@ interface BalanceRow {
   primary_currency: string;
   mode: 'balance' | 'all' | 'partial';
   owner_name: string;
+  /** The wallet's opening balance, in primary_currency. Same on every row of a wallet. */
+  initial_balance: number | null;
   currency: string;
   on_card: number;
   in_cash: number;
@@ -51,6 +53,17 @@ const categoryLabel = (name: string, lang: string) => {
   const [a, e] = name.split(' / ');
   return (lang === 'ar' ? a : e) || name;
 };
+
+// Null only if the database predates the column; show nothing rather than 0.
+const OpeningBalance: React.FC<{ info: BalanceRow; lang: string }> = ({ info, lang }) =>
+  info.initial_balance == null ? null : (
+    <p className="mt-2 text-[11px] font-semibold text-slate-500 dark:text-slate-400 tabular-nums">
+      {lang === 'ar' ? 'الرصيد الافتتاحي' : 'Opening balance'}{' '}
+      <span className="font-bold text-slate-700 dark:text-slate-200">
+        {money(info.initial_balance, info.primary_currency, lang)}
+      </span>
+    </p>
+  );
 
 export const ViewerPortal: React.FC = () => {
   const [lang, setLang] = useState<'ar' | 'en'>(() => {
@@ -206,6 +219,7 @@ export const ViewerPortal: React.FC = () => {
                       )}
                     </div>
                   ))}
+                  <OpeningBalance info={info} lang={lang} />
                   {!canOpen && (
                     <p className="mt-3 text-[11px] font-semibold text-slate-500 dark:text-slate-400 flex items-center gap-1">
                       <Lock className="w-3 h-3" />
@@ -249,9 +263,12 @@ export const ViewerPortal: React.FC = () => {
             <ArrowRight className="w-3.5 h-3.5 ltr:rotate-180" />
             {ar ? 'كل المحافظ' : 'All wallets'}
           </button>
-          <h2 id="wallet-title" className="text-xl font-black text-brand-slate dark:text-white">
-            {open.info.name}
-          </h2>
+          <div>
+            <h2 id="wallet-title" className="text-xl font-black text-brand-slate dark:text-white">
+              {open.info.name}
+            </h2>
+            <OpeningBalance info={open.info} lang={lang} />
+          </div>
 
           {hasCash && (
             <div className="grid grid-cols-3 p-1 bg-slate-100/60 dark:bg-slate-950/50 rounded-xl max-w-xs" role="group">
