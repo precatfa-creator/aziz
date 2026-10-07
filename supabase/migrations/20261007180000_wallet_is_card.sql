@@ -26,8 +26,7 @@ security definer
 set search_path = ''
 as $$
   with shared as (
-    -- A cash wallet has no sides to scope: its share is always the whole of it.
-    select s.wallet_id, s.mode, case when w.is_card then s.compartment else 'all' end as compartment, w.name, w.color, w.icon, w.currency as primary_currency,
+    select s.wallet_id, s.mode, s.compartment, w.name, w.color, w.icon, w.currency as primary_currency,
            w.initial_balance, coalesce(p.name, '') as owner_name, w.is_card
     from public.wallet_shares s
     join public.wallets w on w.id = s.wallet_id
@@ -60,9 +59,14 @@ as $$
   )
   -- A compartment-scoped share gets only its own side: the other side comes
   -- back null. The opening balance opens the card, so a cash share omits it.
+  -- Same rule as inCompartment(): a cash wallet is all cash, so a card-only
+  -- share of one receives nothing and a cash-only share receives all of it.
+  -- The opening balance belongs to the card side of a card, and to the cash
+  -- of a cash wallet.
   select sh.wallet_id, sh.name, sh.color, sh.icon, sh.primary_currency, sh.mode, sh.compartment,
          sh.owner_name,
-         case when sh.compartment = 'cash' then null else sh.initial_balance end,
+         case when sh.compartment = (case when sh.is_card then 'cash' else 'card' end) then null
+              else sh.initial_balance end,
          c.currency,
          -- A cash wallet is all cash, same total (walletBalance() does the same).
          case when sh.compartment = 'cash' or not sh.is_card then null else
@@ -103,8 +107,11 @@ security definer
 set search_path = ''
 as $$
   with share as (
-    -- A cash wallet has no sides to scope: its share is always the whole of it.
-    select case when w.is_card then s.compartment else 'all' end as compartment
+    -- On a cash wallet every row is cash: a card-only share gets none, any
+    -- other scope gets all (same rule as inCompartment()).
+    select case when w.is_card then s.compartment
+                when s.compartment = 'card' then 'none'
+                else 'all' end as compartment
     from public.wallet_shares s
     join public.wallets w on w.id = s.wallet_id
     where s.wallet_id = p_wallet_id and s.viewer_id = auth.uid() and s.mode = 'all'

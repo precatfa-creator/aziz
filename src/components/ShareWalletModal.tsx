@@ -274,7 +274,7 @@ export const ShareWalletModal: React.FC<{ wallet: Wallet; onClose: () => void }>
                   })}
                 </fieldset>
 
-                {walletHasCash && (modes[v.id] ?? 'none') !== 'none' && (
+                {wallet.isCard !== false && walletHasCash && (modes[v.id] ?? 'none') !== 'none' && (
                   <fieldset disabled={busy === v.id} className="disabled:opacity-60">
                     <legend className="mb-1.5 text-[11px] font-extrabold text-slate-600 dark:text-slate-300">
                       {ar ? 'أي جزء من المحفظة؟' : 'Which part of the wallet?'}

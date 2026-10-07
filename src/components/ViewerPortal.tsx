@@ -220,7 +220,12 @@ export const ViewerPortal: React.FC = () => {
                     </div>
                     {canOpen && <ArrowRight className="w-4 h-4 text-slate-400 rtl:rotate-180 shrink-0" />}
                   </div>
-                  {buckets.map((b) => (
+                  {buckets.every((b) => b.on_card == null && b.in_cash == null) && (
+                    <p className="mt-3 text-xs font-semibold text-slate-500 dark:text-slate-400">
+                      {ar ? 'لا يوجد ما يُعرض من هذه المحفظة حالياً.' : 'Nothing from this wallet is shared right now.'}
+                    </p>
+                  )}
+                  {buckets.filter((b) => b.on_card != null || b.in_cash != null).map((b) => (
                     <div key={b.currency} className="mt-3">
                       <p className="text-2xl font-black text-brand-slate dark:text-white tabular-nums">
                         {money(Number(b.on_card ?? 0) + Number(b.in_cash ?? 0), b.currency, lang)}

@@ -191,6 +191,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
   const [createAndTopupWallet, setCreateAndTopupWallet] = useState(false);
   const [newWalletName, setNewWalletName] = useState("");
   const [newWalletColor, setNewWalletColor] = useState("emerald");
+  const [newWalletIsCard, setNewWalletIsCard] = useState(false);
 
   // Searchable Dropdown for Categories
   const [typedCategoryQuery, setTypedCategoryQuery] = useState("");
@@ -634,6 +635,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
           currency,
           newWalletColor || "emerald",
           "Wallet",
+          newWalletIsCard,
         );
       }
 
@@ -897,6 +899,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
     setActiveSubTab("new");
     setCreateAndTopupWallet(false);
     setNewWalletName("");
+    setNewWalletIsCard(false);
     setNewWalletColor("emerald");
   };
 
@@ -917,6 +920,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
     setImageUrl("");
     setCreateAndTopupWallet(false);
     setNewWalletName("");
+    setNewWalletIsCard(false);
     setNewWalletColor("emerald");
     // The rate box refills from settings on the next visit to the exchange tab;
     // leaving a stale one behind would quietly price the following exchange.
@@ -1780,6 +1784,16 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                             })}
                           </div>
                         </div>
+
+                        <label className="sm:col-span-2 flex items-center gap-2 text-[11px] font-bold text-slate-600 dark:text-slate-300 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={newWalletIsCard}
+                            onChange={(e) => setNewWalletIsCard(e.target.checked)}
+                            className="w-4 h-4 accent-brand-slate cursor-pointer"
+                          />
+                          {language === "ar" ? "هذه بطاقة (يمكن السحب منها نقداً)" : "This is a card (cash can be withdrawn from it)"}
+                        </label>
                       </div>
                     )}
                   </div>

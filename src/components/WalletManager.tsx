@@ -553,6 +553,13 @@ export const WalletManager: React.FC<WalletManagerProps> = ({ setCurrentTab }) =
                         ? "البطاقة لها رصيد عليها، ويمكن السحب منها نقداً. بدون التحديد تُعامل المحفظة كنقد بالكامل."
                         : "A card holds a balance and can have cash withdrawn from it. Unticked, the wallet is all cash."}
                     </span>
+                    {editingId && !isCard && wallets.find((x) => x.id === editingId)?.isCard !== false && (
+                      <span className="block mt-1.5 text-[10px] font-bold text-amber-600 dark:text-amber-400">
+                        {language === "ar"
+                          ? "إن كانت مشاركة «البطاقة فقط»، لن يرى المشاهد شيئاً؛ ومشاركة «النقد فقط» سيرى بها المحفظة كاملة."
+                          : "If it’s shared as “Card only”, that viewer will see nothing; a “Cash only” share will see the whole wallet."}
+                      </span>
+                    )}
                     {editingId && !isCard && expenses.some(
                       (x) => x.walletId === editingId && (x.expenseKind === "cash_withdrawal" || x.expenseKind === "cash_spend"),
                     ) && (

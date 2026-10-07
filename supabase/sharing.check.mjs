@@ -175,13 +175,24 @@ await db.exec(`
   insert into public.expenses (user_id, amount, currency, title, date, wallet_id) values ('${O}', 50, 'LYD', 'Bread', '2026-02-02', '${W2}');
 `);
 await as(O, null, () => db.exec(`insert into public.wallet_shares (wallet_id, viewer_id, owner_id, mode, compartment) values ('${W2}', '${V}', '${O}', 'all', 'card')`));
+// A card-only share of a cash wallet receives nothing — unticking "card"
+// must never widen what a viewer was given.
+await as(V, 'viewer', async () => {
+  const w2 = (await db.query(`select * from public.viewer_wallets()`)).rows.find((b) => b.wallet_id === W2);
+  assert.equal(w2.on_card, null, 'a cash wallet has no card balance');
+  assert.equal(w2.in_cash, null, 'a card-only share of a cash wallet leaked its cash');
+  assert.equal(w2.initial_balance, null, 'a card-only share of a cash wallet leaked its opening balance');
+  assert.equal((await db.query(`select * from public.viewer_wallet_transactions('${W2}')`)).rows.length, 0,
+    'a card-only share of a cash wallet leaked rows');
+});
+await as(O, null, () => db.exec(`update public.wallet_shares set compartment = 'cash' where wallet_id = '${W2}'`));
 await as(V, 'viewer', async () => {
   const w2 = (await db.query(`select * from public.viewer_wallets()`)).rows.find((b) => b.wallet_id === W2);
   assert.equal(w2.on_card, null, 'a cash wallet has no card balance');
   assert.equal(Number(w2.in_cash), 250, 'a cash wallet holds its whole total as cash');
-  assert.equal(w2.compartment, 'all', 'scope must not apply to a cash wallet');
+  assert.equal(Number(w2.initial_balance), 0, 'a cash wallet\'s opening balance is its cash opening');
   const tx = (await db.query(`select * from public.viewer_wallet_transactions('${W2}')`)).rows;
-  assert.equal(tx.length, 2, 'a card scope must not hide a cash wallet\'s rows');
+  assert.equal(tx.length, 2, 'a cash-only share of a cash wallet must see every row');
   const w1 = (await db.query(`select * from public.viewer_wallets()`)).rows.find((b) => b.wallet_id === W1 && b.currency === 'LYD');
   assert.equal(Number(w1.on_card), 1120, 'existing card wallet changed');
   assert.equal(Number(w1.in_cash), 250, 'existing card wallet changed');
