@@ -199,6 +199,33 @@ await as(V, 'viewer', async () => {
 });
 await as(O, null, () => db.exec(`delete from public.wallet_shares where wallet_id = '${W2}'`));
 
+// Income received as cash lands in W1's cash, not on its card. Untagged
+// incomes (all of the above) stay on the card.
+await as(O, null, () => db.exec(`
+  insert into public.incomes (user_id, amount, currency, title, date, wallet_id, income_kind) values
+    ('${O}', 40, 'LYD', 'Cash tip', '2026-01-09', '${W1}', 'cash')`));
+await as(O, null, () => rejects(db.exec(`update public.incomes set income_kind = 'pocket' where title = 'Cash tip'`), 'unknown income kind accepted'));
+await as(V, 'viewer', async () => {
+  const lyd = (await db.query(`select * from public.viewer_wallets()`)).rows.find((b) => b.wallet_id === W1 && b.currency === 'LYD');
+  assert.equal(Number(lyd.on_card), 1120, 'cash income landed on the card');
+  assert.equal(Number(lyd.in_cash), 290, 'cash income missing from cash');
+});
+await as(O, null, () => db.exec(`update public.wallet_shares set compartment = 'cash' where wallet_id = '${W1}'`));
+await as(V, 'viewer', async () => {
+  const tx = (await db.query(`select * from public.viewer_wallet_transactions('${W1}')`)).rows;
+  assert.deepEqual(tx.map((t) => t.date).sort(), ['2026-01-05', '2026-01-06', '2026-01-09'], 'cash share must see the cash income');
+  assert.equal(tx.find((t) => t.date === '2026-01-09').expense_kind, 'cash');
+});
+await as(O, null, () => db.exec(`update public.wallet_shares set compartment = 'card' where wallet_id = '${W1}'`));
+await as(V, 'viewer', async () => {
+  const tx = (await db.query(`select * from public.viewer_wallet_transactions('${W1}')`)).rows;
+  assert.ok(!tx.some((t) => t.date === '2026-01-09'), 'card share saw the cash income');
+  assert.equal(tx.filter((t) => t.type === 'income').length, 3, 'card share lost card incomes');
+});
+await as(O, null, () => db.exec(`
+  update public.wallet_shares set compartment = 'all' where wallet_id = '${W1}';
+  delete from public.incomes where title = 'Cash tip'`));
+
 // Balance mode returns no rows.
 await as(O, null, () => db.exec(`update public.wallet_shares set mode = 'balance'`));
 await as(V, 'viewer', async () => {

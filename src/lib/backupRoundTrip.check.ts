@@ -58,7 +58,7 @@ const input = {
   ],
   incomes: [
     { id: 'i1', userId: 'u1', amount: 1200, currency: 'LYD', title: 'Salary', date: '2026-01-01', categoryId: 'c2', walletId: 'w1', notes: 'monthly', createdAt: now, updatedAt: now },
-    { id: 'i2', userId: 'u1', amount: 100, currency: 'USD', title: 'صرافة', date: '2026-01-04', categoryId: 'c2', walletId: 'w1', transferId: 'tr1', createdAt: now, updatedAt: now },
+    { id: 'i2', userId: 'u1', amount: 100, currency: 'USD', title: 'صرافة', date: '2026-01-04', categoryId: 'c2', walletId: 'w1', transferId: 'tr1', incomeKind: 'cash', createdAt: now, updatedAt: now },
   ],
   expenses: [
     { id: 'e1', userId: 'u1', amount: 40, currency: 'LYD', title: 'Lunch', date: '2026-01-02', categoryId: 'c1', walletId: 'w1', isRefunded: false, hiddenFromViewers: true, createdAt: now, updatedAt: now },
@@ -117,6 +117,9 @@ assert.equal(outLeg.transfer_id, inLeg.transfer_id, 'the two legs came back unpa
 assert.notEqual(outLeg.transfer_id, 'tr1', 'transfer id was reused rather than remapped');
 assert.equal(inserted.expenses[0].transfer_id, null, 'an ordinary expense gained a pairing');
 assert.equal(inserted.incomes[0].transfer_id, null, 'an ordinary income gained a pairing');
+// Drop this and cash that was received comes back on the card.
+assert.equal(inserted.incomes[1].income_kind, 'cash', 'cash income restored onto the card');
+assert.equal(inserted.incomes[0].income_kind, undefined, 'a card income must restore exactly as before');
 // Drop this and a restore quietly un-hides every row the owner kept from viewers.
 assert.equal(inserted.expenses[0].hidden_from_viewers, true, 'hidden-from-viewers flag lost on restore');
 assert.equal(inserted.expenses[1].hidden_from_viewers, null);

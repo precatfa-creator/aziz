@@ -44,7 +44,7 @@ const ERRORS: Record<string, { ar: string; en: string }> = {
 };
 
 export const ShareWalletModal: React.FC<{ wallet: Wallet; onClose: () => void }> = ({ wallet, onClose }) => {
-  const { language, user, expenses } = useApp();
+  const { language, user, expenses, incomes } = useApp();
   const ar = language === 'ar';
   const [viewers, setViewers] = useState<Viewer[]>([]);
   const [modes, setModes] = useState<Record<string, Mode>>({});
@@ -52,7 +52,7 @@ export const ShareWalletModal: React.FC<{ wallet: Wallet; onClose: () => void }>
   // The card/cash choice only means something once this wallet holds cash.
   const walletHasCash = expenses.some(
     (e) => e.walletId === wallet.id && (e.expenseKind === 'cash_withdrawal' || e.expenseKind === 'cash_spend'),
-  );
+  ) || incomes.some((i) => i.walletId === wallet.id && i.incomeKind === 'cash');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');

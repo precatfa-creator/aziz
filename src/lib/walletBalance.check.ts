@@ -275,4 +275,30 @@ assert.strictEqual(inCompartment(expense(500, 'cash_spend'), 'expense', 'cash'),
   assert.strictEqual(inCompartment(income(5), 'income', 'card', false), false);
 }
 
+// Income received as cash goes to cash, not the card. Same for the receiving
+// half of a transfer. Untagged incomes stay on the card, and the total and
+// earnings do not depend on where the money landed.
+{
+  const onCardOnly = walletBalance(card, [income(1000), income(200, { transferId: 't1' })], []);
+  const tagged = walletBalance(
+    card,
+    [income(1000, { incomeKind: 'cash' }), income(200, { transferId: 't1', incomeKind: 'cash' })],
+    [expense(300, 'cash_spend')],
+  );
+  assert.strictEqual(onCardOnly.onCard, 2500 + 1200);
+  assert.strictEqual(onCardOnly.inCash, 0);
+  assert.strictEqual(tagged.onCard, 2500, 'cash income must not touch the card');
+  assert.strictEqual(tagged.inCash, 1200 - 300);
+  assert.strictEqual(tagged.totalIncomes, 1000, 'cash income is still earned');
+  assert.strictEqual(tagged.transferIn, 200);
+
+  const asCash = walletBalance({ ...card, isCard: false }, [income(1000, { incomeKind: 'cash' })], []);
+  assert.strictEqual(asCash.inCash, 3500);
+  assert.strictEqual(asCash.onCard, 0);
+
+  assert.strictEqual(inCompartment(income(5, { incomeKind: 'cash' }), 'income', 'cash'), true);
+  assert.strictEqual(inCompartment(income(5, { incomeKind: 'cash' }), 'income', 'card'), false);
+  assert.strictEqual(inCompartment(income(5, { incomeKind: 'card' }), 'income', 'card'), true);
+}
+
 console.log('walletBalance.check.ts: all assertions passed');

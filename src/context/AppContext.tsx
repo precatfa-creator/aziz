@@ -19,7 +19,7 @@ import {
   TransactionComment,
   TrashItem,
 } from "../types";
-import type { ExpenseKind } from "../lib/walletBalance";
+import type { ExpenseKind, IncomeKind } from "../lib/walletBalance";
 import { translations } from "../translations";
 
 function logSupabaseError(error: unknown, context: string) {
@@ -59,6 +59,10 @@ function mapCategory(row: any): Category {
   };
 }
 
+// income_kind is written only when it says something: null already reads as
+// 'card', and a card income then inserts exactly the columns it always did.
+const cashColumn = (kind?: IncomeKind) => (kind === "cash" ? { income_kind: "cash" } : {});
+
 function mapIncome(row: any): Income {
   return {
     id: row.id,
@@ -78,6 +82,7 @@ function mapIncome(row: any): Income {
     categoryName: row.category_name || "",
     isOpening: !!row.is_opening,
     transferId: row.transfer_id || undefined,
+    incomeKind: row.income_kind || undefined,
     hiddenFromViewers: !!row.hidden_from_viewers,
   };
 }
@@ -281,6 +286,8 @@ export interface TransferInput {
   imageUrl?: string;
   /** Which compartment of the source wallet the money leaves. */
   fromKind?: ExpenseKind;
+  /** Which compartment of the receiving wallet it lands in. */
+  toKind?: IncomeKind;
 }
 
 interface AppContextProps {
@@ -352,6 +359,7 @@ interface AppContextProps {
     isHistorical?: boolean,
     categoryName?: string,
     isOpening?: boolean,
+    incomeKind?: IncomeKind,
   ) => Promise<void>;
   updateIncome: (
     id: string,
@@ -364,6 +372,7 @@ interface AppContextProps {
     imageUrl?: string,
     priority?: "low" | "medium" | "high",
     walletId?: string,
+    incomeKind?: IncomeKind,
   ) => Promise<void>;
   deleteIncome: (id: string) => Promise<void>;
 
@@ -1217,6 +1226,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     isHistorical?: boolean,
     categoryName?: string,
     isOpening?: boolean,
+    incomeKind?: IncomeKind,
   ) => {
     if (!user) return;
     try {
@@ -1236,6 +1246,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
           is_historical: isHistorical ?? null,
           category_name: categoryName ?? null,
           is_opening: isOpening ?? null,
+          ...cashColumn(incomeKind),
         })
         .select()
         .single();
@@ -1260,11 +1271,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     imageUrl?: string,
     priority?: "low" | "medium" | "high",
     walletId?: string,
+    incomeKind?: IncomeKind,
   ) => {
+    // Touches income_kind only when the row is or was cash, so moving it back
+    // to the card clears the tag and a card edit sends exactly what it used to.
+    const wasCash = incomes.find((i) => i.id === id)?.incomeKind === "cash";
     try {
       const { data, error } = await supabase
         .from("incomes")
         .update({
+          ...(wasCash ? { income_kind: null } : {}),
+          ...cashColumn(incomeKind),
           amount,
           currency,
           title,
@@ -1399,6 +1416,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
         currency: t.toCurrency,
         title: t.titleIn,
         wallet_id: t.toWalletId,
+        ...cashColumn(t.toKind),
       })
       .select()
       .single();

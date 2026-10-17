@@ -108,6 +108,8 @@ export const WalletManager: React.FC<WalletManagerProps> = ({ setCurrentTab }) =
   });
   const [transferNotes, setTransferNotes] = useState("");
   const [transferError, setTransferError] = useState("");
+  // Where the money lands in the receiving wallet, when that wallet is a card.
+  const [transferToCash, setTransferToCash] = useState(false);
 
   const resetTransferForm = () => {
     setFromWalletId("");
@@ -122,6 +124,7 @@ export const WalletManager: React.FC<WalletManagerProps> = ({ setCurrentTab }) =
     });
     setTransferNotes("");
     setTransferError("");
+    setTransferToCash(false);
     setShowTransferForm(false);
   };
 
@@ -195,6 +198,7 @@ export const WalletManager: React.FC<WalletManagerProps> = ({ setCurrentTab }) =
         titleOut: titleExp,
         titleIn: titleInc,
         notes: transferNotes,
+        toKind: transferToCash ? "cash" : "card",
       });
 
       resetTransferForm();
@@ -399,6 +403,23 @@ export const WalletManager: React.FC<WalletManagerProps> = ({ setCurrentTab }) =
                     className="glass-input px-3 py-2 text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-sky-500/50 dark:text-white placeholder:text-slate-400/70"
                   />
                 </div>
+
+                {/* A cash wallet is all cash; only a card asks where it lands. */}
+                {wallets.find((w) => w.id === toWalletId)?.isCard !== false && toWalletId && (
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold text-slate-500 dark:text-slate-400">
+                      {language === 'ar' ? 'يصل إلى' : 'Arrives as'}
+                    </label>
+                    <select
+                      value={transferToCash ? "cash" : "card"}
+                      onChange={(e) => setTransferToCash(e.target.value === "cash")}
+                      className="glass-input px-3 py-2.5 text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-sky-500/50 dark:text-white dark:bg-slate-900"
+                    >
+                      <option value="card">{language === 'ar' ? 'على البطاقة' : 'On the card'}</option>
+                      <option value="cash">{language === 'ar' ? 'نقداً في اليد' : 'Cash in hand'}</option>
+                    </select>
+                  </div>
+                )}
 
                 <div className="flex flex-col gap-1.5">
                   <div className="grid grid-cols-2 gap-2">

@@ -11,7 +11,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ArrowRight, Banknote, CreditCard, Flag, Languages, Lock, LogOut, Moon, RefreshCw, Sun, Wallet } from 'lucide-react';
 import { supabase } from '../supabase';
-import { inCompartment, type Compartment } from '../lib/walletBalance';
+import { inCompartment, type Compartment, type ExpenseKind } from '../lib/walletBalance';
 
 interface BalanceRow {
   wallet_id: string;
@@ -35,7 +35,8 @@ interface TxRow {
   date: string;
   amount: number;
   currency: string;
-  expense_kind: 'wallet_spend' | 'cash_withdrawal' | 'cash_spend' | null;
+  /** On an income row: 'cash' when it arrived as cash, null when on the card. */
+  expense_kind: 'wallet_spend' | 'cash_withdrawal' | 'cash_spend' | 'cash' | null;
   is_transfer: boolean;
   is_masked: boolean;
   title: string;
@@ -142,9 +143,15 @@ export const ViewerPortal: React.FC = () => {
 
   const open = wallets.find((w) => w.info.wallet_id === openId);
   const visibleTxs = (txs ?? []).filter(
-    (t) => compartment === 'all' || inCompartment({ expenseKind: t.expense_kind ?? undefined }, t.type, compartment),
+    (t) => compartment === 'all' || inCompartment(
+      t.type === 'income'
+        ? { incomeKind: t.expense_kind === 'cash' ? 'cash' : 'card' }
+        : { expenseKind: (t.expense_kind as ExpenseKind | null) ?? undefined },
+      t.type,
+      compartment,
+    ),
   );
-  const hasCash = open?.info.compartment === 'all' && (txs ?? []).some((t) => t.expense_kind === 'cash_withdrawal' || t.expense_kind === 'cash_spend');
+  const hasCash = open?.info.compartment === 'all' && (txs ?? []).some((t) => t.expense_kind === 'cash_withdrawal' || t.expense_kind === 'cash_spend' || t.expense_kind === 'cash');
 
   const iconBtn =
     'p-2 rounded-xl text-slate-500 dark:text-slate-400 hover:bg-white/70 dark:hover:bg-slate-800 cursor-pointer transition-colors focus-visible:outline-2 focus-visible:outline-brand-teal';
@@ -328,6 +335,7 @@ export const ViewerPortal: React.FC = () => {
                         {t.date.slice(0, 10)}
                         {t.expense_kind === 'cash_withdrawal' && ` · ${ar ? 'سحب نقدي' : 'Cash withdrawal'}`}
                         {t.expense_kind === 'cash_spend' && ` · ${ar ? 'من النقد' : 'From cash'}`}
+                        {t.expense_kind === 'cash' && ` · ${ar ? 'نقداً' : 'In cash'}`}
                       </p>
                       {t.notes && <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">{t.notes}</p>}
                     </div>

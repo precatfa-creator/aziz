@@ -135,6 +135,9 @@ export async function restoreBackup(
     category_name: t.categoryName || null,
     transfer_id: mapTransferId(t.transferId),
     hidden_from_viewers: t.hiddenFromViewers ?? null,
+    // Drop this and cash that was received comes back on the card.
+    // Spread only when cash, so a card-only backup restores the same columns as before.
+    ...(t.incomeKind === 'cash' ? { income_kind: 'cash' } : {}),
   }));
   await insertChunked(supabase, 'incomes', incomeRows);
 

@@ -47,6 +47,7 @@ import {
   walletCurrencies,
   walletTotals,
   type ExpenseKind,
+  type IncomeKind,
 } from "../lib/walletBalance";
 
 interface TransactionManagerProps {
@@ -102,6 +103,8 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
     defaultType || "expense"
   );
   const [expenseKind, setExpenseKind] = useState<ExpenseKind>("wallet_spend");
+  // Income only: whether the money arrived on the card or as cash in hand.
+  const [incomeKind, setIncomeKind] = useState<IncomeKind>("card");
   // Exchange only. The amount field stays the "from" side, so the rate is the
   // single extra input and the "to" side is always derived from the two.
   const [exchangeRateInput, setExchangeRateInput] = useState("");
@@ -149,6 +152,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
       // has to go back to the default with it — otherwise a withdrawal that was
       // open for editing leaves its kind behind on the next expense typed here.
       setExpenseKind("wallet_spend");
+      setIncomeKind("card");
     }
   }, [defaultType]);
 
@@ -579,6 +583,8 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
           : `(${currency}→${exchangeTo} @ ${rateLabel})`,
         imageUrl,
         fromKind: expenseKind,
+        // Cash exchanged comes back as cash; card money comes back on the card.
+        toKind: expenseKind === "cash_spend" ? "cash" : "card",
       });
 
       // Only after both legs are safely written: a rate change that outlived a
@@ -711,6 +717,10 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                 imageUrl,
                 priority,
                 finalWalletId,
+                undefined,
+                undefined,
+                undefined,
+                incomeKind,
               );
             }
           }
@@ -728,6 +738,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
               imageUrl,
               priority,
               finalWalletId,
+              incomeKind,
             );
           } else {
             await updateExpense(
@@ -761,6 +772,8 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
             false,
             "",
             isNewWalletOptionActive,
+            // A new wallet's opening top-up is its initial balance, on the card.
+            isNewWalletOptionActive ? undefined : incomeKind,
           );
         } else {
           await addExpense(
@@ -884,6 +897,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
     setSelectedCatId(tx.categoryId);
     setWalletId(tx.walletId || "");
     setExpenseKind(tx.expenseKind || "wallet_spend");
+    setIncomeKind(tx.incomeKind || "card");
     setPriority(tx.priority || "medium");
     setImageUrl(tx.imageUrl || "");
 
@@ -915,6 +929,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
     setSelectedCatId("");
     setWalletId("");
     setExpenseKind("wallet_spend");
+    setIncomeKind("card");
     setTypedCategoryQuery("");
     setPriority("medium");
     setImageUrl("");
@@ -1044,11 +1059,12 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
     .filter((tx) => !hideHistoricalData || !tx.isHistorical)
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
-  // Cash exists once anything was withdrawn or spent as cash, or once a cash
-  // wallet exists at all.
+  // Cash exists once anything was withdrawn, spent or received as cash, or once
+  // a cash wallet exists at all.
   const hasCashRows =
     wallets.some((w) => w.isCard === false) ||
-    expenses.some((e) => e.expenseKind === "cash_withdrawal" || e.expenseKind === "cash_spend");
+    expenses.some((e) => e.expenseKind === "cash_withdrawal" || e.expenseKind === "cash_spend") ||
+    incomes.some((i) => i.incomeKind === "cash");
 
   // Under the cash view a withdrawal is money arriving, not leaving.
   const isInflow = (tx: { type: string; expenseKind?: string }) =>
@@ -1078,13 +1094,13 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
       ? tx.walletId === walletFilter || (tx as any).transferPair?.walletId === walletFilter
       : true;
     // A transfer row viewed from its receiving wallet is that wallet's income
-    // leg, which lands on its card — or in its cash, if it is a cash wallet.
+    // leg, which lands where it was tagged — or in cash, if it is a cash wallet.
     const receivingSide = !!walletFilter && tx.walletId !== walletFilter;
     const isCardWallet = (id?: string) => wallets.find((w) => w.id === id)?.isCard !== false;
     const matchCompartment =
       compartmentFilter === "all" ||
       (receivingSide
-        ? compartmentFilter === (isCardWallet(walletFilter) ? "card" : "cash")
+        ? inCompartment((tx as any).transferPair ?? {}, "income", compartmentFilter, isCardWallet(walletFilter))
         : inCompartment(tx as any, tx.type, compartmentFilter, isCardWallet(tx.walletId)));
     return matchSearch && matchCat && matchType && matchPriority && matchWallet && matchCompartment;
   });
@@ -1979,6 +1995,41 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                   ) : (
                     <div className="p-4 rounded-2xl bg-amber-500/5 border border-dashed border-amber-500/10 text-center text-xs text-amber-500">
                       {language === "ar" ? "لا توجد أي محافظ مفعلة. يرجى تهيئة محفظة واحدة على الأقل" : "No wallets configured. Please provision a wallet first"}
+                    </div>
+                  );
+                })()}
+
+                {/* Where an income lands on a card wallet. A cash wallet has one
+                    compartment, and a brand-new wallet's top-up is its opening
+                    balance, so neither gets the choice. */}
+                {transactionType === "income" && walletId && !(createAndTopupWallet && !editingId) && (() => {
+                  const w = wallets.find((x) => x.id === walletId);
+                  if (!w || w.isCard === false) return null;
+                  const kinds: { kind: IncomeKind; ar: string; en: string }[] = [
+                    { kind: "card", ar: "على البطاقة", en: "On the card" },
+                    { kind: "cash", ar: "نقداً في اليد", en: "Cash in hand" },
+                  ];
+                  return (
+                    <div className="mt-4">
+                      <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-2">
+                        {language === "ar" ? "أين وصل المبلغ؟" : "Where did the money arrive?"}
+                      </label>
+                      <div className="flex flex-wrap gap-2">
+                        {kinds.map((k) => (
+                          <button
+                            key={k.kind}
+                            type="button"
+                            onClick={() => setIncomeKind(k.kind)}
+                            className={`px-3.5 py-2 rounded-2xl text-xs font-bold cursor-pointer transition-all border ${
+                              incomeKind === k.kind
+                                ? "bg-brand-slate text-white dark:bg-white dark:text-brand-slate border-transparent shadow-md"
+                                : "bg-slate-50/75 dark:bg-slate-900/40 border-slate-100 dark:border-slate-850 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-850"
+                            }`}
+                          >
+                            {language === "ar" ? k.ar : k.en}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   );
                 })()}
@@ -2932,6 +2983,11 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                             {(tx as any).expenseKind === "cash_spend" && (
                               <span className="text-[9px] font-black px-1.5 py-0.5 rounded-md uppercase bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400">
                                 {language === "ar" ? "من النقد" : "From cash"}
+                              </span>
+                            )}
+                            {tx.type === "income" && (tx as any).incomeKind === "cash" && (
+                              <span className="text-[9px] font-black px-1.5 py-0.5 rounded-md uppercase bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400">
+                                {language === "ar" ? "نقداً" : "In cash"}
                               </span>
                             )}
 

@@ -46,6 +46,8 @@ export interface Income {
   isOpening?: boolean;
   /** Set when this row is the receiving half of a transfer or currency exchange. */
   transferId?: string;
+  /** Which compartment of a card wallet it landed in. Undefined reads as 'card'. */
+  incomeKind?: 'card' | 'cash';
   /** Shown to viewers of a partially shared wallet as "معاملة N", amount and date only. */
   hiddenFromViewers?: boolean;
 }

@@ -34,6 +34,9 @@ export const CURRENCIES: Currency[] = ['LYD', 'USD'];
 /** Null means `wallet_spend`: every row written before the compartments existed. */
 export type ExpenseKind = 'wallet_spend' | 'cash_withdrawal' | 'cash_spend';
 
+/** Where an income landed. Null means `card`: every row written before this existed. */
+export type IncomeKind = 'card' | 'cash';
+
 export interface WalletBalance {
   /** Which currency these numbers are denominated in. */
   currency: Currency;
@@ -64,19 +67,20 @@ export type Compartment = 'card' | 'cash';
 
 /**
  * Whether a ledger row moves money in this compartment — the rows whose sum
- * reconciles to `onCard` or `inCash`. Incomes always land on the card. A
+ * reconciles to `onCard` or `inCash`. An income lands where `incomeKind` says,
+ * the card unless tagged cash. A
  * withdrawal is in both: it leaves the card and arrives as cash, so dropping it
  * from either list would leave that list unable to add up to its balance.
  */
 export const inCompartment = (
-  tx: { expenseKind?: ExpenseKind },
+  tx: { expenseKind?: ExpenseKind; incomeKind?: IncomeKind },
   type: 'income' | 'expense',
   compartment: Compartment,
   // A cash wallet has no card side: everything in it is cash.
   isCardWallet = true,
 ): boolean => {
   if (!isCardWallet) return compartment === 'cash';
-  if (type === 'income') return compartment === 'card';
+  if (type === 'income') return compartment === (tx.incomeKind ?? 'card');
   const kind = tx.expenseKind ?? 'wallet_spend';
   if (kind === 'cash_withdrawal') return true;
   return compartment === 'cash' ? kind === 'cash_spend' : kind === 'wallet_spend';
@@ -112,10 +116,13 @@ export function walletBalance(
 
   let earned = 0;
   let transferIn = 0;
+  // The part of `earned + transferIn` that arrived as cash rather than on the card.
+  let inCashIn = 0;
   for (const i of incomes) {
     if (!mine(i) || i.isOpening) continue;
     if (i.transferId) transferIn += i.amount;
     else earned += i.amount;
+    if (i.incomeKind === 'cash') inCashIn += i.amount;
   }
 
   let spend = 0;
@@ -140,8 +147,8 @@ export function walletBalance(
   // negative compartment means rows are mis-tagged (cash spent that was never
   // withdrawn), and showing that is more use than hiding it behind a max(0, …)
   // that would silently break the identity.
-  let onCard = opening + earned + transferIn - spend - drawn - outCard;
-  let inCash = drawn - cashSpend - outCash;
+  let onCard = opening + earned + transferIn - inCashIn - spend - drawn - outCard;
+  let inCash = inCashIn + drawn - cashSpend - outCash;
   // A cash wallet is the same money with no card to hold it: the total is
   // untouched, it is all cash in hand. Card wallets (undefined included) keep
   // the split exactly as before.
