@@ -742,6 +742,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ setCurrentTab }) => {
                             {itemCat.name.split(' / ')[language === 'ar' ? 0 : 1] || itemCat.name}
                           </span>
                         )}
+                        {'externalSource' in tx && tx.externalSource && (
+                          <span className="text-[9px] px-1.5 py-0.5 rounded-md font-bold text-amber-700 dark:text-amber-300 bg-amber-500/10">
+                            {language === 'ar' ? 'خارجي — غير محتسب' : 'Outside — not counted'}
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>

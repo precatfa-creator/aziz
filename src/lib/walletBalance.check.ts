@@ -308,6 +308,19 @@ assert.strictEqual(inCompartment(expense(500, 'cash_spend'), 'expense', 'cash'),
   assert.deepStrictEqual(allocateSplit(300, [100, 250, 80]), { takes: [100, 200, 0], remaining: 0 }, 'stops at the target');
   assert.deepStrictEqual(allocateSplit(0.3, [0.1, 0.2]), { takes: [0.1, 0.2], remaining: 0 }, 'float dust must not leave 0.0000001 owed');
   assert.deepStrictEqual(allocateSplit(50, []), { takes: [], remaining: 50 });
+  // The outside-the-app source has no limit: it takes whatever is still needed.
+  assert.deepStrictEqual(allocateSplit(21500 - 1120, [5600, Infinity]), { takes: [5600, 14780], remaining: 0 });
+}
+
+// A part paid outside the app (gold) is recorded, never counted: it is not
+// spending and, having no wallet, moves no wallet's balance.
+{
+  const gold = expense(14780, undefined, '', { externalSource: 'ذهب', splitId: 's1' });
+  assert.strictEqual(isSpending(gold), false, 'an outside part counted as spending');
+  assert.strictEqual(isSpending(expense(5600, undefined, 'w1', { splitId: 's1' })), true, 'a split wallet part is real spending');
+  const b = walletBalance(card, [], [gold, expense(5600, undefined, 'w1', { splitId: 's1' })]);
+  assert.strictEqual(b.onCard, 2500 - 5600);
+  assert.strictEqual(b.actualSpending, 5600);
 }
 
 console.log('walletBalance.check.ts: all assertions passed');

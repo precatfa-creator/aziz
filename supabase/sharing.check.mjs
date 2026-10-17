@@ -226,6 +226,26 @@ await as(O, null, () => db.exec(`
   update public.wallet_shares set compartment = 'all' where wallet_id = '${W1}';
   delete from public.incomes where title = 'Cash tip'`));
 
+// A purchase split across a wallet and gold: the gold part has no wallet, so
+// viewers never see it, and an outside part tied to a wallet is refused.
+await as(O, null, async () => {
+  await db.exec(`
+    insert into public.expenses (user_id, amount, currency, title, date, wallet_id, split_id, external_source) values
+      ('${O}', 60, 'LYD', 'Ring part', '2026-01-10', '${W1}', '20000000-0000-0000-0000-000000000001', null),
+      ('${O}', 900, 'LYD', 'Ring gold', '2026-01-10', null, '20000000-0000-0000-0000-000000000001', 'Gold')`);
+  await rejects(db.exec(`insert into public.expenses (user_id, amount, currency, title, date, wallet_id, external_source) values ('${O}', 1, 'LYD', 'x', '2026-01-10', '${W1}', 'Gold')`),
+    'an outside part was tied to a wallet');
+  await rejects(db.exec(`insert into public.expenses (user_id, amount, currency, title, date, external_source) values ('${O}', 1, 'LYD', 'x', '2026-01-10', '  ')`),
+    'a blank outside source was accepted');
+});
+await as(V, 'viewer', async () => {
+  const lyd = (await db.query(`select * from public.viewer_wallets()`)).rows.find((b) => b.wallet_id === W1 && b.currency === 'LYD');
+  assert.equal(Number(lyd.on_card), 1120 - 60, 'only the wallet part moves the wallet');
+  const tx = (await db.query(`select * from public.viewer_wallet_transactions('${W1}')`)).rows;
+  assert.ok(!tx.some((t) => Number(t.amount) === 900), 'the gold part reached a viewer');
+});
+await as(O, null, () => db.exec(`delete from public.expenses where split_id is not null`));
+
 // Balance mode returns no rows.
 await as(O, null, () => db.exec(`update public.wallet_shares set mode = 'balance'`));
 await as(V, 'viewer', async () => {

@@ -117,6 +117,12 @@ export async function restoreBackup(
     transferMap.set(id, fresh);
     return fresh;
   };
+  const splitMap = new Map<string, string>();
+  const mapSplitId = (id?: string): string | null => {
+    if (!id) return null;
+    if (!splitMap.has(id)) splitMap.set(id, newId());
+    return splitMap.get(id)!;
+  };
 
   const incomeRows = (backup.incomes || []).map((t) => ({
     id: newId(),
@@ -167,6 +173,9 @@ export async function restoreBackup(
     // income: the same money reported as both earned and spent.
     transfer_id: mapTransferId(t.transferId),
     hidden_from_viewers: t.hiddenFromViewers ?? null,
+    // Remapped like transfer ids, so restoring twice gives two separate purchases.
+    split_id: mapSplitId(t.splitId),
+    external_source: t.externalSource || null,
   }));
   await insertChunked(supabase, 'expenses', expenseRows);
 

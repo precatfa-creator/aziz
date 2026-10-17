@@ -141,6 +141,8 @@ export const Reports: React.FC = () => {
         ...e,
         type: e.transferId
           ? (language === 'ar' ? 'تحويل صادر' : 'Transfer out')
+          : e.externalSource
+            ? (language === 'ar' ? `خارجي (${e.externalSource}) — غير محتسب` : `Outside (${e.externalSource}) — not counted`)
           : !isSpending(e)
             ? (language === 'ar' ? 'سحب نقدي' : 'Cash withdrawal')
             : (language === 'ar' ? 'مصروف' : 'Expense'),

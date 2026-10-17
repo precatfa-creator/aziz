@@ -61,9 +61,10 @@ const input = {
     { id: 'i2', userId: 'u1', amount: 100, currency: 'USD', title: 'صرافة', date: '2026-01-04', categoryId: 'c2', walletId: 'w1', transferId: 'tr1', incomeKind: 'cash', createdAt: now, updatedAt: now },
   ],
   expenses: [
-    { id: 'e1', userId: 'u1', amount: 40, currency: 'LYD', title: 'Lunch', date: '2026-01-02', categoryId: 'c1', walletId: 'w1', isRefunded: false, hiddenFromViewers: true, createdAt: now, updatedAt: now },
+    { id: 'e1', userId: 'u1', amount: 40, currency: 'LYD', title: 'Lunch', date: '2026-01-02', categoryId: 'c1', walletId: 'w1', isRefunded: false, hiddenFromViewers: true, splitId: 's1', createdAt: now, updatedAt: now },
     { id: 'e2', userId: 'u1', amount: 500, currency: 'LYD', title: 'سحب نقدي', date: '2026-01-03', categoryId: 'c1', walletId: 'w1', expenseKind: 'cash_withdrawal', createdAt: now, updatedAt: now },
     { id: 'e3', userId: 'u1', amount: 912, currency: 'LYD', title: 'صرافة', date: '2026-01-04', categoryId: 'c1', walletId: 'w1', transferId: 'tr1', createdAt: now, updatedAt: now },
+    { id: 'e4', userId: 'u1', amount: 900, currency: 'LYD', title: 'Lunch', date: '2026-01-02', categoryId: 'c1', splitId: 's1', externalSource: 'Gold', createdAt: now, updatedAt: now },
   ],
   plannedPurchases: [
     { id: 'p1', userId: 'u1', itemName: 'Laptop', expectedPrice: 3000, currency: 'LYD', priority: 'high', categoryId: 'c1', isPurchased: false, createdAt: now, updatedAt: now },
@@ -88,7 +89,7 @@ assert.deepEqual(result, {
   wallets: 1,
   categories: 2,
   incomes: 2,
-  expenses: 3,
+  expenses: 4,
   plannedPurchases: 1,
   savingsGroups: 1,
 });
@@ -117,6 +118,14 @@ assert.equal(outLeg.transfer_id, inLeg.transfer_id, 'the two legs came back unpa
 assert.notEqual(outLeg.transfer_id, 'tr1', 'transfer id was reused rather than remapped');
 assert.equal(inserted.expenses[0].transfer_id, null, 'an ordinary expense gained a pairing');
 assert.equal(inserted.incomes[0].transfer_id, null, 'an ordinary income gained a pairing');
+// A split purchase comes back as one purchase with a fresh shared id, and its
+// outside part keeps its source.
+assert.equal(inserted.expenses[0].split_id, inserted.expenses[3].split_id, 'split parts came back unlinked');
+assert.equal(inserted.expenses[1].split_id, null, 'an ordinary expense joined a split');
+assert.notEqual(inserted.expenses[0].split_id, 's1', 'split id was reused rather than remapped');
+assert.equal(inserted.expenses[3].external_source, 'Gold', 'outside source lost on restore');
+assert.equal(inserted.expenses[3].wallet_id, null, 'an outside part gained a wallet');
+assert.equal(inserted.expenses[0].external_source, null);
 // Drop this and cash that was received comes back on the card.
 assert.equal(inserted.incomes[1].income_kind, 'cash', 'cash income restored onto the card');
 assert.equal(inserted.incomes[0].income_kind, undefined, 'a card income must restore exactly as before');

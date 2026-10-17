@@ -89,10 +89,11 @@ export const inCompartment = (
 /**
  * A withdrawal moves money between one wallet's own compartments and a transfer
  * moves it between wallets or currencies. Neither is spending, so neither
- * belongs in a spending total, a spending chart, or an overspending alert.
+ * belongs in a spending total, a spending chart, or an overspending alert. A
+ * part paid outside the app (gold, say) is recorded for reference only.
  */
 export const isSpending = (e: Expense): boolean =>
-  kindOf(e) !== 'cash_withdrawal' && !e.transferId;
+  kindOf(e) !== 'cash_withdrawal' && !e.transferId && !e.externalSource;
 
 /**
  * The income mirror of `isSpending`. An opening row restates a balance rather

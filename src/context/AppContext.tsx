@@ -113,6 +113,8 @@ function mapExpense(row: any): Expense {
     categoryName: row.category_name || "",
     expenseKind: row.expense_kind || undefined,
     transferId: row.transfer_id || undefined,
+    splitId: row.split_id || undefined,
+    externalSource: row.external_source || undefined,
     hiddenFromViewers: !!row.hidden_from_viewers,
   };
 }
@@ -300,12 +302,15 @@ export interface ExpenseLegBase {
   priority?: "low" | "medium" | "high";
 }
 
-/** One wallet side's share of a split expense. */
+/** One part of a split expense: a wallet side, or a source outside the app. */
 export interface ExpenseLeg {
-  walletId: string;
+  /** Absent for a part paid outside the app. */
+  walletId?: string;
   amount: number;
   expenseKind?: ExpenseKind;
   notes?: string;
+  /** "Gold": paid outside the app, recorded for reference, never counted. */
+  externalSource?: string;
 }
 
 interface AppContextProps {
@@ -408,6 +413,7 @@ interface AppContextProps {
     isHistorical?: boolean,
     categoryName?: string,
     expenseKind?: ExpenseKind,
+    externalSource?: string,
   ) => Promise<string>;
   updateExpense: (
     id: string,
@@ -421,6 +427,7 @@ interface AppContextProps {
     priority?: "low" | "medium" | "high",
     walletId?: string,
     expenseKind?: ExpenseKind,
+    externalSource?: string,
   ) => Promise<void>;
   addTransfer: (t: TransferInput) => Promise<void>;
   addExpenseLegs: (base: ExpenseLegBase, legs: ExpenseLeg[]) => Promise<void>;
@@ -1357,6 +1364,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     else setExpenses((prev) => prev.filter((e) => e.id !== sibling.id));
   };
 
+  /**
+   * Sends the other parts of a split purchase to the trash with the one the
+   * user deleted: a purchase is only ever deleted as a whole, never left with a
+   * total that no longer adds up.
+   */
+  const trashSplitSiblings = async (splitId: string | undefined, deletedId: string) => {
+    if (!splitId || !user) return;
+    const siblings = expenses.filter((e) => e.splitId === splitId && e.id !== deletedId);
+    const trashed: string[] = [];
+    for (const sib of siblings) {
+      const { error } = await supabase.rpc("move_to_trash", {
+        p_type: "expense",
+        p_id: sib.id,
+        p_deleted_by: user.email || "User",
+      });
+      if (error) logSupabaseError(error, `splits/${splitId}/delete-part`);
+      else trashed.push(sib.id);
+    }
+    setExpenses((prev) => prev.filter((e) => !trashed.includes(e.id)));
+  };
+
   const deleteIncome = async (id: string) => {
     if (!user) return;
     try {
@@ -1465,6 +1493,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
    */
   const addExpenseLegs = async (base: ExpenseLegBase, legs: ExpenseLeg[]) => {
     if (!user) throw new Error("Unauthorized");
+    // One id for every part, so the history shows one purchase and deletes it as one.
+    const splitId = crypto.randomUUID();
     const { data, error } = await supabase
       .from("expenses")
       .insert(
@@ -1478,8 +1508,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
           notes: l.notes || null,
           image_url: base.imageUrl || null,
           priority: base.priority || null,
-          wallet_id: l.walletId,
-          expense_kind: l.expenseKind ?? null,
+          wallet_id: l.walletId || null,
+          expense_kind: l.externalSource ? null : (l.expenseKind ?? null),
+          split_id: splitId,
+          external_source: l.externalSource || null,
         })),
       )
       .select();
@@ -1489,8 +1521,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     }
     setExpenses((prev) => [...(data || []).map(mapExpense), ...prev].sort((x, y) => y.date.localeCompare(x.date)));
 
-    // One purchase, one alert — not one per wallet that paid for it.
-    const total = legs.reduce((acc, l) => acc + l.amount, 0);
+    // One purchase, one alert — not one per wallet that paid for it. Parts paid
+    // outside the app are not spending from the app's money.
+    const total = legs.reduce((acc, l) => acc + (l.externalSource ? 0 : l.amount), 0);
     if (total >= 1000) {
       await addNotificationArEn(
         "تنبيه مصروف مرتفع",
@@ -1516,6 +1549,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     isHistorical?: boolean,
     categoryName?: string,
     expenseKind?: ExpenseKind,
+    externalSource?: string,
   ): Promise<string> => {
     if (!user) throw new Error("Unauthorized");
     const { data, error } = await supabase
@@ -1533,7 +1567,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
         wallet_id: walletId || null,
         is_historical: isHistorical ?? null,
         category_name: categoryName ?? null,
-        expense_kind: expenseKind ?? null,
+        expense_kind: externalSource ? null : (expenseKind ?? null),
+        ...(externalSource ? { external_source: externalSource } : {}),
       })
       .select()
       .single();
@@ -1546,7 +1581,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
 
     // Budget Exceeded Reminders Alert Trigger check. A withdrawal moves money
     // between the wallet's own compartments, so a large one is not overspending.
-    if (amount >= 1000 && expenseKind !== "cash_withdrawal") {
+    if (amount >= 1000 && expenseKind !== "cash_withdrawal" && !externalSource) {
       await addNotificationArEn(
         "تنبيه مصروف مرتفع",
         "High Expense Alert",
@@ -1570,11 +1605,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     priority?: "low" | "medium" | "high",
     walletId?: string,
     expenseKind?: ExpenseKind,
+    externalSource?: string,
   ) => {
+    // Touches external_source only when the row is or becomes external.
+    const wasExternal = !!expenses.find((e) => e.id === id)?.externalSource;
     try {
       const { data, error } = await supabase
         .from("expenses")
         .update({
+          ...(externalSource || wasExternal ? { external_source: externalSource || null } : {}),
           amount,
           currency,
           title,
@@ -1584,7 +1623,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
           image_url: imageUrl ?? null,
           priority: priority ?? null,
           wallet_id: walletId ?? null,
-          expense_kind: expenseKind ?? null,
+          expense_kind: externalSource ? null : (expenseKind ?? null),
         })
         .eq("id", id)
         .select()
@@ -1617,6 +1656,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
 
       setExpenses((prev) => prev.filter((e) => e.id !== id));
       await trashTransferSibling(item.transferId, "expense");
+      await trashSplitSiblings(item.splitId, id);
       await refetchOne("trash", mapTrash, setTrashItems, (a, b) => b.deletedAt.getTime() - a.deletedAt.getTime());
 
       await addNotificationArEn(
@@ -2352,6 +2392,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
       await refetchOne(dest.table, dest.mapper, dest.setter, dest.sort as any);
       const transferId = trashItem.originalData?.transfer_id as string | undefined;
       const pairRestored = await restoreTransferSibling(transferId, trashItem.originalType);
+      // The rest of a split purchase comes back with it. A part already purged
+      // stays gone; the rest still show as one purchase.
+      const splitId = trashItem.originalData?.split_id as string | undefined;
+      if (splitId) {
+        const parts = trashItems.filter(
+          (itm) => itm.id !== id && itm.originalType === "expense" && itm.originalData?.split_id === splitId,
+        );
+        for (const part of parts) {
+          const { error: partError } = await supabase.rpc("restore_from_trash", { p_trash_id: part.id });
+          if (partError) logSupabaseError(partError, `splits/${splitId}/restore-part`);
+        }
+        if (parts.length) await refetchOne(dest.table, dest.mapper, dest.setter, dest.sort as any);
+      }
       await refetchOne("trash", mapTrash, setTrashItems, (a, b) => b.deletedAt.getTime() - a.deletedAt.getTime());
 
       if (transferId && !pairRestored) {

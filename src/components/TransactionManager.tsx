@@ -32,6 +32,7 @@ import {
   MessageSquare,
   Send,
   SlidersHorizontal,
+  Gem,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { createPortal } from "react-dom";
@@ -42,6 +43,8 @@ import { fileToReceiptJpeg } from "../lib/imageDownscale";
 import {
   convertAmount,
   inCompartment,
+  isEarning,
+  isSpending,
   roundMoney,
   walletBalance,
   walletCurrencies,
@@ -51,8 +54,11 @@ import {
   type IncomeKind,
 } from "../lib/walletBalance";
 
-/** One side of one wallet that can pay part of a split expense. */
-type SplitSource = { key: string; wallet: any; kind: ExpenseKind; available: number };
+/** One side of one wallet that can pay part of a split expense, or the outside source. */
+type SplitSource = { key: string; wallet: any; kind: ExpenseKind; available: number; external?: boolean };
+
+/** The wallet picker's value for "paid outside the app": no wallet, never counted. */
+const EXTERNAL_WALLET = "__external__";
 
 interface TransactionManagerProps {
   defaultType?: 'income' | 'expense';
@@ -110,6 +116,9 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
   const [expenseKind, setExpenseKind] = useState<ExpenseKind>("wallet_spend");
   // Income only: whether the money arrived on the card or as cash in hand.
   const [incomeKind, setIncomeKind] = useState<IncomeKind>("card");
+  // What paid an expense outside the app ("ذهب"), for the form and for the split popup.
+  const [externalSource, setExternalSource] = useState("");
+  const [splitExternalSource, setSplitExternalSource] = useState("");
   // Exchange only. The amount field stays the "from" side, so the rate is the
   // single extra input and the "to" side is always derived from the two.
   const [exchangeRateInput, setExchangeRateInput] = useState("");
@@ -160,6 +169,11 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
       setIncomeKind("card");
     }
   }, [defaultType]);
+
+  // Only an expense can be paid outside the app; leaving the expense tab drops it.
+  useEffect(() => {
+    if (transactionType !== "expense" && walletId === EXTERNAL_WALLET) setWalletId("");
+  }, [transactionType]);
 
   // Wallet cards and the dashboard open the history pre-filtered: by wallet,
   // by compartment, or both. Either arriving alone resets the other, so a
@@ -416,7 +430,10 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
         if (available > 0) out.push({ key: `${w.id}:${k}`, wallet: w, kind: k, available });
       }
     }
-    return out.sort((a, b) => Number(b.wallet.id === original.id) - Number(a.wallet.id === original.id));
+    out.sort((a, b) => Number(b.wallet.id === original.id) - Number(a.wallet.id === original.id));
+    // Last: whatever is still needed, paid outside the app and recorded for reference.
+    out.push({ key: EXTERNAL_WALLET, wallet: null, kind: "wallet_spend", available: Infinity, external: true });
+    return out;
   };
 
   // The chosen side gives what it has; the picked sides fill the rest in order.
@@ -659,7 +676,9 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
     const requiredFieldsMissing =
       transactionType === "exchange"
         ? !amount || !walletId || !hasValidRate
-        : !amount || !title || !selectedCatId || (!isNewWalletOptionActive && !walletId);
+        : !amount || !title || !selectedCatId || (!isNewWalletOptionActive && !walletId) ||
+          // Only an expense can be paid outside the app, and it needs to say with what.
+          (walletId === EXTERNAL_WALLET && (transactionType !== "expense" || !externalSource.trim()));
     if (requiredFieldsMissing) return;
     const numericAmount = parseFloat(amount);
     if (isNaN(numericAmount) || numericAmount <= 0) return;
@@ -698,10 +717,27 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
               sources: splitSources(w, expenseKind),
             });
             setSelectedSourceKeys([]);
+            setSplitExternalSource("");
             setOverdraftModalOpen(true);
             return; // Halt submission, wait for modal interaction
           }
         }
+      }
+
+      // Paid outside the app: no wallet, and the source is stored instead.
+      const external = finalWalletId === EXTERNAL_WALLET ? externalSource.trim() : undefined;
+      const expenseWallet = external ? undefined : finalWalletId;
+
+      // Changing a part's type deletes it, and deleting a part deletes its
+      // whole purchase — so a split part can only stay an expense.
+      if (editingId && editingType === "expense" && transactionType !== "expense" &&
+          expenses.find((e) => e.id === editingId)?.splitId) {
+        alert(
+          language === "ar"
+            ? "هذا جزء من معاملة مقسّمة ولا يمكن تحويله إلى نوع آخر. احذف المعاملة كاملة وأعد إدخالها."
+            : "This is part of a split purchase and can't become another type. Delete the whole purchase and enter it again.",
+        );
+        return;
       }
 
       if (editingId && editingType) {
@@ -720,10 +756,11 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                 notes,
                 imageUrl,
                 priority,
-                finalWalletId,
+                expenseWallet,
                 undefined,
                 undefined,
                 expenseKind,
+                external,
               );
             }
           } else {
@@ -773,8 +810,9 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
               notes,
               imageUrl,
               priority,
-              finalWalletId,
+              expenseWallet,
               expenseKind,
+              external,
             );
           }
         }
@@ -807,10 +845,11 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
             notes,
             imageUrl,
             priority,
-            finalWalletId,
+            expenseWallet,
             undefined,
             undefined,
             expenseKind,
+            external,
           );
         }
       }
@@ -851,11 +890,16 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
   const handleOverdraftProceed = async () => {
     if (!overdraftData) return;
     const { primary, picked, takes, remaining } = splitPlan(overdraftData);
-    if (remaining > 0) return;
+    const source = splitExternalSource.trim();
+    if (remaining > 0 || (picked.some((p) => p.external) && !source)) return;
     const parts = [
       ...(primary > 0 ? [{ walletId: overdraftData.originalWallet.id, amount: primary, expenseKind }] : []),
       ...picked
-        .map((p, i) => ({ walletId: p.wallet.id, amount: takes[i], expenseKind: p.kind }))
+        .map((p, i) =>
+          p.external
+            ? { amount: takes[i], externalSource: source }
+            : { walletId: p.wallet.id, amount: takes[i], expenseKind: p.kind },
+        )
         .filter((l) => l.amount > 0),
     ];
     const tag = (i: number) => `(${language === "ar" ? "مقسّمة" : "Split"} ${i + 1}/${parts.length})`;
@@ -886,6 +930,8 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
     setWalletId(tx.walletId || "");
     setExpenseKind(tx.expenseKind || "wallet_spend");
     setIncomeKind(tx.incomeKind || "card");
+    if (tx.externalSource) setWalletId(EXTERNAL_WALLET);
+    setExternalSource(tx.externalSource || "");
     setPriority(tx.priority || "medium");
     setImageUrl(tx.imageUrl || "");
 
@@ -918,6 +964,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
     setWalletId("");
     setExpenseKind("wallet_spend");
     setIncomeKind("card");
+    setExternalSource("");
     setTypedCategoryQuery("");
     setPriority("medium");
     setImageUrl("");
@@ -1031,6 +1078,22 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
     expenses.filter((exp) => exp.transferId).map((exp) => exp.transferId as string),
   );
 
+  // A purchase paid from several places is several rows sharing a split id, and
+  // like a transfer the history shows it once: the first part carries all of
+  // them as `splitParts` (wallet parts first, the outside part last), the rest
+  // are dropped from the list.
+  const splitGroups = new Map<string, typeof expenses>();
+  for (const exp of expenses) {
+    if (exp.splitId) splitGroups.set(exp.splitId, [...(splitGroups.get(exp.splitId) ?? []), exp]);
+  }
+  for (const parts of splitGroups.values()) {
+    parts.sort((a, b) => Number(!!a.externalSource) - Number(!!b.externalSource) || b.amount - a.amount);
+  }
+  const partsOf = (exp: (typeof expenses)[number]) => {
+    const parts = exp.splitId ? splitGroups.get(exp.splitId) : undefined;
+    return parts && parts.length > 1 ? parts : undefined;
+  };
+
   // Consolidate Incomes & Expenses under a single list
   const consolidatedTransactions = [
     // An income leg whose expense leg is gone stays visible on its own: it is a
@@ -1038,11 +1101,14 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
     ...incomes
       .filter((inc) => !inc.transferId || !pairedTransferIds.has(inc.transferId))
       .map((inc) => ({ ...inc, type: "income" as const })),
-    ...expenses.map((exp) => ({
-      ...exp,
-      type: "expense" as const,
-      transferPair: exp.transferId ? transferInLegs.get(exp.transferId) : undefined,
-    })),
+    ...expenses
+      .filter((exp) => !partsOf(exp) || partsOf(exp)![0].id === exp.id)
+      .map((exp) => ({
+        ...exp,
+        type: "expense" as const,
+        transferPair: exp.transferId ? transferInLegs.get(exp.transferId) : undefined,
+        splitParts: partsOf(exp),
+      })),
   ]
     .filter((tx) => !hideHistoricalData || !tx.isHistorical)
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
@@ -1057,6 +1123,14 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
   // Under the cash view a withdrawal is money arriving, not leaving.
   const isInflow = (tx: { type: string; expenseKind?: string }) =>
     tx.type === "income" || (compartmentFilter === "cash" && tx.expenseKind === "cash_withdrawal");
+
+  const isCardWalletId = (id?: string) => wallets.find((w) => w.id === id)?.isCard !== false;
+  // Whether one part of a split purchase falls inside the wallet and card/cash
+  // filters. A part paid outside the app is in no wallet and no compartment.
+  const inScope = (p: (typeof expenses)[number]) =>
+    !p.externalSource &&
+    (!walletFilter || p.walletId === walletFilter) &&
+    (compartmentFilter === "all" || inCompartment(p, "expense", compartmentFilter, isCardWalletId(p.walletId)));
 
   // Filters application
   const filteredTransactions = consolidatedTransactions.filter((tx) => {
@@ -1078,8 +1152,11 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
     // A transfer row is filed under its paying wallet, but it moved money into
     // the receiving one too; without the second check, wallet B's history
     // would never show what arrived in B and could not add up to its balance.
+    const splitParts = (tx as any).splitParts as typeof expenses | undefined;
     const matchWallet = walletFilter
-      ? tx.walletId === walletFilter || (tx as any).transferPair?.walletId === walletFilter
+      ? tx.walletId === walletFilter ||
+        (tx as any).transferPair?.walletId === walletFilter ||
+        !!splitParts?.some((p) => p.walletId === walletFilter)
       : true;
     // A transfer row viewed from its receiving wallet is that wallet's income
     // leg, which lands where it was tagged — or in cash, if it is a cash wallet.
@@ -1087,11 +1164,41 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
     const isCardWallet = (id?: string) => wallets.find((w) => w.id === id)?.isCard !== false;
     const matchCompartment =
       compartmentFilter === "all" ||
-      (receivingSide
+      (splitParts
+        ? splitParts.some((p) => inScope(p))
+        : (tx as any).externalSource
+          ? false
+          : receivingSide
         ? inCompartment((tx as any).transferPair ?? {}, "income", compartmentFilter, isCardWallet(walletFilter))
         : inCompartment(tx as any, tx.type, compartmentFilter, isCardWallet(tx.walletId)));
     return matchSearch && matchCat && matchType && matchPriority && matchWallet && matchCompartment;
   });
+
+  // Totals of everything the filters show — not just the loaded page — per
+  // currency. Earnings and spending only: transfers, withdrawals and parts paid
+  // outside the app move none of your money, so they stay out; the outside
+  // parts get a line of their own so the full purchases are still visible.
+  const ledgerTotals = (() => {
+    const zero = () => ({ income: 0, spending: 0, external: 0 });
+    const t = { LYD: zero(), USD: zero() };
+    for (const tx of filteredTransactions as any[]) {
+      if (tx.transferPair) continue;
+      if (tx.type === "income") {
+        if (isEarning(tx)) t[tx.currency as "LYD" | "USD"].income += tx.amount;
+        continue;
+      }
+      for (const p of (tx.splitParts ?? [tx]) as typeof expenses) {
+        if (p.externalSource) {
+          if (!walletFilter && compartmentFilter === "all") t[p.currency].external += p.amount;
+        } else if (isSpending(p) && (!tx.splitParts || inScope(p))) {
+          t[p.currency].spending += p.amount;
+        }
+      }
+    }
+    return (["LYD", "USD"] as const)
+      .map((currency) => ({ currency, ...t[currency] }))
+      .filter((x) => x.income || x.spending || x.external);
+  })();
 
   const getCatColorCombined = (color: string) => {
     const colors: Record<string, string> = {
@@ -1966,6 +2073,45 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                     </div>
                   );
                 })()}
+
+                {/* Paid entirely outside the app (gold, say): no wallet, recorded
+                    so the purchase is remembered, never counted anywhere. */}
+                {transactionType === "expense" && !createAndTopupWallet && (
+                  <div className="mt-3 space-y-2">
+                    <button
+                      type="button"
+                      aria-pressed={walletId === EXTERNAL_WALLET}
+                      onClick={() => setWalletId(walletId === EXTERNAL_WALLET ? "" : EXTERNAL_WALLET)}
+                      className={`w-full flex items-center gap-2 px-3.5 py-2.5 rounded-2xl text-xs font-bold cursor-pointer transition-all border text-start ${
+                        walletId === EXTERNAL_WALLET
+                          ? "bg-amber-500/10 border-amber-500/40 text-amber-700 dark:text-amber-300"
+                          : "bg-slate-50/75 dark:bg-slate-900/40 border-dashed border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-850"
+                      }`}
+                    >
+                      <Gem className="w-4 h-4 shrink-0" />
+                      {language === "ar" ? "دُفع من خارج التطبيق (ذهب، …)" : "Paid outside the app (gold, …)"}
+                      {walletId === EXTERNAL_WALLET && <Check className="w-3.5 h-3.5 ms-auto shrink-0" />}
+                    </button>
+                    {walletId === EXTERNAL_WALLET && (
+                      <>
+                        <input
+                          type="text"
+                          required
+                          value={externalSource}
+                          onChange={(e) => setExternalSource(e.target.value)}
+                          placeholder={language === "ar" ? "دُفع بماذا؟ مثلاً: ذهب" : "Paid with what? e.g. Gold"}
+                          className="glass-input w-full px-3 py-2.5 text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500/40 dark:text-white"
+                          dir="auto"
+                        />
+                        <p className="text-[10px] font-bold text-amber-600 dark:text-amber-400">
+                          {language === "ar"
+                            ? "يُسجَّل للاطلاع فقط: لا يغيّر أي رصيد ولا يدخل في التقارير."
+                            : "Recorded for reference only: changes no balance and stays out of reports."}
+                        </p>
+                      </>
+                    )}
+                  </div>
+                )}
 
                 {/* Where an income lands on a card wallet. A cash wallet has one
                     compartment, and a brand-new wallet's top-up is its opening
@@ -2862,6 +3008,43 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
           </div>
         </div>
 
+        {/* Totals of what the filters show */}
+        {ledgerTotals.length > 0 && (
+          <div className="px-5 py-3 border-b border-slate-100/60 dark:border-slate-800/40 bg-slate-50/40 dark:bg-slate-900/20 space-y-1.5">
+            {ledgerTotals.map((x) => {
+              const fmt = (v: number) => v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+              const net = x.income - x.spending;
+              return (
+                <div key={x.currency} className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs font-bold">
+                  <span className="text-[10px] font-black text-slate-400 w-8">
+                    {x.currency === "LYD" ? t.lydSymbol : t.usdSymbol}
+                  </span>
+                  <span className="text-slate-500 dark:text-slate-400">
+                    {language === "ar" ? "الدخل" : "Income"}{" "}
+                    <span className="text-emerald-600 dark:text-emerald-400 tabular-nums" dir="ltr">+{fmt(x.income)}</span>
+                  </span>
+                  <span className="text-slate-500 dark:text-slate-400">
+                    {language === "ar" ? "الإنفاق" : "Spending"}{" "}
+                    <span className="text-rose-500 tabular-nums" dir="ltr">−{fmt(x.spending)}</span>
+                  </span>
+                  <span className="text-slate-500 dark:text-slate-400">
+                    {language === "ar" ? "الصافي" : "Net"}{" "}
+                    <span className={`tabular-nums ${net < 0 ? "text-rose-500" : "text-slate-800 dark:text-white"}`} dir="ltr">
+                      {net < 0 ? "−" : ""}{fmt(Math.abs(net))}
+                    </span>
+                  </span>
+                  {x.external > 0 && (
+                    <span className="text-amber-600 dark:text-amber-400">
+                      {language === "ar" ? "خارجي (غير محتسب)" : "Outside (not counted)"}{" "}
+                      <span className="tabular-nums" dir="ltr">{fmt(x.external)}</span>
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
         {/* Ledger Items */}
         <div className="divide-y divide-slate-100/60 dark:divide-slate-800/40">
           {filteredTransactions.length > 0 ? (
@@ -2871,6 +3054,11 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                 const catLabel = cat
                   ? cat.name.split(" / ")[language === "ar" ? 0 : 1] || cat.name
                   : (tx.categoryName || t.none);
+                // A split purchase shows its full total; its parts are listed below.
+                const parts = (tx as any).splitParts as typeof expenses | undefined;
+                const outsideAmount = parts
+                  ? parts.reduce((acc, p) => acc + (p.externalSource ? p.amount : 0), 0)
+                  : (tx as any).externalSource ? tx.amount : 0;
 
                 return (
                   <div
@@ -2943,14 +3131,19 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
 
                             {/* A withdrawal sits in the feed as an outflow of the
                                 card, so say plainly that the money is still yours. */}
-                            {(tx as any).expenseKind === "cash_withdrawal" && (
+                            {!parts && (tx as any).expenseKind === "cash_withdrawal" && (
                               <span className="text-[9px] font-black px-1.5 py-0.5 rounded-md uppercase bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 border border-amber-200/20 dark:border-amber-900/10">
                                 {language === "ar" ? "سحب نقدي — تحوّل لنقد" : "Withdrawal — became cash"}
                               </span>
                             )}
-                            {(tx as any).expenseKind === "cash_spend" && (
+                            {!parts && (tx as any).expenseKind === "cash_spend" && (
                               <span className="text-[9px] font-black px-1.5 py-0.5 rounded-md uppercase bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400">
                                 {language === "ar" ? "من النقد" : "From cash"}
+                              </span>
+                            )}
+                            {parts && (
+                              <span className="text-[9px] font-black px-1.5 py-0.5 rounded-md uppercase bg-brand-teal/10 text-brand-teal">
+                                {language === "ar" ? `مقسّمة · ${parts.length} أجزاء` : `Split · ${parts.length} parts`}
                               </span>
                             )}
                             {tx.type === "income" && (tx as any).incomeKind === "cash" && (
@@ -2973,8 +3166,15 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                               {getPriorityLabel(tx.priority)}
                             </span>
 
+                            {(tx as any).externalSource && !parts && (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-700 dark:text-amber-300 flex items-center gap-1 border border-amber-500/20">
+                                <Gem className="w-3 h-3" />
+                                {language === "ar" ? "خارجي: " : "Outside: "}{(tx as any).externalSource}
+                              </span>
+                            )}
+
                             {/* Wallet badge */}
-                            {tx.walletId && (
+                            {tx.walletId && !parts && (
                               <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300 flex items-center gap-1 border border-slate-200 dark:border-slate-700">
                                 <Wallet className="w-3 h-3" />
                                 {wallets.find((w) => w.id === tx.walletId)?.name ||
@@ -2994,6 +3194,39 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                             >
                               {tx.notes}
                             </p>
+                          )}
+
+                          {/* Where each part of a split purchase came from. Each part
+                              is edited on its own; tap it to open it in the form. */}
+                          {parts && (
+                            <div className="flex flex-wrap gap-1.5">
+                              {parts.map((p) => {
+                                const w = wallets.find((x) => x.id === p.walletId);
+                                return (
+                                  <button
+                                    key={p.id}
+                                    type="button"
+                                    onClick={() => handleEditClick({ ...p, type: "expense" })}
+                                    title={t.edit}
+                                    className={`text-[10px] font-bold px-2 py-1 rounded-lg border flex items-center gap-1.5 cursor-pointer transition-colors ${
+                                      p.externalSource
+                                        ? "bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/20 hover:bg-amber-500/20"
+                                        : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-brand-teal/40"
+                                    }`}
+                                  >
+                                    {p.externalSource ? <Gem className="w-3 h-3" /> : <Wallet className="w-3 h-3" />}
+                                    <span className="truncate max-w-[140px]">
+                                      {p.externalSource
+                                        ? `${language === "ar" ? "خارجي: " : "Outside: "}${p.externalSource}`
+                                        : (w?.name || (language === "ar" ? "محفظة محذوفة" : "Deleted Wallet")) +
+                                          (p.expenseKind === "cash_spend" ? (language === "ar" ? " · نقد" : " · cash") : "")}
+                                    </span>
+                                    <span className="font-mono tabular-nums" dir="ltr">{p.amount.toLocaleString()}</span>
+                                    <Edit2 className="w-2.5 h-2.5 opacity-50" />
+                                  </button>
+                                );
+                              })}
+                            </div>
                           )}
 
                           <div className="flex flex-wrap items-center gap-4 text-[10px] text-slate-400 dark:text-slate-400 font-semibold">
@@ -3084,7 +3317,10 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                             }`}
                           >
                             {isInflow(tx as any) ? "+" : "-"}{" "}
-                            {((tx as any).isRefunded ? ((tx as any).originalAmount || 0) : tx.amount).toLocaleString(undefined, {
+                            {(parts
+                              ? parts.reduce((acc, p) => acc + p.amount, 0)
+                              : (tx as any).isRefunded ? ((tx as any).originalAmount || 0) : tx.amount
+                            ).toLocaleString(undefined, {
                               minimumFractionDigits: 2,
                             })}{" "}
                             {tx.currency === "LYD" ? t.lydSymbol : t.usdSymbol}
@@ -3099,7 +3335,16 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                                 : `${language === "ar" ? "صرافة" : "Exchange"} @ ${(tx.amount / (tx as any).transferPair.amount).toFixed(2)}`}
                             </span>
                           )}
-                          {!(tx as any).isRefunded && (tx as any).originalAmount && (tx as any).originalAmount > tx.amount && (
+                          {outsideAmount > 0 && (
+                            <span className="text-[10px] font-black text-amber-600 dark:text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full mt-0.5 border border-amber-500/20">
+                              {parts
+                                ? (language === "ar"
+                                    ? `منها ${outsideAmount.toLocaleString()} خارجي — غير محتسب`
+                                    : `${outsideAmount.toLocaleString()} outside — not counted`)
+                                : (language === "ar" ? "غير محتسب" : "Not counted")}
+                            </span>
+                          )}
+                          {!parts && !(tx as any).isRefunded && (tx as any).originalAmount && (tx as any).originalAmount > tx.amount && (
                             <span className="text-[10px] font-black text-amber-500 bg-amber-50 dark:bg-amber-950/20 px-2 py-0.5 rounded-full mt-0.5 border border-amber-100 dark:border-amber-900/30">
                               {language === 'ar' ? 'مسترد جزئياً' : 'Partially Refunded'}
                             </span>
@@ -3116,7 +3361,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                           {/* Refund and due are meaningless on a withdrawal, and
                               refunding one zeroes its amount — which would delete
                               the cash it produced. */}
-                          {tx.type === "expense" && !(tx as any).isRefunded && (tx as any).expenseKind !== "cash_withdrawal" && !(tx as any).transferPair && (
+                          {tx.type === "expense" && !parts && !(tx as any).externalSource && !(tx as any).isRefunded && (tx as any).expenseKind !== "cash_withdrawal" && !(tx as any).transferPair && (
                             <button
                               onClick={() => toggleExpenseDue(tx.id, !(tx as any).isDue)}
                               className={`p-2 rounded-xl transition-colors cursor-pointer border ${(tx as any).isDue ? 'bg-rose-50 text-rose-500 border-rose-200/50 hover:bg-rose-100 dark:bg-rose-950/30 dark:border-rose-900/30 dark:hover:bg-rose-900/50' : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-rose-500 border-transparent hover:border-rose-500/10'}`}
@@ -3125,7 +3370,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                               <Wallet className="w-3.5 h-3.5" />
                             </button>
                           )}
-                          {tx.type === "expense" && (tx as any).expenseKind !== "cash_withdrawal" && !(tx as any).transferPair && (
+                          {tx.type === "expense" && !parts && !(tx as any).externalSource && (tx as any).expenseKind !== "cash_withdrawal" && !(tx as any).transferPair && (
                              <button
                                onClick={() => toggleExpenseRefund(tx.id, !(tx as any).isRefunded)}
                                className={`p-2 rounded-xl transition-colors cursor-pointer border ${(tx as any).isRefunded ? 'bg-amber-50 text-amber-500 border-amber-200/50 hover:bg-amber-100 dark:bg-amber-950/30 dark:border-amber-900/30 dark:hover:bg-amber-900/50' : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-amber-500 border-transparent hover:border-amber-500/10'}`}
@@ -3153,7 +3398,8 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                               rate between them, so changing one amount would
                               silently restate a rate the other leg still
                               contradicts. Delete the pair and re-enter it. */}
-                          {!(tx as any).transferPair && (
+                          {/* A split purchase is edited part by part, from its list above. */}
+                          {!(tx as any).transferPair && !parts && (
                             <button
                               onClick={() => handleEditClick(tx)}
                               className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 rounded-xl transition-colors cursor-pointer border border-transparent hover:border-white/20"
@@ -3166,7 +3412,11 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                             onClick={() => {
                               showConfirm(
                                 language === "ar" ? "حذف المعاملة" : "Delete Transaction",
-                                (tx as any).transferPair
+                                parts
+                                  ? language === "ar"
+                                    ? `سيتم حذف أجزاء هذه المعاملة كلها معاً ("${tx.title}") — ${parts.length} أجزاء — حتى لا يبقى جزء منها وحده. متابعة؟`
+                                    : `All ${parts.length} parts of this purchase ("${tx.title}") will be deleted together, so no part is left on its own. Continue?`
+                                  : (tx as any).transferPair
                                   ? language === "ar"
                                     ? `سيتم حذف طرفَي هذه الحركة معاً ("${tx.title}") — الصادر والوارد — لأن حذف طرف واحد يترك المال وقد خرج ولم يصل. متابعة؟`
                                     : `Both legs of this movement ("${tx.title}") will be deleted together — the outgoing and the incoming — because removing one leg alone leaves the money having left and never arrived. Continue?`
@@ -3690,6 +3940,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
               {(() => {
                 const { primary, picked, takes, remaining } = splitPlan(overdraftData);
                 const covered = remaining <= 0;
+                const canSave = covered && (!picked.some((x) => x.external) || !!splitExternalSource.trim());
                 const isWithdrawal = expenseKind === "cash_withdrawal";
                 const side = (k: ExpenseKind, w: any) =>
                   w.isCard === false
@@ -3766,21 +4017,43 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                                     ) : (
                                       <Wallet className="w-4 h-4 text-slate-400 shrink-0" />
                                     )}
-                                    <span className="text-sm font-bold text-slate-800 dark:text-white truncate">{src.wallet.name}</span>
-                                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 shrink-0">
-                                      {side(src.kind, src.wallet)}
+                                    <span className="text-sm font-bold text-slate-800 dark:text-white truncate">
+                                      {src.external
+                                        ? (language === "ar" ? "خارج التطبيق (ذهب، …)" : "Outside the app (gold, …)")
+                                        : src.wallet.name}
+                                    </span>
+                                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md shrink-0 ${src.external ? "bg-amber-500/10 text-amber-600 dark:text-amber-400" : "bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400"}`}>
+                                      {src.external ? (language === "ar" ? "خارجي" : "External") : side(src.kind, src.wallet)}
                                     </span>
                                   </div>
                                   <span className="text-xs font-mono font-bold text-slate-500 shrink-0 tabular-nums">
                                     {selected && takes[i] > 0 && (
                                       <span className="text-brand-teal me-1.5">−{takes[i].toLocaleString()}</span>
                                     )}
-                                    {src.available.toLocaleString()} {currency}
+                                    {!src.external && `${src.available.toLocaleString()} ${currency}`}
                                   </span>
                                 </button>
                               );
                             })}
                           </div>
+                          {picked.some((x) => x.external) && (
+                            <div className="space-y-1">
+                              <input
+                                type="text"
+                                autoFocus
+                                value={splitExternalSource}
+                                onChange={(e) => setSplitExternalSource(e.target.value)}
+                                placeholder={language === "ar" ? "دُفع بماذا؟ مثلاً: ذهب" : "Paid with what? e.g. Gold"}
+                                className="glass-input w-full px-3 py-2 text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500/40 dark:text-white"
+                                dir="auto"
+                              />
+                              <p className="text-[10px] font-bold text-amber-600 dark:text-amber-400">
+                                {language === "ar"
+                                  ? "الجزء الخارجي يُسجَّل للاطلاع فقط ولا يدخل في الأرصدة أو التقارير."
+                                  : "The outside part is recorded for reference only — no balance or report counts it."}
+                              </p>
+                            </div>
+                          )}
                         </div>
                       ) : (
                         <div className="p-3 bg-amber-50 dark:bg-amber-950/20 rounded-xl border border-amber-200 dark:border-amber-800/50">
@@ -3814,10 +4087,10 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                       {!isWithdrawal && overdraftData.sources.length > 0 && (
                         <button
                           type="button"
-                          disabled={!covered}
+                          disabled={!canSave}
                           onClick={handleOverdraftProceed}
                           className={`px-4 py-2 text-white text-xs font-bold rounded-xl transition-all ${
-                            covered
+                            canSave
                               ? "bg-emerald-600 shadow-lg shadow-emerald-600/20 hover:opacity-90 cursor-pointer"
                               : "bg-slate-300 dark:bg-slate-700 cursor-not-allowed"
                           }`}

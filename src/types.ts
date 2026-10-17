@@ -76,6 +76,10 @@ export interface Expense {
   expenseKind?: 'wallet_spend' | 'cash_withdrawal' | 'cash_spend';
   /** Set when this row is the paying half of a transfer or currency exchange. */
   transferId?: string;
+  /** Shared by the parts of one purchase paid from several places. */
+  splitId?: string;
+  /** Paid outside the app ("Gold"): no wallet, recorded for reference, never counted. */
+  externalSource?: string;
   /** Shown to viewers of a partially shared wallet as "معاملة N", amount and date only. */
   hiddenFromViewers?: boolean;
 }
