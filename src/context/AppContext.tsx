@@ -1244,6 +1244,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
       setIncomes((prev) => [created, ...prev].sort((x, y) => y.date.localeCompare(x.date)));
     } catch (e) {
       logSupabaseError(e, "incomes/create");
+      // See updateExpense: a silent failure here reads as a successful save.
+      throw e;
     }
   };
 
