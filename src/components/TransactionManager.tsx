@@ -1852,8 +1852,8 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                             } ${isArchived && !isSelected ? "opacity-60" : ""}`}
                           >
                             <div className="flex items-start justify-between gap-1.5 mb-2 w-full">
-                              <span className="text-xs font-extrabold truncate max-w-[80%] flex flex-col">
-                                <span className="truncate">{w.name}</span>
+                              <span className="text-xs font-extrabold min-w-0 flex flex-col">
+                                <span title={w.name} className="line-clamp-2 break-words leading-snug">{w.name}</span>
                                 {isArchived && (
                                   <span className="text-[9px] text-slate-400 dark:text-slate-400 font-bold mt-0.5">
                                     {language === "ar" ? "(مؤرشفة)" : "(Archived)"}

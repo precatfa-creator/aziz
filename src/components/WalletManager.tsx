@@ -635,10 +635,10 @@ export const WalletManager: React.FC<WalletManagerProps> = ({ setCurrentTab }) =
               className={`glass-card rounded-3xl p-5 flex flex-col justify-between relative overflow-hidden group cursor-pointer hover:shadow-xl transition-all ${wallet.isHidden ? "opacity-60 grayscale-[30%]" : ""}`}
               onClick={() => handleEditClick(wallet)} // User asked to click wallet to configure it, so we trigger edit mode
             >
-              <div className="flex justify-between items-start mb-4">
+              <div className="flex justify-between items-start gap-3 mb-3">
                 <div className="flex items-center gap-3">
                   <div
-                    className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-extrabold shadow-inner relative"
+                    className="w-10 h-10 shrink-0 rounded-xl flex items-center justify-center text-white font-extrabold shadow-inner relative"
                     style={{
                       backgroundColor:
                         colors.find((c) => c.id === wallet.color)?.hex ||
@@ -651,23 +651,6 @@ export const WalletManager: React.FC<WalletManagerProps> = ({ setCurrentTab }) =
                         <EyeOff className="w-2.5 h-2.5" />
                       </div>
                     )}
-                  </div>
-                  <div>
-                    <h3 className="font-extrabold text-sm text-slate-900 dark:text-white capitalize truncate max-w-[140px] flex items-center gap-1.5">
-                      <span className="truncate">{wallet.name}</span>
-                      <span
-                        className="shrink-0 inline-flex items-center gap-0.5 rounded-md bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 text-[9px] font-bold text-slate-500 dark:text-slate-400"
-                        title={wallet.isCard === false ? (language === "ar" ? "محفظة نقدية" : "Cash wallet") : (language === "ar" ? "بطاقة" : "Card")}
-                      >
-                        {wallet.isCard === false ? <Banknote className="w-2.5 h-2.5" /> : <CreditCard className="w-2.5 h-2.5" />}
-                        {wallet.isCard === false ? (language === "ar" ? "نقد" : "Cash") : (language === "ar" ? "بطاقة" : "Card")}
-                      </span>
-                    </h3>
-                    <p className="text-[10px] text-slate-400 font-bold uppercase mapping-widest flex items-center gap-1 mt-0.5">
-                      {language === "ar" ? "الافتتاحي: " : "Initial: "}
-                      {wallet.initialBalance.toLocaleString()}{" "}
-                      {wallet.currency}
-                    </p>
                   </div>
                 </div>
 
@@ -741,6 +724,32 @@ export const WalletManager: React.FC<WalletManagerProps> = ({ setCurrentTab }) =
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
+                </div>
+              </div>
+
+              {/* The name gets its own full-width line instead of sharing one
+                  with the action buttons: long names wrap to two lines, then
+                  end in "…", and the full name is on hover. */}
+              <div className="mb-2 min-w-0">
+                <h3
+                  title={wallet.name}
+                  className="font-extrabold text-[15px] leading-snug text-slate-900 dark:text-white line-clamp-2 break-words"
+                >
+                  {wallet.name}
+                </h3>
+                <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span
+                    className="inline-flex items-center gap-0.5 rounded-md bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 text-[9px] font-bold text-slate-500 dark:text-slate-400"
+                    title={wallet.isCard === false ? (language === "ar" ? "محفظة نقدية" : "Cash wallet") : (language === "ar" ? "بطاقة" : "Card")}
+                  >
+                    {wallet.isCard === false ? <Banknote className="w-2.5 h-2.5" /> : <CreditCard className="w-2.5 h-2.5" />}
+                    {wallet.isCard === false ? (language === "ar" ? "نقد" : "Cash") : (language === "ar" ? "بطاقة" : "Card")}
+                  </span>
+                  <p className="text-[10px] text-slate-400 font-bold">
+                    {language === "ar" ? "الافتتاحي: " : "Initial: "}
+                    {wallet.initialBalance.toLocaleString()}{" "}
+                    {wallet.currency}
+                  </p>
                 </div>
               </div>
 
