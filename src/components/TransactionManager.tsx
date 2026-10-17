@@ -1829,154 +1829,134 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                         }
                       }
 
-                      return (
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                          {displayed.map((w) => {
-                            const isSelected = walletId === w.id;
-                            const isArchivedEmpty = getWalletCurrentBalance(w) <= 0;
-                            const isHidden = w.isHidden;
-                            const isArchived = isArchivedEmpty || isHidden;
-                            return (
-                              <button
-                                key={w.id}
-                                type="button"
-                                onClick={() => setWalletId(w.id)}
-                                className={`p-3.5 rounded-2xl text-start cursor-pointer transition-all duration-300 relative overflow-hidden flex flex-col justify-between border min-h-[105px] ${
-                                  isSelected
-                                    ? "bg-brand-slate text-white dark:bg-white dark:text-brand-slate border-transparent shadow-md scale-[1.03] ring-2 ring-brand-teal/40"
-                                    : "bg-slate-50/75 dark:bg-slate-900/40 border-slate-100 dark:border-slate-850 hover:bg-slate-100 dark:hover:bg-slate-850 text-slate-700 dark:text-slate-300"
-                                } ${isArchived && !isSelected ? "opacity-60" : ""}`}
-                              >
-                                <div className="flex items-start justify-between gap-1.5 mb-2 w-full">
-                                  <span className="text-xs font-extrabold truncate max-w-[80%] flex flex-col">
-                                    <span className="truncate">{w.name}</span>
-                                    {isArchived && (
-                                      <span className="text-[9px] text-slate-400 dark:text-slate-400 font-bold mt-0.5">
-                                        {language === "ar" ? "(مؤرشفة)" : "(Archived)"}
-                                      </span>
-                                    )}
+                      // Wallets not shown as one of the first tiles, filtered by the search box.
+                      const rest = activeWallets.filter(
+                        (w) =>
+                          !displayed.some((d) => d.id === w.id) &&
+                          (!walletSearchQuery || w.name.toLowerCase().includes(walletSearchQuery.toLowerCase())),
+                      );
+
+                      const card = (w: any, onPick: () => void) => {
+                        const isSelected = walletId === w.id;
+                        const isArchived = getWalletCurrentBalance(w) <= 0 || w.isHidden;
+                        return (
+                          <button
+                            key={w.id}
+                            type="button"
+                            onClick={onPick}
+                            aria-pressed={isSelected}
+                            className={`p-3.5 rounded-2xl text-start cursor-pointer transition-all duration-300 relative overflow-hidden flex flex-col justify-between border min-h-[105px] ${
+                              isSelected
+                                ? "bg-brand-slate text-white dark:bg-white dark:text-brand-slate border-transparent shadow-md ring-2 ring-brand-teal/40"
+                                : "bg-slate-50/75 dark:bg-slate-900/40 border-slate-100 dark:border-slate-850 hover:bg-slate-100 dark:hover:bg-slate-850 text-slate-700 dark:text-slate-300"
+                            } ${isArchived && !isSelected ? "opacity-60" : ""}`}
+                          >
+                            <div className="flex items-start justify-between gap-1.5 mb-2 w-full">
+                              <span className="text-xs font-extrabold truncate max-w-[80%] flex flex-col">
+                                <span className="truncate">{w.name}</span>
+                                {isArchived && (
+                                  <span className="text-[9px] text-slate-400 dark:text-slate-400 font-bold mt-0.5">
+                                    {language === "ar" ? "(مؤرشفة)" : "(Archived)"}
                                   </span>
-                                  <div className={`p-1 rounded-lg ${isSelected ? "bg-white/10 text-white dark:bg-slate-900/10 dark:text-slate-800" : "bg-slate-200/20 text-slate-400"}`}>
-                                    <Wallet className="w-3.5 h-3.5" />
-                                  </div>
-                                </div>
-                                
-                                <div className="mt-1">
-                                  <p className={`text-[10px] font-medium leading-none ${isSelected ? "text-white/70 dark:text-slate-400" : "text-slate-450 dark:text-slate-400"}`}>
-                                    {language === "ar" ? "الرصيد الحالي" : "Current balance"}
-                                  </p>
-                                  <p className="text-xs font-mono font-black mt-1">
-                                    {getWalletCurrentBalance(w).toLocaleString()} <span className="text-[9px]">{w.currency}</span>
-                                  </p>
-                                </div>
-
-                                {/* Top-right checked indicator */}
-                                {isSelected && (
-                                  <div className="absolute top-1.5 right-1.5 rtl:right-auto rtl:left-1.5 bg-brand-teal text-slate-900 dark:bg-brand-slate dark:text-white rounded-full p-0.5 shadow-xs">
-                                    <Check className="w-2.5 h-2.5 stroke-[3]" />
-                                  </div>
                                 )}
-                              </button>
-                            );
-                          })}
+                              </span>
+                              <div className={`p-1 rounded-lg ${isSelected ? "bg-white/10 text-white dark:bg-slate-900/10 dark:text-slate-800" : "bg-slate-200/20 text-slate-400"}`}>
+                                <Wallet className="w-3.5 h-3.5" />
+                              </div>
+                            </div>
 
-                          {/* If isMany, show 4th cell as a custom "More..." trigger dropdown */}
-                          {isMany && (
-                            <div className="relative" ref={walletSelectDropdownRef}>
+                            <div className="mt-1">
+                              <p className={`text-[10px] font-medium leading-none ${isSelected ? "text-white/70 dark:text-slate-400" : "text-slate-450 dark:text-slate-400"}`}>
+                                {language === "ar" ? "الرصيد الحالي" : "Current balance"}
+                              </p>
+                              <p className="text-xs font-mono font-black mt-1">
+                                {getWalletCurrentBalance(w).toLocaleString()} <span className="text-[9px]">{w.currency}</span>
+                              </p>
+                            </div>
+
+                            {isSelected && (
+                              <div className="absolute top-1.5 right-1.5 rtl:right-auto rtl:left-1.5 bg-brand-teal text-slate-900 dark:bg-brand-slate dark:text-white rounded-full p-0.5 shadow-xs">
+                                <Check className="w-2.5 h-2.5 stroke-[3]" />
+                              </div>
+                            )}
+                          </button>
+                        );
+                      };
+
+                      return (
+                        // The remaining wallets open inline under the tiles, as the
+                        // same cards. A floating popup pinned to the "more" tile ran
+                        // off-screen in RTL on phones, where that tile sits on the left.
+                        <div ref={walletSelectDropdownRef} className="space-y-3">
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                            {displayed.map((w) => card(w, () => setWalletId(w.id)))}
+
+                            {isMany && (
                               <button
                                 type="button"
+                                aria-expanded={walletSelectDropdownOpen}
                                 onClick={() => setWalletSelectDropdownOpen(!walletSelectDropdownOpen)}
-                                className={`w-full h-full p-3.5 rounded-2xl text-start cursor-pointer transition-all duration-300 relative overflow-hidden flex flex-col justify-between border min-h-[105px] ${
-                                  walletSelectDropdownOpen || (!displayed.some(w => w.id === walletId) && walletId)
+                                className={`w-full p-3.5 rounded-2xl text-start cursor-pointer transition-all duration-300 flex flex-col justify-between border min-h-[105px] ${
+                                  walletSelectDropdownOpen
                                     ? "bg-brand-teal/10 dark:bg-brand-teal/25 border-brand-teal/30 text-slate-800 dark:text-white"
                                     : "bg-slate-50/75 dark:bg-slate-900/40 border-slate-100 dark:border-slate-850 hover:bg-slate-100 dark:hover:bg-slate-850 text-slate-500 dark:text-slate-400"
                                 }`}
                               >
                                 <div className="flex items-start justify-between gap-1.5 mb-2 w-full">
                                   <span className="text-xs font-black truncate">
-                                    {language === "ar" ? "محافظ أخرى..." : "Other Wallets..."}
+                                    {walletSelectDropdownOpen
+                                      ? (language === "ar" ? "إخفاء" : "Show less")
+                                      : (language === "ar" ? "محافظ أخرى..." : "Other Wallets...")}
                                   </span>
                                   <div className="p-1 rounded-lg bg-teal-500/10 text-brand-teal">
                                     <ChevronDown className={`w-3.5 h-3.5 transition-transform ${walletSelectDropdownOpen ? "rotate-180" : ""}`} />
                                   </div>
                                 </div>
-
-                                <div className="mt-1">
-                                  <p className="text-[10px] font-bold text-slate-400">
-                                    {language === "ar" ? "اختر محفظة أخرى" : "Choose from list"}
-                                  </p>
-                                  <p className="text-[11px] font-extrabold text-brand-teal mt-0.5">
-                                    {activeWallets.length - 3} {language === "ar" ? "محافظ إضافية" : "more"}
-                                  </p>
-                                </div>
+                                <p className="text-[11px] font-extrabold text-brand-teal mt-0.5">
+                                  {activeWallets.length - 3} {language === "ar" ? "محافظ إضافية" : "more"}
+                                </p>
                               </button>
+                            )}
+                          </div>
 
-                              {/* Dropdown overlay */}
-                              <AnimatePresence>
-                                {walletSelectDropdownOpen && (
-                                  <motion.div
-                                    initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                                    exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                                    transition={{ duration: 0.15 }}
-                                    className="absolute bottom-full mb-2 right-0 left-auto w-64 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl z-50 p-3 flex flex-col gap-2 max-h-72 overflow-y-auto"
-                                  >
-                                    {activeWallets.length > 4 && (
-                                      <input
-                                        type="text"
-                                        value={walletSearchQuery}
-                                        onChange={(e) => setWalletSearchQuery(e.target.value)}
-                                        placeholder={language === "ar" ? "ابحث عن محفظة..." : "Search wallet..."}
-                                        className="w-full px-2.5 py-1.5 text-xs bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 rounded-xl outline-hidden focus:border-brand-teal dark:text-white mb-1 focus:ring-1 focus:ring-brand-teal/35"
-                                      />
-                                    )}
-
-                                    <div className="flex flex-col gap-1 overflow-y-auto pr-0.5">
-                                      {activeWallets
-                                        .filter((w) => {
-                                          // Exclude already displayed wallets
-                                          if (displayed.some(d => d.id === w.id)) return false;
-                                          if (!walletSearchQuery) return true;
-                                          return w.name.toLowerCase().includes(walletSearchQuery.toLowerCase());
-                                        })
-                                        .map((w) => {
-                                          const isSel = walletId === w.id;
-                                          const isArchivedEmpty = getWalletCurrentBalance(w) <= 0;
-                                          const isHidden = w.isHidden;
-                                          const isArchived = isArchivedEmpty || isHidden;
-                                          return (
-                                            <button
-                                              key={w.id}
-                                              type="button"
-                                              onClick={() => {
-                                                setWalletId(w.id);
-                                                setWalletSelectDropdownOpen(false);
-                                                setWalletSearchQuery("");
-                                              }}
-                                              className={`w-full p-2.5 rounded-xl text-start text-xs font-bold transition-colors cursor-pointer flex items-center justify-between ${
-                                                isSel
-                                                  ? "bg-brand-teal/15 text-brand-teal dark:bg-brand-teal/25"
-                                                  : "hover:bg-slate-50 dark:hover:bg-slate-850 text-slate-700 dark:text-slate-200"
-                                              } ${isArchived ? "opacity-60" : ""}`}
-                                            >
-                                              <div className="flex items-center gap-2 truncate">
-                                                <Wallet className="w-3.5 h-3.5 text-brand-teal flex-shrink-0" />
-                                                <span className="truncate">
-                                                  {w.name} {isArchived && (language === "ar" ? "(مؤرشفة) " : "(Archived) ")} ({w.currency})
-                                                </span>
-                                              </div>
-                                              <span className="text-[10px] font-mono font-black text-slate-400">
-                                                {getWalletCurrentBalance(w).toLocaleString()}
-                                              </span>
-                                            </button>
-                                          );
-                                        })}
+                          <AnimatePresence initial={false}>
+                            {isMany && walletSelectDropdownOpen && (
+                              <motion.div
+                                initial={{ opacity: 0, height: 0 }}
+                                animate={{ opacity: 1, height: "auto" }}
+                                exit={{ opacity: 0, height: 0 }}
+                                transition={{ duration: 0.2 }}
+                                className="overflow-hidden"
+                              >
+                                <div className="p-3 rounded-2xl border border-slate-100 dark:border-slate-850 bg-white/40 dark:bg-slate-900/30 space-y-3">
+                                  {activeWallets.length - 3 > 4 && (
+                                    <input
+                                      type="search"
+                                      value={walletSearchQuery}
+                                      onChange={(e) => setWalletSearchQuery(e.target.value)}
+                                      placeholder={language === "ar" ? "ابحث عن محفظة..." : "Search wallet..."}
+                                      className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 rounded-xl outline-hidden focus:border-brand-teal dark:text-white focus:ring-1 focus:ring-brand-teal/35"
+                                    />
+                                  )}
+                                  {rest.length > 0 ? (
+                                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 max-h-80 overflow-y-auto">
+                                      {rest.map((w) =>
+                                        card(w, () => {
+                                          setWalletId(w.id);
+                                          setWalletSelectDropdownOpen(false);
+                                          setWalletSearchQuery("");
+                                        }),
+                                      )}
                                     </div>
-                                  </motion.div>
-                                )}
-                              </AnimatePresence>
-                            </div>
-                          )}
+                                  ) : (
+                                    <p className="text-xs text-center text-slate-400 py-3">
+                                      {language === "ar" ? "لا توجد محفظة بهذا الاسم" : "No wallet matches"}
+                                    </p>
+                                  )}
+                                </div>
+                              </motion.div>
+                            )}
+                          </AnimatePresence>
                         </div>
                       );
                     })()
