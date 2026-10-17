@@ -46,9 +46,13 @@ import {
   walletBalance,
   walletCurrencies,
   walletTotals,
+  allocateSplit,
   type ExpenseKind,
   type IncomeKind,
 } from "../lib/walletBalance";
+
+/** One side of one wallet that can pay part of a split expense. */
+type SplitSource = { key: string; wallet: any; kind: ExpenseKind; available: number };
 
 interface TransactionManagerProps {
   defaultType?: 'income' | 'expense';
@@ -87,6 +91,7 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
     exchangeRate,
     setExchangeRate,
     addTransfer,
+    addExpenseLegs,
     user,
   } = useApp();
 
@@ -310,11 +315,11 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
   const [overdraftData, setOverdraftData] = useState<{
     originalWallet: any;
     currentBalance: number;
-    remainingAmount: number;
-    availableWallets: any[];
     numericAmount: number;
+    sources: SplitSource[];
   } | null>(null);
-  const [selectedAlternativeWalletId, setSelectedAlternativeWalletId] = useState("");
+  // Wallet sides picked to cover the rest, in the order they were tapped.
+  const [selectedSourceKeys, setSelectedSourceKeys] = useState<string[]>([]);
 
   const walletStats = (wallet: any, curr: "LYD" | "USD" = wallet.currency) =>
     walletBalance(wallet, incomes, expenses, curr);
@@ -389,6 +394,39 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
       : kind === "cash_spend"
         ? walletStats(wallet, curr).inCash
         : walletStats(wallet, curr).onCard;
+
+  /**
+   * Every wallet side that can help pay what the chosen side cannot, in the
+   * currency being spent: a card's card and its cash separately (each part is
+   * recorded against the side that actually pays it), a cash wallet whole.
+   * The same wallet's other side comes first — no second wallet needed.
+   * A withdrawal is never split: cash cannot come out of a card that is empty.
+   */
+  const splitSources = (original: any, kind: ExpenseKind): SplitSource[] => {
+    if (kind === "cash_withdrawal") return [];
+    const out: SplitSource[] = [];
+    for (const w of wallets) {
+      if (w.isHidden) continue;
+      const { onCard, inCash, total } = walletStats(w, currency);
+      const sides: [ExpenseKind, number][] =
+        w.isCard === false ? [["wallet_spend", total]] : [["wallet_spend", onCard], ["cash_spend", inCash]];
+      for (const [k, available] of sides) {
+        // The side already being drawn on is the first part, not an option.
+        if (w.id === original.id && (w.isCard === false || k === kind)) continue;
+        if (available > 0) out.push({ key: `${w.id}:${k}`, wallet: w, kind: k, available });
+      }
+    }
+    return out.sort((a, b) => Number(b.wallet.id === original.id) - Number(a.wallet.id === original.id));
+  };
+
+  // The chosen side gives what it has; the picked sides fill the rest in order.
+  const splitPlan = (d: NonNullable<typeof overdraftData>) => {
+    const primary = roundMoney(Math.max(0, Math.min(d.currentBalance, d.numericAmount)));
+    const picked = selectedSourceKeys
+      .map((k) => d.sources.find((x) => x.key === k))
+      .filter((x): x is SplitSource => !!x);
+    return { primary, picked, ...allocateSplit(d.numericAmount - primary, picked.map((x) => x.available)) };
+  };
 
   const showConfirm = (
     title: string,
@@ -653,29 +691,13 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
           // at zero holding withdrawn cash must not look like it can be swiped.
           const currentBal = availableFor(w, expenseKind);
           if (currentBal < numericAmount) {
-            const remainingAmount = currentBal > 0 ? numericAmount - currentBal : numericAmount;
-            // In the currency actually being spent, not the wallet's headline
-            // total: a wallet holding 88 LYD and 100 USD cannot cover a 500 LYD
-            // shortfall however large its converted total looks. This also
-            // replaces the old `ow.currency === w.currency` test, which asked
-            // about the wallet's primary currency rather than the one it is
-            // being asked to pay in — a wallet whose USD came from an exchange
-            // has no LYD row and scores zero here on its own.
-            const availableWallets = wallets.filter((ow) =>
-               ow.id !== finalWalletId &&
-               walletStats(ow, currency).total >= remainingAmount
-            );
-
             setOverdraftData({
               originalWallet: w,
               currentBalance: currentBal,
-              remainingAmount,
-              availableWallets,
               numericAmount,
+              sources: splitSources(w, expenseKind),
             });
-            if (availableWallets.length > 0) {
-              setSelectedAlternativeWalletId(availableWallets[0].id);
-            }
+            setSelectedSourceKeys([]);
             setOverdraftModalOpen(true);
             return; // Halt submission, wait for modal interaction
           }
@@ -827,56 +849,22 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
   };
 
   const handleOverdraftProceed = async () => {
-    if (!overdraftData || !selectedAlternativeWalletId) return;
+    if (!overdraftData) return;
+    const { primary, picked, takes, remaining } = splitPlan(overdraftData);
+    if (remaining > 0) return;
+    const parts = [
+      ...(primary > 0 ? [{ walletId: overdraftData.originalWallet.id, amount: primary, expenseKind }] : []),
+      ...picked
+        .map((p, i) => ({ walletId: p.wallet.id, amount: takes[i], expenseKind: p.kind }))
+        .filter((l) => l.amount > 0),
+    ];
+    const tag = (i: number) => `(${language === "ar" ? "مقسّمة" : "Split"} ${i + 1}/${parts.length})`;
 
     try {
-      const { originalWallet, currentBalance, remainingAmount, numericAmount } = overdraftData;
-      
-      if (currentBalance > 0) {
-        // Transaction 1: Drain original wallet
-        await addExpense(
-          currentBalance,
-          currency,
-          title,
-          date,
-          selectedCatId,
-          notes ? `${notes}\n(Partial payment)` : `(Partial payment)`,
-          imageUrl,
-          priority,
-          originalWallet.id,
-          undefined,
-          undefined,
-          expenseKind,
-        );
-
-        // The covering leg comes off a different wallet's own card, so it is
-        // ordinary spending there whatever compartment the original drew on.
-        await addExpense(
-          remainingAmount,
-          currency,
-          title,
-          date,
-          selectedCatId,
-          notes ? `${notes}\n(Covering remaining from ${originalWallet.name})` : `(Covering remaining from ${originalWallet.name})`,
-          imageUrl,
-          priority,
-          selectedAlternativeWalletId
-        );
-      } else {
-         // If current balance is <= 0, we can't split, take the whole from the alternative wallet.
-         await addExpense(
-           numericAmount,
-           currency,
-           title,
-           date,
-           selectedCatId,
-           notes ? `${notes}\n(Paid from alternative wallet instead of ${originalWallet.name})` : `(Paid from alternative wallet instead of ${originalWallet.name})`,
-           imageUrl,
-           priority,
-           selectedAlternativeWalletId
-         );
-      }
-
+      await addExpenseLegs(
+        { currency, title, date, categoryId: selectedCatId, imageUrl, priority },
+        parts.map((l, i) => ({ ...l, notes: notes ? `${notes}\n${tag(i)}` : tag(i) })),
+      );
       setOverdraftModalOpen(false);
       setOverdraftData(null);
       resetForm();
@@ -3719,93 +3707,150 @@ export const TransactionManager: React.FC<TransactionManagerProps> = ({ defaultT
                 </div>
               </div>
 
-              <div className="space-y-4 py-2">
-                <div className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800">
-                  <p className="text-xs text-slate-600 dark:text-slate-300">
-                    {language === "ar" 
-                      ? `محفظة "${overdraftData.originalWallet.name}" رصيدها الحالي ${overdraftData.currentBalance.toLocaleString()} ${currency} والمعاملة تتطلب ${overdraftData.numericAmount.toLocaleString()} ${currency}.` 
-                      : `"${overdraftData.originalWallet.name}" currently has ${overdraftData.currentBalance.toLocaleString()} ${currency}, but the transaction requires ${overdraftData.numericAmount.toLocaleString()} ${currency}.`
-                    }
-                  </p>
-                  <div className="mt-3 flex items-center justify-between font-bold text-sm">
-                    <span className="text-slate-500">{language === "ar" ? "المبلغ المتبقي المطلوب:" : "Remaining amount needed:"}</span>
-                    <span className="text-rose-600 dark:text-rose-400">
-                      {overdraftData.remainingAmount.toLocaleString()} {currency}
-                    </span>
-                  </div>
-                </div>
+              {(() => {
+                const { primary, picked, takes, remaining } = splitPlan(overdraftData);
+                const covered = remaining <= 0;
+                const isWithdrawal = expenseKind === "cash_withdrawal";
+                const side = (k: ExpenseKind, w: any) =>
+                  w.isCard === false
+                    ? (language === "ar" ? "نقد" : "Cash")
+                    : k === "cash_spend"
+                      ? (language === "ar" ? "النقد" : "Cash")
+                      : (language === "ar" ? "البطاقة" : "Card");
+                return (
+                  <>
+                    <div className="space-y-4 py-2">
+                      <div className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800">
+                        <p className="text-xs text-slate-600 dark:text-slate-300">
+                          {language === "ar"
+                            ? `"${overdraftData.originalWallet.name}" (${side(expenseKind, overdraftData.originalWallet)}) فيها ${overdraftData.currentBalance.toLocaleString()} ${currency} والمعاملة ${overdraftData.numericAmount.toLocaleString()} ${currency}.`
+                            : `"${overdraftData.originalWallet.name}" (${side(expenseKind, overdraftData.originalWallet)}) has ${overdraftData.currentBalance.toLocaleString()} ${currency}; the transaction is ${overdraftData.numericAmount.toLocaleString()} ${currency}.`}
+                        </p>
+                        {/* Live: what the picked sides still leave uncovered. */}
+                        <div
+                          aria-live="polite"
+                          className={`mt-3 flex items-center justify-between font-bold text-sm ${covered ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}
+                        >
+                          <span className={covered ? "" : "text-slate-500"}>
+                            {covered
+                              ? (language === "ar" ? "تمت تغطية المبلغ" : "Fully covered")
+                              : (language === "ar" ? "المتبقي:" : "Still needed:")}
+                          </span>
+                          <span className="flex items-center gap-1 tabular-nums">
+                            {covered ? <Check className="w-4 h-4" /> : `${remaining.toLocaleString()} ${currency}`}
+                          </span>
+                        </div>
+                      </div>
 
-                {overdraftData.availableWallets.length > 0 ? (
-                  <div className="space-y-2">
-                    <label className="text-xs font-bold text-slate-500 dark:text-slate-400">
-                      {language === "ar" 
-                        ? (overdraftData.currentBalance > 0 ? "اختر محفظة بديلة لتغطية الباقي" : "اختر محفظة بديلة لدفع كامل المبلغ") 
-                        : (overdraftData.currentBalance > 0 ? "Select an alternative wallet for the rest" : "Select an alternative wallet for the entire amount")}
-                    </label>
-                    <div className="space-y-2 overflow-y-auto max-h-40 pe-1">
-                      {overdraftData.availableWallets.map(w => (
+                      {isWithdrawal ? (
+                        <div className="p-3 bg-amber-50 dark:bg-amber-950/20 rounded-xl border border-amber-200 dark:border-amber-800/50">
+                          <p className="text-xs text-amber-700 dark:text-amber-400">
+                            {language === "ar"
+                              ? `لا يمكن تقسيم سحب نقدي: يمكنك سحب ${Math.max(0, overdraftData.currentBalance).toLocaleString()} ${currency} فقط من هذه البطاقة.`
+                              : `A cash withdrawal can't be split: this card only has ${Math.max(0, overdraftData.currentBalance).toLocaleString()} ${currency} to withdraw.`}
+                          </p>
+                        </div>
+                      ) : overdraftData.sources.length > 0 ? (
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold text-slate-500 dark:text-slate-400">
+                            {language === "ar" ? "اختر محفظة أو أكثر لتغطية الباقي" : "Pick one or more wallets to cover the rest"}
+                          </label>
+                          <div className="space-y-2 overflow-y-auto max-h-56 pe-1">
+                            {overdraftData.sources.map((src) => {
+                              const i = picked.findIndex((x) => x.key === src.key);
+                              const selected = i !== -1;
+                              // Once covered, only already-picked sides can be tapped (to drop them).
+                              const disabled = !selected && covered;
+                              return (
+                                <button
+                                  key={src.key}
+                                  type="button"
+                                  disabled={disabled}
+                                  aria-pressed={selected}
+                                  onClick={() =>
+                                    setSelectedSourceKeys((prev) =>
+                                      selected ? prev.filter((k) => k !== src.key) : [...prev, src.key],
+                                    )
+                                  }
+                                  className={`w-full flex items-center justify-between gap-2 p-3 rounded-xl border text-start transition-all ${
+                                    selected
+                                      ? "border-brand-teal bg-brand-teal/5 dark:bg-brand-teal/10 cursor-pointer"
+                                      : disabled
+                                        ? "border-slate-200 dark:border-slate-800 opacity-40 cursor-not-allowed"
+                                        : "border-slate-200 dark:border-slate-800 hover:border-brand-teal/50 cursor-pointer"
+                                  }`}
+                                >
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    {selected ? (
+                                      <Check className="w-4 h-4 text-brand-teal shrink-0" />
+                                    ) : (
+                                      <Wallet className="w-4 h-4 text-slate-400 shrink-0" />
+                                    )}
+                                    <span className="text-sm font-bold text-slate-800 dark:text-white truncate">{src.wallet.name}</span>
+                                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 shrink-0">
+                                      {side(src.kind, src.wallet)}
+                                    </span>
+                                  </div>
+                                  <span className="text-xs font-mono font-bold text-slate-500 shrink-0 tabular-nums">
+                                    {selected && takes[i] > 0 && (
+                                      <span className="text-brand-teal me-1.5">−{takes[i].toLocaleString()}</span>
+                                    )}
+                                    {src.available.toLocaleString()} {currency}
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="p-3 bg-amber-50 dark:bg-amber-950/20 rounded-xl border border-amber-200 dark:border-amber-800/50">
+                          <p className="text-xs text-amber-700 dark:text-amber-400">
+                            {language === "ar"
+                              ? "لا توجد محافظ أخرى فيها رصيد بهذه العملة. المتابعة ستجعل الرصيد سالباً."
+                              : "No other wallet holds this currency. Proceeding will result in a negative balance."}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row justify-end gap-2 pt-4 border-t border-slate-100 dark:border-slate-800/40">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOverdraftModalOpen(false);
+                          setOverdraftData(null);
+                        }}
+                        className="px-4 py-2 text-xs font-bold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors cursor-pointer"
+                      >
+                        {language === "ar" ? "إلغاء" : "Cancel"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleForceProceed}
+                        className="px-4 py-2 text-rose-600 bg-rose-50 hover:bg-rose-100 dark:text-rose-400 dark:bg-rose-950/30 dark:hover:bg-rose-900/40 text-xs font-bold rounded-xl transition-all cursor-pointer"
+                      >
+                        {language === "ar" ? "المتابعة بالرصيد السالب" : "Proceed (Negative)"}
+                      </button>
+                      {!isWithdrawal && overdraftData.sources.length > 0 && (
                         <button
-                          key={w.id}
-                          onClick={() => setSelectedAlternativeWalletId(w.id)}
-                          className={`w-full flex items-center justify-between p-3 rounded-xl border text-left cursor-pointer transition-all ${
-                            selectedAlternativeWalletId === w.id
-                              ? "border-brand-teal bg-brand-teal/5 dark:bg-brand-teal/10"
-                              : "border-slate-200 dark:border-slate-800 hover:border-brand-teal/50"
+                          type="button"
+                          disabled={!covered}
+                          onClick={handleOverdraftProceed}
+                          className={`px-4 py-2 text-white text-xs font-bold rounded-xl transition-all ${
+                            covered
+                              ? "bg-emerald-600 shadow-lg shadow-emerald-600/20 hover:opacity-90 cursor-pointer"
+                              : "bg-slate-300 dark:bg-slate-700 cursor-not-allowed"
                           }`}
                         >
-                          <div className="flex items-center gap-2">
-                            <Wallet className={`w-4 h-4 ${selectedAlternativeWalletId === w.id ? "text-brand-teal" : "text-slate-400"}`} />
-                            <span className="text-sm font-bold text-slate-800 dark:text-white">{w.name}</span>
-                          </div>
-                          <span className="text-xs font-mono font-bold text-slate-500">
-                            {getWalletCurrentBalance(w).toLocaleString()} {w.currency}
-                          </span>
+                          {language === "ar"
+                            ? (primary > 0 || picked.length > 1 ? "تقسيم وتسجيل المعاملة" : "دفع من محفظة بديلة")
+                            : (primary > 0 || picked.length > 1 ? "Split & Record" : "Pay from Alternative")}
                         </button>
-                      ))}
+                      )}
                     </div>
-                  </div>
-                ) : (
-                  <div className="p-3 bg-amber-50 dark:bg-amber-950/20 rounded-xl border border-amber-200 dark:border-amber-800/50">
-                    <p className="text-xs text-amber-700 dark:text-amber-400">
-                      {language === "ar" 
-                        ? "لا توجد محافظ أخرى كافية لتغطية المبلغ. المتابعة ستجعل الرصيد سالباً." 
-                        : "No other wallets have enough balance to cover this. Proceeding will result in a negative balance."}
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              <div className="flex flex-col sm:flex-row justify-end gap-2 pt-4 border-t border-slate-100 dark:border-slate-800/40">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setOverdraftModalOpen(false);
-                    setOverdraftData(null);
-                  }}
-                  className="px-4 py-2 text-xs font-bold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors cursor-pointer"
-                >
-                  {language === "ar" ? "إلغاء" : "Cancel"}
-                </button>
-                <button
-                  type="button"
-                  onClick={handleForceProceed}
-                  className="px-4 py-2 text-rose-600 bg-rose-50 hover:bg-rose-100 dark:text-rose-400 dark:bg-rose-950/30 dark:hover:bg-rose-900/40 text-xs font-bold rounded-xl transition-all cursor-pointer"
-                >
-                  {language === "ar" ? "المتابعة بالرصيد السالب" : "Proceed (Negative)"}
-                </button>
-
-                {overdraftData.availableWallets.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={handleOverdraftProceed}
-                    className="px-4 py-2 bg-brand-teal text-white text-xs font-bold rounded-xl shadow-lg shadow-brand-teal/20 hover:opacity-90 transition-all cursor-pointer"
-                  >
-                    {language === "ar" 
-                      ? (overdraftData.currentBalance > 0 ? "تقسيم وتسجيل المعاملة" : "دفع من محفظة بديلة") 
-                      : (overdraftData.currentBalance > 0 ? "Split & Record" : "Pay from Alternative")}
-                  </button>
-                )}
-              </div>
+                  </>
+                );
+              })()}
             </motion.div>
           </div>
         )}

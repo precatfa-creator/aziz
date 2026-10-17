@@ -10,6 +10,7 @@
 
 import assert from 'node:assert';
 import {
+  allocateSplit,
   convertAmount,
   inCompartment,
   isEarning,
@@ -299,6 +300,14 @@ assert.strictEqual(inCompartment(expense(500, 'cash_spend'), 'expense', 'cash'),
   assert.strictEqual(inCompartment(income(5, { incomeKind: 'cash' }), 'income', 'cash'), true);
   assert.strictEqual(inCompartment(income(5, { incomeKind: 'cash' }), 'income', 'card'), false);
   assert.strictEqual(inCompartment(income(5, { incomeKind: 'card' }), 'income', 'card'), true);
+}
+
+// Splitting 300 still owed across picked wallet sides, in pick order.
+{
+  assert.deepStrictEqual(allocateSplit(300, [100, 150]), { takes: [100, 150], remaining: 50 }, 'not covered yet');
+  assert.deepStrictEqual(allocateSplit(300, [100, 250, 80]), { takes: [100, 200, 0], remaining: 0 }, 'stops at the target');
+  assert.deepStrictEqual(allocateSplit(0.3, [0.1, 0.2]), { takes: [0.1, 0.2], remaining: 0 }, 'float dust must not leave 0.0000001 owed');
+  assert.deepStrictEqual(allocateSplit(50, []), { takes: [], remaining: 50 });
 }
 
 console.log('walletBalance.check.ts: all assertions passed');

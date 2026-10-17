@@ -290,6 +290,24 @@ export interface TransferInput {
   toKind?: IncomeKind;
 }
 
+/** What every part of a split expense shares. */
+export interface ExpenseLegBase {
+  currency: "LYD" | "USD";
+  title: string;
+  date: string;
+  categoryId: string;
+  imageUrl?: string;
+  priority?: "low" | "medium" | "high";
+}
+
+/** One wallet side's share of a split expense. */
+export interface ExpenseLeg {
+  walletId: string;
+  amount: number;
+  expenseKind?: ExpenseKind;
+  notes?: string;
+}
+
 interface AppContextProps {
   user: SupabaseUser | null;
   profile: UserProfile | null;
@@ -405,6 +423,7 @@ interface AppContextProps {
     expenseKind?: ExpenseKind,
   ) => Promise<void>;
   addTransfer: (t: TransferInput) => Promise<void>;
+  addExpenseLegs: (base: ExpenseLegBase, legs: ExpenseLeg[]) => Promise<void>;
   toggleExpenseRefund: (id: string, isRefunded: boolean) => Promise<void>;
   toggleExpenseDue: (id: string, isDue: boolean) => Promise<void>;
   recoverDue: (id: string, paidAmount: number) => Promise<void>;
@@ -1439,6 +1458,50 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     setIncomes((prev) => [mapIncome(inRow), ...prev].sort((x, y) => y.date.localeCompare(x.date)));
   };
 
+  /**
+   * Writes every part of an expense split across wallets in one insert, so the
+   * parts are recorded together or not at all — a half-recorded split would
+   * take money out of one wallet for a purchase the others never paid for.
+   */
+  const addExpenseLegs = async (base: ExpenseLegBase, legs: ExpenseLeg[]) => {
+    if (!user) throw new Error("Unauthorized");
+    const { data, error } = await supabase
+      .from("expenses")
+      .insert(
+        legs.map((l) => ({
+          user_id: user.id,
+          amount: l.amount,
+          currency: base.currency,
+          title: base.title,
+          date: base.date,
+          category_id: base.categoryId,
+          notes: l.notes || null,
+          image_url: base.imageUrl || null,
+          priority: base.priority || null,
+          wallet_id: l.walletId,
+          expense_kind: l.expenseKind ?? null,
+        })),
+      )
+      .select();
+    if (error) {
+      logSupabaseError(error, "expenses/split");
+      throw error;
+    }
+    setExpenses((prev) => [...(data || []).map(mapExpense), ...prev].sort((x, y) => y.date.localeCompare(x.date)));
+
+    // One purchase, one alert — not one per wallet that paid for it.
+    const total = legs.reduce((acc, l) => acc + l.amount, 0);
+    if (total >= 1000) {
+      await addNotificationArEn(
+        "تنبيه مصروف مرتفع",
+        "High Expense Alert",
+        `تم تسجيل مصروف بقيمة عالية: ${total} ${base.currency === "LYD" ? "د.ل" : "$"} لـ "${base.title}"`,
+        `A substantial expense was logged: ${total} ${base.currency} for "${base.title}"`,
+        "budget",
+      );
+    }
+  };
+
   // EXPENSE OPERATIONS
   const addExpense = async (
     amount: number,
@@ -2426,6 +2489,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
 
         addIncome,
         addTransfer,
+        addExpenseLegs,
         updateIncome,
         deleteIncome,
 

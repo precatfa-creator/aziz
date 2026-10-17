@@ -232,3 +232,21 @@ export function walletTotals(
     walletBalance(wallet, incomes, expenses, c),
   );
 }
+
+/**
+ * Fills `target` from wallet sides in the order the user picked them: each
+ * gives what it holds until nothing is left to cover. Returns each side's share
+ * (0 once the target is met) and what is still uncovered.
+ */
+export function allocateSplit(
+  target: number,
+  available: number[],
+): { takes: number[]; remaining: number } {
+  let remaining = roundMoney(target);
+  const takes = available.map((a) => {
+    const take = roundMoney(Math.max(0, Math.min(a, remaining)));
+    remaining = roundMoney(remaining - take);
+    return take;
+  });
+  return { takes, remaining };
+}
