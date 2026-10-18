@@ -14,11 +14,13 @@ import {
   Share2,
   CreditCard,
   Banknote,
+  FileText,
   X
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { ConfirmModal } from "./ConfirmModal";
 import { ShareWalletModal } from "./ShareWalletModal";
+import { StatementModal } from "./StatementModal";
 import type { Wallet as WalletRow } from "../types";
 import { walletBalance, walletTotals } from "../lib/walletBalance";
 
@@ -44,6 +46,7 @@ export const WalletManager: React.FC<WalletManagerProps> = ({ setCurrentTab }) =
   } = useApp();
   const [showAddForm, setShowAddForm] = useState(false);
   const [sharing, setSharing] = useState<WalletRow | null>(null);
+  const [showStatement, setShowStatement] = useState(false);
   const [showTransferForm, setShowTransferForm] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
 
@@ -298,6 +301,16 @@ export const WalletManager: React.FC<WalletManagerProps> = ({ setCurrentTab }) =
                <span className="hidden sm:inline">
                  {language === "ar" ? "الأرشيف" : "Archive"}
                </span>
+            </button>
+          )}
+
+          {!showTransferForm && !showAddForm && wallets.length > 0 && (
+            <button
+               onClick={() => setShowStatement(true)}
+               className="w-full md:w-auto px-5 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-300 font-extrabold text-xs rounded-2xl shadow-lg flex items-center justify-center gap-2 cursor-pointer transition-all duration-300 hover:scale-[1.02]"
+            >
+               <FileText className="w-4 h-4 stroke-[2.5]" />
+               <span>{language === "ar" ? "كشف حساب" : "Statement"}</span>
             </button>
           )}
 
@@ -943,6 +956,7 @@ export const WalletManager: React.FC<WalletManagerProps> = ({ setCurrentTab }) =
       })()}
 
       {sharing && <ShareWalletModal wallet={sharing} onClose={() => setSharing(null)} />}
+      {showStatement && <StatementModal onClose={() => setShowStatement(false)} />}
 
       <ConfirmModal
         isOpen={confirmModalState.isOpen}

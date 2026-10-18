@@ -288,3 +288,44 @@ body {
     animation-iteration-count: 1;
   }
 }
+
+/* Account statements (StatementModal) render into #statement-print, which is
+   invisible on screen and is the only thing printed while it exists. */
+#statement-print {
+  display: none;
+}
+
+@media print {
+  @page {
+    size: A4;
+    margin: 12mm;
+  }
+
+  html,
+  body {
+    background: #fff !important;
+    color: #0f172a !important;
+    overflow: visible !important;
+  }
+
+  body:has(#statement-print) > *:not(#statement-print) {
+    display: none !important;
+  }
+
+  #statement-print {
+    display: block !important;
+  }
+
+  #statement-print .stmt + .stmt {
+    break-before: page;
+  }
+
+  #statement-print tr {
+    break-inside: avoid;
+  }
+
+  #statement-print * {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+}
