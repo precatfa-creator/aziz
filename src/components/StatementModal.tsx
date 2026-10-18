@@ -2,7 +2,7 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * Account statement (كشف حساب): pick wallets and a period, then print — the
+ * Account statement (كشف حساب): pick wallets, then print their full history — the
  * browser's or Android's "Save as PDF" makes the file. The statements render
  * into #statement-print, which index.css hides on screen and prints alone.
  * Printing from HTML rather than building a PDF in JavaScript is what keeps
@@ -20,14 +20,11 @@ import { printPage } from '../lib/printPage';
 // Local date, like the transaction form stores — toISOString() alone is UTC,
 // which in Libya (UTC+2) is still yesterday until 2 a.m.
 const today = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
-const monthStart = () => `${today().slice(0, 8)}01`;
 
 export const StatementModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const { language, wallets, incomes, expenses, profile } = useApp();
   const ar = language === 'ar';
   const [selected, setSelected] = useState<string[]>(() => wallets.filter((w) => !w.isHidden).map((w) => w.id));
-  const [from, setFrom] = useState(monthStart);
-  const [to, setTo] = useState(today);
   const [masked, setMasked] = useState(false);
   // Mounted on the first print and kept until the window closes: Android's print
   // service lays the page out after the call returns, so it must still be there.
@@ -39,8 +36,9 @@ export const StatementModal: React.FC<{ onClose: () => void }> = ({ onClose }) =
     () =>
       wallets
         .filter((w) => selected.includes(w.id))
-        .flatMap((w) => buildStatements(w, incomes, expenses, from, to)),
-    [wallets, incomes, expenses, selected, from, to],
+        // A statement covers the wallet's whole history: from its initial balance to now.
+        .flatMap((w) => buildStatements(w, incomes, expenses, '', '')),
+    [wallets, incomes, expenses, selected],
   );
 
   const toggle = (id: string) =>
@@ -59,7 +57,7 @@ export const StatementModal: React.FC<{ onClose: () => void }> = ({ onClose }) =
     try {
       // Let the statements reach the DOM before the print service reads it.
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-      await printPage(`${ar ? 'كشف حساب' : 'Statement'} ${from || ''}${to ? ` - ${to}` : ''}`.trim());
+      await printPage(`${ar ? 'كشف حساب' : 'Statement'} ${today()}`);
     } catch (e) {
       console.error(e);
       setError(ar ? 'تعذّرت الطباعة على هذا الجهاز.' : 'Printing is not available on this device.');
@@ -101,7 +99,7 @@ export const StatementModal: React.FC<{ onClose: () => void }> = ({ onClose }) =
               {ar ? 'كشف حساب' : 'Account statement'}
             </h3>
             <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
-              {ar ? 'اختر المحافظ والفترة، ثم احفظه PDF من نافذة الطباعة.' : 'Pick wallets and a period, then save as PDF from the print dialog.'}
+              {ar ? 'اختر المحافظ، ثم احفظه PDF من نافذة الطباعة.' : 'Pick wallets, then save as PDF from the print dialog.'}
             </p>
           </div>
         </div>
@@ -146,18 +144,6 @@ export const StatementModal: React.FC<{ onClose: () => void }> = ({ onClose }) =
           </div>
         </div>
 
-        {/* Period */}
-        <div className="grid grid-cols-2 gap-3">
-          <label className="space-y-1">
-            <span className="text-xs font-bold text-slate-500 dark:text-slate-400">{ar ? 'من' : 'From'}</span>
-            <input type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} className={input} />
-          </label>
-          <label className="space-y-1">
-            <span className="text-xs font-bold text-slate-500 dark:text-slate-400">{ar ? 'إلى' : 'To'}</span>
-            <input type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} className={input} />
-          </label>
-        </div>
-
         {/* Hidden details */}
         <label className="flex items-start gap-2.5 p-3 rounded-xl border border-slate-200 dark:border-slate-800 cursor-pointer">
           <input type="checkbox" checked={masked} onChange={(e) => setMasked(e.target.checked)} className="mt-0.5 w-4 h-4 accent-brand-teal cursor-pointer" />
@@ -178,7 +164,7 @@ export const StatementModal: React.FC<{ onClose: () => void }> = ({ onClose }) =
         <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3 space-y-1">
           {statements.length === 0 ? (
             <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
-              {ar ? 'لا توجد حركات للمحافظ المختارة في هذه الفترة.' : 'Nothing to print for these wallets in this period.'}
+              {ar ? 'لا توجد حركات للمحافظ المختارة.' : 'Nothing to print for these wallets.'}
             </p>
           ) : (
             statements.map((s) => (
@@ -241,12 +227,6 @@ export const StatementModal: React.FC<{ onClose: () => void }> = ({ onClose }) =
                       <p className="font-black text-xs text-slate-900">{ar ? 'عزيز' : 'Aziz'}</p>
                       {profile?.name && <p>{profile.name}</p>}
                       <p>
-                        {ar ? 'من ' : 'From '}
-                        <span dir="ltr">{from || (ar ? 'البداية' : 'the start')}</span>
-                        {ar ? ' إلى ' : ' to '}
-                        <span dir="ltr">{to || (ar ? 'اليوم' : 'today')}</span>
-                      </p>
-                      <p>
                         {ar ? 'تاريخ الإصدار: ' : 'Issued: '}
                         <span dir="ltr">{new Date().toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}</span>
                       </p>
@@ -265,7 +245,7 @@ export const StatementModal: React.FC<{ onClose: () => void }> = ({ onClose }) =
                     </thead>
                     <tbody>
                       <tr className="font-bold bg-slate-50">
-                        <td className={cell} dir="ltr">{from || '—'}</td>
+                        <td className={cell}>—</td>
                         <td className={cell} colSpan={3}>{ar ? 'الرصيد الافتتاحي' : 'Opening balance'}</td>
                         <td className={num} dir="ltr">{fmt(s.opening)}</td>
                       </tr>
