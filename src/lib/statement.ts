@@ -41,6 +41,8 @@ export interface Statement {
   wallet: Wallet;
   currency: Currency;
   compartment: Compartment;
+  /** When the opening balance stood: YYYY-MM-DD or YYYY-MM-DDTHH:mm, like row dates. */
+  openingDate: string;
   opening: number;
   totalIn: number;
   totalOut: number;
@@ -49,6 +51,9 @@ export interface Statement {
 }
 
 const day = (d: string) => d.slice(0, 10);
+
+/** A Date as the local YYYY-MM-DDTHH:mm the transaction form stores. */
+const localStamp = (d: Date) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 
 /**
  * Statements for one wallet between `from` and `to` (YYYY-MM-DD, inclusive;
@@ -71,6 +76,12 @@ export function buildStatements(
     myExpenses.some((e) => e.expenseKind === 'cash_withdrawal' || e.expenseKind === 'cash_spend') ||
     myIncomes.some((i) => i.incomeKind === 'cash');
   const compartments: Compartment[] = !isCard ? ['cash'] : hasCash ? ['card', 'cash'] : ['card'];
+
+  // The wallet opened when its opening entry says (the date the user typed when
+  // creating it with a top-up), or else when the wallet row was created. With a
+  // start date, the opening is simply the balance on that day.
+  const openingEntry = myIncomes.filter((i) => i.isOpening).sort((a, b) => a.date.localeCompare(b.date))[0];
+  const walletOpened = openingEntry?.date ?? localStamp(wallet.createdAt);
 
   const inPeriod = (d: string) => (!from || day(d) >= from) && (!to || day(d) <= to);
   const before = (r: { date: string }) => !!from && day(r.date) < from;
@@ -124,7 +135,7 @@ export function buildStatements(
 
       const closing = pick(atEnd, compartment);
       if (rows.length === 0 && opening === 0 && closing === 0) continue;
-      out.push({ wallet, currency, compartment, opening, totalIn, totalOut, closing, rows });
+      out.push({ wallet, currency, compartment, openingDate: from || walletOpened, opening, totalIn, totalOut, closing, rows });
     }
   }
   return out;

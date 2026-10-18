@@ -19,12 +19,22 @@ import { printPage } from '../lib/printPage';
 
 // Local date, like the transaction form stores — toISOString() alone is UTC,
 // which in Libya (UTC+2) is still yesterday until 2 a.m.
+const keyOf = (s: Statement) => `${s.wallet.id}-${s.currency}-${s.compartment}`;
+
 const today = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 
 export const StatementModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const { language, wallets, incomes, expenses, profile } = useApp();
   const ar = language === 'ar';
-  const [selected, setSelected] = useState<string[]>(() => wallets.filter((w) => !w.isHidden).map((w) => w.id));
+  // Every statement there is to print — a card with cash has two — each picked
+  // on its own. A statement covers the wallet's whole history.
+  const all = useMemo(
+    () => wallets.flatMap((w) => buildStatements(w, incomes, expenses, '', '')),
+    [wallets, incomes, expenses],
+  );
+  const [selected, setSelected] = useState<string[]>(() =>
+    all.filter((x) => !x.wallet.isHidden).map(keyOf),
+  );
   const [masked, setMasked] = useState(false);
   // Mounted on the first print and kept until the window closes: Android's print
   // service lays the page out after the call returns, so it must still be there.
@@ -32,14 +42,7 @@ export const StatementModal: React.FC<{ onClose: () => void }> = ({ onClose }) =
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
-  const statements = useMemo(
-    () =>
-      wallets
-        .filter((w) => selected.includes(w.id))
-        // A statement covers the wallet's whole history: from its initial balance to now.
-        .flatMap((w) => buildStatements(w, incomes, expenses, '', '')),
-    [wallets, incomes, expenses, selected],
-  );
+  const statements = all.filter((x) => selected.includes(keyOf(x)));
 
   const toggle = (id: string) =>
     setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -99,49 +102,64 @@ export const StatementModal: React.FC<{ onClose: () => void }> = ({ onClose }) =
               {ar ? 'كشف حساب' : 'Account statement'}
             </h3>
             <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
-              {ar ? 'اختر المحافظ، ثم احفظه PDF من نافذة الطباعة.' : 'Pick wallets, then save as PDF from the print dialog.'}
+              {ar ? 'اختر الحسابات، ثم احفظه PDF من نافذة الطباعة.' : 'Pick accounts, then save as PDF from the print dialog.'}
             </p>
           </div>
         </div>
 
-        {/* Wallets */}
+        {/* One choice per statement: a card's card side and its cash side apart. */}
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-500 dark:text-slate-400">{ar ? 'المحافظ' : 'Wallets'}</span>
-            <button
-              type="button"
-              onClick={() => setSelected(selected.length === wallets.length ? [] : wallets.map((w) => w.id))}
-              className="text-[11px] font-bold text-brand-teal cursor-pointer hover:underline"
-            >
-              {selected.length === wallets.length ? (ar ? 'إلغاء الكل' : 'Clear all') : (ar ? 'تحديد الكل' : 'Select all')}
-            </button>
+            <span className="text-xs font-bold text-slate-500 dark:text-slate-400">{ar ? 'الحسابات' : 'Accounts'}</span>
+            {all.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setSelected(selected.length === all.length ? [] : all.map(keyOf))}
+                className="text-[11px] font-bold text-brand-teal cursor-pointer hover:underline"
+              >
+                {selected.length === all.length ? (ar ? 'إلغاء الكل' : 'Clear all') : (ar ? 'تحديد الكل' : 'Select all')}
+              </button>
+            )}
           </div>
-          <div className="space-y-1.5 max-h-48 overflow-y-auto pe-1">
-            {wallets.map((w) => {
-              const on = selected.includes(w.id);
-              return (
-                <button
-                  key={w.id}
-                  type="button"
-                  aria-pressed={on}
-                  onClick={() => toggle(w.id)}
-                  className={`w-full flex items-center gap-2 p-2.5 rounded-xl border text-start text-xs font-bold cursor-pointer transition-colors ${
-                    on
-                      ? 'border-brand-teal bg-brand-teal/5 dark:bg-brand-teal/10 text-slate-800 dark:text-white'
-                      : 'border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 hover:border-brand-teal/40'
-                  }`}
-                >
-                  <span className={`w-4 h-4 rounded-md border flex items-center justify-center shrink-0 ${on ? 'bg-brand-teal border-brand-teal text-white' : 'border-slate-300 dark:border-slate-700'}`}>
-                    {on && <Check className="w-3 h-3 stroke-[3]" />}
-                  </span>
-                  <span className="min-w-0 break-words">{w.name}</span>
-                  <span className="ms-auto text-[10px] text-slate-400 shrink-0">
-                    {w.isCard === false ? (ar ? 'نقد' : 'Cash') : (ar ? 'بطاقة' : 'Card')}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
+          {all.length === 0 ? (
+            <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3">
+              {ar ? 'لا توجد حركات للطباعة.' : 'Nothing to print yet.'}
+            </p>
+          ) : (
+            <div className="space-y-1.5 max-h-64 overflow-y-auto pe-1">
+              {all.map((x) => {
+                const k = keyOf(x);
+                const on = selected.includes(k);
+                return (
+                  <button
+                    key={k}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => toggle(k)}
+                    className={`w-full flex items-center gap-2 p-2.5 rounded-xl border text-start text-xs font-bold cursor-pointer transition-colors ${
+                      on
+                        ? 'border-brand-teal bg-brand-teal/5 dark:bg-brand-teal/10 text-slate-800 dark:text-white'
+                        : 'border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 hover:border-brand-teal/40'
+                    }`}
+                  >
+                    <span className={`w-4 h-4 rounded-md border flex items-center justify-center shrink-0 ${on ? 'bg-brand-teal border-brand-teal text-white' : 'border-slate-300 dark:border-slate-700'}`}>
+                      {on && <Check className="w-3 h-3 stroke-[3]" />}
+                    </span>
+                    <span className="min-w-0 break-words">{x.wallet.name}</span>
+                    <span className="ms-auto flex items-center gap-1.5 shrink-0">
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400">
+                        {side(x)}
+                        {x.currency !== x.wallet.currency && ` · ${x.currency}`}
+                      </span>
+                      <span className="text-[10px] font-semibold text-slate-400">
+                        {x.rows.length} {ar ? 'حركة' : 'rows'}
+                      </span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* Hidden details */}
@@ -159,26 +177,6 @@ export const StatementModal: React.FC<{ onClose: () => void }> = ({ onClose }) =
             </span>
           </span>
         </label>
-
-        {/* What will print */}
-        <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3 space-y-1">
-          {statements.length === 0 ? (
-            <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
-              {ar ? 'لا توجد حركات للمحافظ المختارة.' : 'Nothing to print for these wallets.'}
-            </p>
-          ) : (
-            statements.map((s) => (
-              <div key={`${s.wallet.id}-${s.currency}-${s.compartment}`} className="flex items-center justify-between gap-2 text-[11px] font-semibold text-slate-600 dark:text-slate-300">
-                <span className="min-w-0 truncate">
-                  {s.wallet.name} · {side(s)} · {s.currency}
-                </span>
-                <span className="shrink-0 text-slate-400">
-                  {s.rows.length} {ar ? 'حركة' : 'rows'}
-                </span>
-              </div>
-            ))
-          )}
-        </div>
 
         {error && (
           <p role="alert" className="text-xs font-bold text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/30 rounded-xl p-2.5">
@@ -245,7 +243,7 @@ export const StatementModal: React.FC<{ onClose: () => void }> = ({ onClose }) =
                     </thead>
                     <tbody>
                       <tr className="font-bold bg-slate-50">
-                        <td className={cell}>—</td>
+                        <td className={`${cell} whitespace-nowrap`} dir="ltr">{s.openingDate.replace('T', ' ')}</td>
                         <td className={cell} colSpan={3}>{ar ? 'الرصيد الافتتاحي' : 'Opening balance'}</td>
                         <td className={num} dir="ltr">{fmt(s.opening)}</td>
                       </tr>

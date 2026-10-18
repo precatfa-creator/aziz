@@ -68,4 +68,10 @@ assert.ok(!all[0].rows.some((r) => r.amount === 300), 'a withdrawal inside a cas
 // A card that never saw cash gets one statement.
 assert.strictEqual(buildStatements(card, [inc('2026-01-01', 5)], [], '', '').length, 1);
 
+// The opening balance is dated: by the wallet's opening entry when it has one,
+// otherwise by when the wallet was created; with a start date, by that date.
+assert.strictEqual(all[0].openingDate, '2026-02-05', 'opening dated by the opening entry');
+assert.strictEqual(buildStatements(card, [], [exp('2026-01-02', 1)], '', '')[0].openingDate.length, 16, 'opening dated by wallet creation, to the minute');
+assert.strictEqual(feb[0].openingDate, '2026-02-01');
+
 console.log('statement.check.ts: all assertions passed');
