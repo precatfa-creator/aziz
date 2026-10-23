@@ -8,7 +8,7 @@ import { useApp } from '../context/AppContext';
 import { supabase } from '../supabase';
 import { restoreBackup, type AzizBackup } from '../lib/restoreBackup';
 import { backupCounts, buildBackup, downloadBackup } from '../lib/exportBackup';
-import { inlineReceiptsForBackup } from '../lib/receiptStorage';
+import { inlineReceiptsForBackup, receiptToDataUrl } from '../lib/receiptStorage';
 import { countInlineReceipts, rowsNeedingMigration } from '../lib/receiptImages';
 import { migrateReceiptsToStorage } from '../lib/migrateReceipts';
 import { 
@@ -132,12 +132,17 @@ export const Settings: React.FC = () => {
   const handleDownloadBackup = async () => {
     let inlinedIncomes = incomes;
     let inlinedExpenses = expenses;
+    let inlinedProjects = projects;
     try {
       setBackupMessage(language === 'ar' ? 'جارٍ تجهيز المرفقات...' : 'Collecting receipts...');
       [inlinedIncomes, inlinedExpenses] = await Promise.all([
         inlineReceiptsForBackup(incomes),
         inlineReceiptsForBackup(expenses),
       ]);
+      // A project logo is stored like a receipt, so it is inlined the same way.
+      inlinedProjects = await Promise.all(
+        projects.map(async (p) => (p.logoUrl ? { ...p, logoUrl: await receiptToDataUrl(p.logoUrl) } : p)),
+      );
     } catch (e) {
       console.error('Backup aborted: receipts could not be collected', e);
       setBackupMessage(
@@ -160,7 +165,7 @@ export const Settings: React.FC = () => {
       expenses: inlinedExpenses,
       plannedPurchases,
       savingsGroups,
-      projects,
+      projects: inlinedProjects,
     });
     const c = backupCounts(backup);
     downloadBackup(backup);

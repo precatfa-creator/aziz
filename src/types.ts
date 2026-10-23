@@ -172,6 +172,8 @@ export interface Project {
   description: string;
   /** The project this one sits under, if any. */
   parentId?: string;
+  /** Receipts-bucket object path, or an inline data: URL from a restored backup. */
+  logoUrl?: string;
   notes: ProjectNote[];
   isArchived: boolean;
   createdAt: Date;

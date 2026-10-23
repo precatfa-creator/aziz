@@ -115,6 +115,8 @@ export async function restoreBackup(
     name: p.name,
     description: p.description || null,
     parent_id: p.parentId ? projectMap.get(p.parentId) || null : null,
+    // Inlined as a data: URL by the backup, so it renders in any account.
+    logo_url: p.logoUrl || null,
     notes: p.notes || [],
     is_archived: !!p.isArchived,
   }));

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import {
   Plus,
@@ -12,6 +12,8 @@ import {
   X,
   Archive,
   Briefcase,
+  Paperclip,
+  ImagePlus,
   Link2,
   Unlink,
   StickyNote,
@@ -22,6 +24,10 @@ import type { Expense, Income, Project } from '../types';
 import { ConfirmModal } from './ConfirmModal';
 import { isProjectCost, projectFamily, projectTotals } from '../lib/projectTotals';
 import { convertAmount, isEarning } from '../lib/walletBalance';
+import { RECEIPTS_BUCKET, resolveReceiptUrls, uploadReceipt } from '../lib/receiptStorage';
+import { isInlineReceipt } from '../lib/receiptImages';
+import { fileToReceiptJpeg } from '../lib/imageDownscale';
+import { supabase } from '../supabase';
 
 const inputClass =
   'px-3 py-2.5 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200/60 dark:border-slate-700/80 rounded-xl focus:border-emerald-500 outline-hidden dark:text-white';
@@ -43,6 +49,8 @@ export const Projects: React.FC = () => {
     incomes,
     expenses,
     categories,
+    wallets,
+    user,
     addProject,
     updateProject,
     deleteProject,
@@ -55,7 +63,17 @@ export const Projects: React.FC = () => {
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
-  const [form, setForm] = useState<{ id?: string; name: string; description: string; parentId: string } | null>(null);
+  const [form, setForm] = useState<{
+    id?: string;
+    name: string;
+    description: string;
+    parentId: string;
+    /** The stored logo; '' once the user removes it in the form. */
+    logoUrl: string;
+    logoFile?: File;
+  } | null>(null);
+  // Signed URLs for logo paths, keyed by path; inline data: logos need none.
+  const [logoUrls, setLogoUrls] = useState<Record<string, string>>({});
   // Roll sub-projects' figures and history into the parent's view.
   const [combined, setCombined] = useState(false);
   const [noteDate, setNoteDate] = useState(today());
@@ -84,6 +102,43 @@ export const Projects: React.FC = () => {
   };
   const categoryName = (row: Income | Expense) =>
     categories.find((c) => c.id === row.categoryId)?.name || row.categoryName || '';
+  // Where the money came from or went: a wallet, or a source outside the app.
+  const sourceName = (row: Income | Expense) =>
+    ('externalSource' in row && row.externalSource) || wallets.find((w) => w.id === row.walletId)?.name || '';
+
+  /** Category · wallet · receipt marker, then the notes — a row's details line. */
+  const details = (row: Income | Expense, extra?: React.ReactNode) => (
+    <div className="text-[10px] text-slate-400 min-w-0">
+      <div className="truncate">
+        {[categoryName(row), sourceName(row)].filter(Boolean).join(' · ')}
+        {row.imageUrl && <Paperclip className="inline w-3 h-3 ms-1 -mt-0.5" aria-label={ar ? 'مرفق' : 'Receipt'} />}
+        {extra}
+      </div>
+      {row.notes && <div className="line-clamp-2 whitespace-pre-wrap text-slate-500 dark:text-slate-400">{row.notes}</div>}
+    </div>
+  );
+
+  useEffect(() => {
+    const paths = projects.map((p) => p.logoUrl).filter((u): u is string => !!u && !isInlineReceipt(u) && !logoUrls[u]);
+    if (!paths.length) return;
+    resolveReceiptUrls(paths)
+      .then(({ urls }) => setLogoUrls((prev) => ({ ...prev, ...urls })))
+      .catch((e) => console.error('Project logos could not be signed', e));
+  }, [projects]);
+
+  const pendingLogo = form?.logoFile;
+  const previewUrl = useMemo(() => (pendingLogo ? URL.createObjectURL(pendingLogo) : ''), [pendingLogo]);
+  useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
+
+  const logoSrc = (url?: string) => (!url ? '' : isInlineReceipt(url) ? url : logoUrls[url] || '');
+  const logo = (p: Project, size: string, iconClass = 'text-emerald-500') => {
+    const src = logoSrc(p.logoUrl);
+    return src ? (
+      <img src={src} alt="" className={`${size} rounded-xl object-cover shrink-0 bg-slate-100 dark:bg-slate-800`} />
+    ) : (
+      <Briefcase className={`${size} p-0.5 shrink-0 ${iconClass}`} />
+    );
+  };
 
   // Keeps a failed save from looking like a successful one.
   const run = async (fn: () => Promise<void>) => {
@@ -101,9 +156,21 @@ export const Projects: React.FC = () => {
     e.preventDefault();
     if (!form || !form.name.trim()) return;
     void run(async () => {
+      // A logo is shown small, so it is stored small: 384 px is sharp at 2x.
+      const uploaded = form.logoFile && user ? await uploadReceipt(await fileToReceiptJpeg(form.logoFile, 384), user.id) : '';
+      const logoUrl = uploaded || form.logoUrl;
+      const previous = form.id ? byId(form.id)?.logoUrl : undefined;
       if (form.id)
-        await updateProject(form.id, { name: form.name.trim(), description: form.description.trim(), parentId: form.parentId || null });
-      else await addProject(form.name.trim(), form.description.trim(), form.parentId || undefined);
+        await updateProject(form.id, {
+          name: form.name.trim(),
+          description: form.description.trim(),
+          parentId: form.parentId || null,
+          logoUrl: logoUrl || null,
+        });
+      else await addProject(form.name.trim(), form.description.trim(), form.parentId || undefined, logoUrl || undefined);
+      // Best effort: a stale object costs storage, never correctness.
+      if (previous && previous !== logoUrl && !isInlineReceipt(previous))
+        void supabase.storage.from(RECEIPTS_BUCKET).remove([previous]);
       setForm(null);
     });
   };
@@ -143,10 +210,10 @@ export const Projects: React.FC = () => {
       ...incomes.filter((i) => free(i.projectId) && isEarning(i)).map((row) => ({ kind: 'income' as const, date: row.date, row })),
     ];
     return rows
-      .filter((r) => r.kind !== 'note' && (!q || `${r.row.title} ${r.row.notes} ${r.row.amount}`.toLowerCase().includes(q)))
+      .filter((r) => r.kind !== 'note' && (!q || `${r.row.title} ${r.row.notes} ${r.row.amount} ${categoryName(r.row)} ${sourceName(r.row)}`.toLowerCase().includes(q)))
       .sort((a, b) => b.date.localeCompare(a.date))
       .slice(0, 100);
-  }, [projects, expenses, incomes, linkSearch]);
+  }, [projects, expenses, incomes, linkSearch, categories, wallets]);
 
   const linkPicked = () => {
     if (!selected) return;
@@ -192,7 +259,7 @@ export const Projects: React.FC = () => {
       ) : (
         !form && (
           <button
-            onClick={() => setForm({ name: '', description: '', parentId: '' })}
+            onClick={() => setForm({ name: '', description: '', parentId: '', logoUrl: '' })}
             className="w-full sm:w-auto px-4 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs rounded-xl shadow-md shadow-emerald-500/10 flex justify-center items-center gap-2 cursor-pointer"
           >
             <Plus className="w-4 h-4" />
@@ -230,6 +297,32 @@ export const Projects: React.FC = () => {
         placeholder={ar ? 'وصف مختصر (اختياري)' : 'Short description (optional)'}
         className={`${inputClass} w-full`}
       />
+      <div className="flex items-center gap-3">
+        {form.logoFile ? (
+          <img src={previewUrl} alt="" className="w-14 h-14 rounded-2xl object-cover" />
+        ) : logoSrc(form.logoUrl) ? (
+          <img src={logoSrc(form.logoUrl)} alt="" className="w-14 h-14 rounded-2xl object-cover" />
+        ) : (
+          <span className="w-14 h-14 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
+            <Briefcase className="w-6 h-6 text-slate-400" />
+          </span>
+        )}
+        <label className="px-3 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 font-bold text-xs rounded-xl cursor-pointer flex items-center gap-1.5">
+          <ImagePlus className="w-4 h-4" />
+          {form.logoFile || form.logoUrl ? (ar ? 'تغيير الشعار' : 'Change logo') : ar ? 'إضافة شعار' : 'Add logo'}
+          <input
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            className="hidden"
+            onChange={(e) => e.target.files?.[0] && setForm({ ...form, logoFile: e.target.files[0] })}
+          />
+        </label>
+        {(form.logoFile || form.logoUrl) && (
+          <button type="button" onClick={() => setForm({ ...form, logoFile: undefined, logoUrl: '' })} className="text-xs font-bold text-rose-500 hover:underline cursor-pointer">
+            {ar ? 'إزالة' : 'Remove'}
+          </button>
+        )}
+      </div>
       <label className="flex flex-col gap-1.5">
         <span className="text-xs font-bold text-slate-500 dark:text-slate-400">{ar ? 'تحت مشروع' : 'Parent project'}</span>
         <select value={form.parentId} onChange={(e) => setForm({ ...form, parentId: e.target.value })} className={`${inputClass} w-full`}>
@@ -290,6 +383,7 @@ export const Projects: React.FC = () => {
               className={`w-full text-start pe-5 py-2 flex items-start gap-2 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer ${c.isArchived ? 'opacity-50' : ''}`}
             >
               <span className="w-3 h-3 border-s-2 border-b-2 border-slate-300 dark:border-slate-600 rounded-es-md shrink-0" />
+              {c.logoUrl && logo(c, 'w-6 h-6')}
               <span className="flex-1 min-w-0 space-y-1">
                 <span className="block truncate text-xs font-bold text-slate-700 dark:text-slate-200">
                   {c.name}
@@ -339,7 +433,7 @@ export const Projects: React.FC = () => {
                 >
                   <button onClick={() => openProject(p.id)} className="w-full text-start p-5 space-y-3 cursor-pointer">
                     <div className="flex items-center gap-2">
-                      <Briefcase className="w-5 h-5 text-emerald-500 shrink-0" />
+                      {logo(p, 'w-9 h-9')}
                       <span className="font-extrabold text-slate-900 dark:text-white truncate">{p.name}</span>
                     </div>
                     <div className="grid grid-cols-3 gap-2 text-xs">
@@ -393,7 +487,7 @@ export const Projects: React.FC = () => {
         <div className="flex flex-wrap justify-between items-start gap-3">
           <div>
             <h3 className="text-xl font-black text-slate-900 dark:text-white flex items-center gap-2">
-              <Briefcase className="w-5 h-5 text-emerald-500" />
+              {logo(selected, 'w-10 h-10')}
               {selected.name}
               {selected.isArchived && (
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500">{ar ? 'مؤرشف' : 'Archived'}</span>
@@ -417,7 +511,7 @@ export const Projects: React.FC = () => {
             {selected.description && <p className="text-xs text-slate-500 mt-1 whitespace-pre-wrap">{selected.description}</p>}
           </div>
           <div className="flex gap-1">
-            <button title={ar ? 'تعديل' : 'Edit'} onClick={() => setForm({ id: selected.id, name: selected.name, description: selected.description, parentId: selected.parentId || '' })} className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 cursor-pointer">
+            <button title={ar ? 'تعديل' : 'Edit'} onClick={() => setForm({ id: selected.id, name: selected.name, description: selected.description, parentId: selected.parentId || '', logoUrl: selected.logoUrl || '' })} className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 cursor-pointer">
               <Edit2 className="w-4 h-4" />
             </button>
             <button title={selected.isArchived ? (ar ? 'إلغاء الأرشفة' : 'Unarchive') : ar ? 'أرشفة' : 'Archive'} onClick={() => void run(() => updateProject(selected.id, { isArchived: !selected.isArchived }))} className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 cursor-pointer">
@@ -460,7 +554,7 @@ export const Projects: React.FC = () => {
                     className="text-start p-3 rounded-2xl border border-slate-100 dark:border-slate-800 hover:border-indigo-300 cursor-pointer space-y-2"
                   >
                     <span className="flex items-center gap-2">
-                      <Briefcase className="w-4 h-4 text-indigo-500 shrink-0" />
+                      {logo(c, 'w-6 h-6', 'text-indigo-500')}
                       <span className="flex-1 truncate text-sm font-bold text-slate-800 dark:text-white">
                         {c.name}
                         {c.isArchived && <span className="text-[10px] text-slate-400 font-normal">{ar ? ' · مؤرشف' : ' · archived'}</span>}
@@ -542,15 +636,18 @@ export const Projects: React.FC = () => {
                   if (r.kind === 'note') return null;
                   const key = `${r.kind}:${r.row.id}`;
                   return (
-                    <label key={key} className="flex items-center gap-2 p-2 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer text-xs">
+                    <label key={key} className="flex items-start gap-2 p-2 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer text-xs">
                       <input
                         type="checkbox"
                         checked={picked.has(key)}
                         onChange={() => setPicked((prev) => { const next = new Set(prev); next.has(key) ? next.delete(key) : next.add(key); return next; })}
                       />
                       <span className="text-slate-400 w-20 shrink-0">{r.date.slice(0, 10)}</span>
-                      <span className="flex-1 truncate text-slate-700 dark:text-slate-200">{r.row.title}</span>
-                      <span className={`font-bold ${r.kind === 'income' ? 'text-emerald-500' : 'text-rose-500'}`}>
+                      <span className="flex-1 min-w-0">
+                        <span className="block truncate text-slate-700 dark:text-slate-200">{r.row.title}</span>
+                        {details(r.row)}
+                      </span>
+                      <span className={`font-bold whitespace-nowrap ${r.kind === 'income' ? 'text-emerald-500' : 'text-rose-500'}`}>
                         {r.kind === 'income' ? '+' : '-'}{fmt(r.row.amount, r.row.currency)}
                       </span>
                     </label>
@@ -607,11 +704,13 @@ export const Projects: React.FC = () => {
               <span className="text-xs text-slate-400 w-20 shrink-0">{entry.date.slice(0, 10)}</span>
               <div className="flex-1 min-w-0">
                 <div className="text-sm text-slate-800 dark:text-slate-100 truncate">{entry.row.title}</div>
-                <div className="text-[10px] text-slate-400 truncate">
-                  {categoryName(entry.row)}
-                  {entry.row.projectId !== selected.id && <span className="text-indigo-500"> · {byId(entry.row.projectId)?.name}</span>}
-                  {!counted && (ar ? ' · لا يُحتسب' : ' · not counted')}
-                </div>
+                {details(
+                  entry.row,
+                  <>
+                    {entry.row.projectId !== selected.id && <span className="text-indigo-500"> · {byId(entry.row.projectId)?.name}</span>}
+                    {!counted && (ar ? ' · لا يُحتسب' : ' · not counted')}
+                  </>,
+                )}
               </div>
               <span className={`text-sm font-black ${isIncome ? 'text-emerald-500' : 'text-rose-500'}`}>
                 {isIncome ? '+' : '-'}{fmt(entry.row.amount, entry.row.currency)}

@@ -175,6 +175,7 @@ function mapProject(row: any): Project {
     name: row.name,
     description: row.description || "",
     parentId: row.parent_id || undefined,
+    logoUrl: row.logo_url || undefined,
     notes: row.notes || [],
     isArchived: !!row.is_archived,
     createdAt: new Date(row.created_at),
@@ -552,10 +553,17 @@ interface AppContextProps {
   deleteSavingsGroup: (id: string) => Promise<void>;
 
   // Projects
-  addProject: (name: string, description?: string, parentId?: string) => Promise<void>;
+  addProject: (name: string, description?: string, parentId?: string, logoUrl?: string) => Promise<void>;
   updateProject: (
     id: string,
-    fields: { name?: string; description?: string; isArchived?: boolean; notes?: ProjectNote[]; parentId?: string | null },
+    fields: {
+      name?: string;
+      description?: string;
+      isArchived?: boolean;
+      notes?: ProjectNote[];
+      parentId?: string | null;
+      logoUrl?: string | null;
+    },
   ) => Promise<void>;
   deleteProject: (id: string) => Promise<void>;
   /** Tags (or, with null, untags) rows; a split part brings its whole purchase. */
@@ -2206,12 +2214,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   // PROJECTS OPERATIONS
-  const addProject = async (name: string, description?: string, parentId?: string) => {
+  const addProject = async (name: string, description?: string, parentId?: string, logoUrl?: string) => {
     if (!user) return;
     try {
       const { data, error } = await supabase
         .from("projects")
-        .insert({ user_id: user.id, name, description: description || null, parent_id: parentId || null })
+        .insert({ user_id: user.id, name, description: description || null, parent_id: parentId || null, logo_url: logoUrl || null })
         .select()
         .single();
       if (error) throw error;
@@ -2224,7 +2232,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const updateProject = async (
     id: string,
-    fields: { name?: string; description?: string; isArchived?: boolean; notes?: ProjectNote[]; parentId?: string | null },
+    fields: {
+      name?: string;
+      description?: string;
+      isArchived?: boolean;
+      notes?: ProjectNote[];
+      parentId?: string | null;
+      logoUrl?: string | null;
+    },
   ) => {
     const payload: Record<string, any> = {};
     if (fields.name !== undefined) payload.name = fields.name;
@@ -2232,6 +2247,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     if (fields.isArchived !== undefined) payload.is_archived = fields.isArchived;
     if (fields.notes !== undefined) payload.notes = fields.notes;
     if (fields.parentId !== undefined) payload.parent_id = fields.parentId;
+    if (fields.logoUrl !== undefined) payload.logo_url = fields.logoUrl;
     try {
       const { data, error } = await supabase
         .from("projects")
