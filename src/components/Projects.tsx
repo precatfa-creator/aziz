@@ -74,8 +74,23 @@ export const Projects: React.FC = () => {
   } | null>(null);
   // Signed URLs for logo paths, keyed by path; inline data: logos need none.
   const [logoUrls, setLogoUrls] = useState<Record<string, string>>({});
-  // Roll sub-projects' figures and history into the parent's view.
-  const [combined, setCombined] = useState(false);
+  // Roll sub-projects' figures into their parents — one setting for the list,
+  // the tree and the project page, remembered on this device.
+  const [combined, setCombinedState] = useState(() => {
+    try {
+      return localStorage.getItem('aziz_projects_combined') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const setCombined = (value: boolean) => {
+    setCombinedState(value);
+    try {
+      localStorage.setItem('aziz_projects_combined', String(value));
+    } catch {
+      // Private mode: the choice simply lasts for this visit.
+    }
+  };
   const [noteDate, setNoteDate] = useState(today());
   const [noteText, setNoteText] = useState('');
   const [linking, setLinking] = useState(false);
@@ -97,7 +112,6 @@ export const Projects: React.FC = () => {
   );
   const openProject = (id: string | null) => {
     setSelectedId(id);
-    setCombined(false);
     setLinking(false);
   };
   const categoryName = (row: Income | Expense) =>
@@ -105,6 +119,20 @@ export const Projects: React.FC = () => {
   // Where the money came from or went: a wallet, or a source outside the app.
   const sourceName = (row: Income | Expense) =>
     ('externalSource' in row && row.externalSource) || wallets.find((w) => w.id === row.walletId)?.name || '';
+
+  // The transaction's own date as recorded ("YYYY-MM-DD" or "YYYY-MM-DDTHH:mm"),
+  // built from its parts so a date-only value isn't shifted by UTC parsing.
+  const txDate = (date: string) => {
+    const [y, m, d] = date.slice(0, 10).split('-').map(Number);
+    const day = new Date(y, m - 1, d).toLocaleDateString(ar ? 'ar-LY' : 'en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+    const time = date.slice(11, 16);
+    return (
+      <span className="w-20 shrink-0 text-[11px] leading-tight text-slate-500 dark:text-slate-400">
+        <span className="block font-bold">{day}</span>
+        {time && <span className="block" dir="ltr">{time}</span>}
+      </span>
+    );
+  };
 
   /** Category · wallet · receipt marker, then the notes — a row's details line. */
   const details = (row: Income | Expense, extra?: React.ReactNode) => (
@@ -373,7 +401,7 @@ export const Projects: React.FC = () => {
     childrenOf(parentId)
       .filter((c) => !seen.has(c.id))
       .map((c) => {
-        const ct = totalsOf(c, true);
+        const ct = totalsOf(c, combined);
         const next = new Set(seen).add(c.id);
         return (
           <React.Fragment key={c.id}>
@@ -415,6 +443,12 @@ export const Projects: React.FC = () => {
               {archived ? (ar ? 'المؤرشفة' : 'Archived') : ar ? 'النشطة' : 'Active'}
             </button>
           ))}
+          {projects.some((p) => p.parentId) && (
+            <label className="ms-auto flex items-center gap-2 text-xs font-bold text-slate-700 dark:text-slate-200 cursor-pointer">
+              <input type="checkbox" checked={combined} onChange={(e) => setCombined(e.target.checked)} className="w-4 h-4 accent-emerald-500" />
+              {ar ? 'اجمع أرقام المشاريع الفرعية' : 'Include sub-projects in the figures'}
+            </label>
+          )}
         </div>
         {visible.length === 0 ? (
           <p className="text-center text-sm text-slate-400 py-12">
@@ -424,8 +458,7 @@ export const Projects: React.FC = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 items-start">
             {visible.map((p) => {
               const subs = familyOf(p).size - 1;
-              // Every figure on the list is that project plus everything under it.
-              const tot = totalsOf(p, true);
+              const tot = totalsOf(p, combined);
               return (
                 <div
                   key={p.id}
@@ -452,7 +485,9 @@ export const Projects: React.FC = () => {
                     </div>
                     {subs > 0 && (
                       <div className="text-[10px] text-slate-400">
-                        {ar ? `يشمل ${subs} مشروعاً فرعياً` : `Includes ${subs} sub-project${subs > 1 ? 's' : ''}`}
+                        {combined
+                          ? ar ? `يشمل ${subs} مشروعاً فرعياً` : `Includes ${subs} sub-project${subs > 1 ? 's' : ''}`
+                          : ar ? `أرقامه فقط · ${subs} مشروع فرعي` : `Own figures only · ${subs} sub-project${subs > 1 ? 's' : ''}`}
                       </div>
                     )}
                   </button>
@@ -546,7 +581,7 @@ export const Projects: React.FC = () => {
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {children.map((c) => {
-                const ct = totalsOf(c, true);
+                const ct = totalsOf(c, combined);
                 return (
                   <button
                     key={c.id}
@@ -642,7 +677,7 @@ export const Projects: React.FC = () => {
                         checked={picked.has(key)}
                         onChange={() => setPicked((prev) => { const next = new Set(prev); next.has(key) ? next.delete(key) : next.add(key); return next; })}
                       />
-                      <span className="text-slate-400 w-20 shrink-0">{r.date.slice(0, 10)}</span>
+                      {txDate(r.row.date)}
                       <span className="flex-1 min-w-0">
                         <span className="block truncate text-slate-700 dark:text-slate-200">{r.row.title}</span>
                         {details(r.row)}
@@ -701,7 +736,7 @@ export const Projects: React.FC = () => {
           return (
             <div key={`${entry.kind}:${entry.row.id}`} className="flex items-center gap-3 p-3 rounded-2xl hover:bg-slate-50 dark:hover:bg-slate-800/50">
               <Icon className={`w-4 h-4 shrink-0 ${isIncome ? 'text-emerald-500' : 'text-rose-500'}`} />
-              <span className="text-xs text-slate-400 w-20 shrink-0">{entry.date.slice(0, 10)}</span>
+              {txDate(entry.row.date)}
               <div className="flex-1 min-w-0">
                 <div className="text-sm text-slate-800 dark:text-slate-100 truncate">{entry.row.title}</div>
                 {details(
