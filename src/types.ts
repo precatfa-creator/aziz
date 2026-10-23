@@ -164,6 +164,18 @@ export interface ProjectNote {
   text: string;
 }
 
+/** A file kept with a project; `path` is in the private project-files bucket. */
+export interface ProjectAttachment {
+  id: string;
+  /** Object path, or an inline data: URL inside a backup file only. */
+  path: string;
+  name: string;
+  type: string;
+  size: number;
+  /** When it was added: YYYY-MM-DD. */
+  date: string;
+}
+
 /** An investment or venture; its money lives in incomes/expenses tagged with its id. */
 export interface Project {
   id: string;
@@ -175,6 +187,7 @@ export interface Project {
   /** Receipts-bucket object path, or an inline data: URL from a restored backup. */
   logoUrl?: string;
   notes: ProjectNote[];
+  attachments: ProjectAttachment[];
   isArchived: boolean;
   createdAt: Date;
   updatedAt: Date;

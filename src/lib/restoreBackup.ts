@@ -4,6 +4,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { PROJECT_FILES_BUCKET, projectFilePath, validateProjectFile } from './projectFiles.ts';
 
 // Shape of the JSON exported by the old (Firebase) Aziz app. Only the fields we
 // restore are typed; the export carries a few extras (walletName, categoryName)
@@ -109,6 +110,26 @@ export async function restoreBackup(
 
   // --- Projects (before incomes/expenses, which carry their remapped id;
   // notes are self-contained JSONB) ---
+  // Attachments arrive inlined; each goes back into Storage under this user,
+  // since a path from the exporting account would point at nothing here.
+  const restoreAttachments = async (list: any[] = []) => {
+    const out = [];
+    for (const a of list) {
+      let path = a.path;
+      if (typeof path === 'string' && path.startsWith('data:')) {
+        const blob = await (await fetch(path)).blob();
+        const { type, extension } = validateProjectFile({ name: a.name || '', size: blob.size, type: a.type || blob.type });
+        path = projectFilePath(userId, extension);
+        const { error } = await supabase.storage.from(PROJECT_FILES_BUCKET).upload(path, blob, { contentType: type });
+        if (error) throw new Error(`upload attachment ${a.name}: ${error.message}`);
+      }
+      out.push({ ...a, path });
+    }
+    return out;
+  };
+  const projectAttachments = new Map<string, any[]>();
+  for (const p of backup.projects || []) projectAttachments.set(p.id, await restoreAttachments(p.attachments));
+
   const projectRows = (backup.projects || []).map((p) => ({
     id: projectMap.get(p.id),
     user_id: userId,
@@ -118,6 +139,7 @@ export async function restoreBackup(
     // Inlined as a data: URL by the backup, so it renders in any account.
     logo_url: p.logoUrl || null,
     notes: p.notes || [],
+    attachments: projectAttachments.get(p.id) || [],
     is_archived: !!p.isArchived,
   }));
   await insertChunked(supabase, 'projects', projectRows);

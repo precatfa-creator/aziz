@@ -28,6 +28,14 @@ function stubClient() {
         update: () => ({ eq: () => Promise.resolve({ error: null }) }),
       };
     },
+    storage: {
+      from: (bucket: string) => ({
+        upload(path: string, blob: Blob, opts: any) {
+          (inserted[`storage:${bucket}`] ||= []).push({ path, size: blob.size, contentType: opts.contentType });
+          return Promise.resolve({ error: null });
+        },
+      }),
+    },
   };
   return { client, inserted };
 }
@@ -73,8 +81,8 @@ const input = {
     { id: 'g1', userId: 'u1', name: 'Jamiya', currency: 'LYD', totalAmount: 6000, numMembers: 6, paymentPerMember: 1000, paymentCycle: 'monthly', startDate: '2026-01-01', members: [], receivingOrder: [], isArchived: false, createdAt: now, updatedAt: now },
   ],
   projects: [
-    { id: 'pr1', userId: 'u1', name: 'بضاعة الصين', description: '', notes: [{ id: 'n1', date: '2026-01-05', text: 'وصلت الميناء' }], isArchived: false, createdAt: now, updatedAt: now },
-    { id: 'pr2', userId: 'u1', name: 'الشحنة الأولى', description: '', parentId: 'pr1', logoUrl: 'data:image/jpeg;base64,AAAA', notes: [], isArchived: false, createdAt: now, updatedAt: now },
+    { id: 'pr1', userId: 'u1', name: 'بضاعة الصين', description: '', notes: [{ id: 'n1', date: '2026-01-05', text: 'وصلت الميناء' }], attachments: [{ id: 'a1', path: 'data:application/pdf;base64,JVBERi0=', name: 'Invoice.pdf', type: 'application/pdf', size: 5, date: '2026-01-06' }], isArchived: false, createdAt: now, updatedAt: now },
+    { id: 'pr2', userId: 'u1', name: 'الشحنة الأولى', description: '', parentId: 'pr1', logoUrl: 'data:image/jpeg;base64,AAAA', notes: [], attachments: [], isArchived: false, createdAt: now, updatedAt: now },
   ],
 } as any;
 
@@ -159,6 +167,11 @@ assert.equal(inserted.projects[1].parent_id, projectId, 'sub-project lost its pa
 assert.equal(inserted.projects[0].parent_id, null);
 assert.equal(inserted.projects[1].logo_url, 'data:image/jpeg;base64,AAAA', 'project logo lost on restore');
 assert.equal(inserted.projects[0].logo_url, null);
+// An inlined attachment is uploaded under the restoring user, not kept inline.
+const restoredFile = inserted.projects[0].attachments[0];
+assert.match(restoredFile.path, /^u2\/[0-9a-f-]{36}\.pdf$/, 'attachment not re-uploaded under the new user');
+assert.equal(restoredFile.name, 'Invoice.pdf');
+assert.deepEqual(inserted['storage:project-files'], [{ path: restoredFile.path, size: 5, contentType: 'application/pdf' }]);
 assert.equal(inserted.projects[0].notes[0].text, 'وصلت الميناء', 'project steps lost on restore');
 
 // Self-referencing category parent survives the remap.

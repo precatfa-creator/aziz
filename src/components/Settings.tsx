@@ -9,6 +9,7 @@ import { supabase } from '../supabase';
 import { restoreBackup, type AzizBackup } from '../lib/restoreBackup';
 import { backupCounts, buildBackup, downloadBackup } from '../lib/exportBackup';
 import { inlineReceiptsForBackup, receiptToDataUrl } from '../lib/receiptStorage';
+import { PROJECT_FILES_BUCKET } from '../lib/projectFiles';
 import { countInlineReceipts, rowsNeedingMigration } from '../lib/receiptImages';
 import { migrateReceiptsToStorage } from '../lib/migrateReceipts';
 import { 
@@ -139,9 +140,16 @@ export const Settings: React.FC = () => {
         inlineReceiptsForBackup(incomes),
         inlineReceiptsForBackup(expenses),
       ]);
-      // A project logo is stored like a receipt, so it is inlined the same way.
+      // A project's logo and attachments are stored like receipts, so they are
+      // inlined the same way; restore uploads them back into Storage.
       inlinedProjects = await Promise.all(
-        projects.map(async (p) => (p.logoUrl ? { ...p, logoUrl: await receiptToDataUrl(p.logoUrl) } : p)),
+        projects.map(async (p) => ({
+          ...p,
+          logoUrl: p.logoUrl ? await receiptToDataUrl(p.logoUrl) : p.logoUrl,
+          attachments: await Promise.all(
+            p.attachments.map(async (a) => ({ ...a, path: await receiptToDataUrl(a.path, PROJECT_FILES_BUCKET) })),
+          ),
+        })),
       );
     } catch (e) {
       console.error('Backup aborted: receipts could not be collected', e);

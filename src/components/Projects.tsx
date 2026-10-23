@@ -19,6 +19,9 @@ import {
   StickyNote,
   ArrowDownCircle,
   ArrowUpCircle,
+  FileText,
+  Paperclip as AttachIcon,
+  Loader2,
 } from 'lucide-react';
 import type { Expense, Income, Project } from '../types';
 import { ConfirmModal } from './ConfirmModal';
@@ -28,6 +31,13 @@ import { RECEIPTS_BUCKET, resolveReceiptUrls, uploadReceipt } from '../lib/recei
 import { isInlineReceipt } from '../lib/receiptImages';
 import { fileToReceiptJpeg } from '../lib/imageDownscale';
 import { supabase } from '../supabase';
+import {
+  PROJECT_FILE_ACCEPT,
+  PROJECT_FILES_BUCKET,
+  formatFileSize,
+  projectFilePath,
+  validateProjectFile,
+} from '../lib/projectFiles';
 
 const inputClass =
   'px-3 py-2.5 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200/60 dark:border-slate-700/80 rounded-xl focus:border-emerald-500 outline-hidden dark:text-white';
@@ -369,6 +379,91 @@ export const Projects: React.FC = () => {
     </form>
   );
 
+  // Signed links for the open project's attachments: plain <a> links, so a tap
+  // opens the file directly instead of after an async call a browser may block.
+  const [fileUrls, setFileUrls] = useState<Record<string, string>>({});
+  const [uploading, setUploading] = useState(false);
+  const attachmentPaths = (selected?.attachments || []).map((a) => a.path).join('|');
+  useEffect(() => {
+    const paths = attachmentPaths ? attachmentPaths.split('|').filter((p) => !fileUrls[p]) : [];
+    if (!paths.length) return;
+    supabase.storage
+      .from(PROJECT_FILES_BUCKET)
+      .createSignedUrls(paths, 3600)
+      .then(({ data, error }) => {
+        if (error) throw error;
+        const urls: Record<string, string> = {};
+        for (const item of data || []) if (item.signedUrl && item.path) urls[item.path] = item.signedUrl;
+        setFileUrls((prev) => ({ ...prev, ...urls }));
+      })
+      .catch((e) => console.error('Project files could not be signed', e));
+  }, [attachmentPaths]);
+
+  const addAttachments = async (files: FileList | null) => {
+    if (!selected || !user || !files?.length) return;
+    const project = selected;
+    setUploading(true);
+    const added: Project['attachments'] = [];
+    const refused: string[] = [];
+    try {
+      for (const file of Array.from(files)) {
+        let checked;
+        try {
+          checked = validateProjectFile(file);
+        } catch (e) {
+          const reason = (e as Error).message;
+          refused.push(
+            `${file.name}: ${
+              reason === 'too-large'
+                ? ar ? 'أكبر من 10 ميغابايت' : 'over 10 MB'
+                : reason === 'empty'
+                  ? ar ? 'ملف فارغ' : 'empty file'
+                  : ar ? 'نوع غير مدعوم' : 'unsupported type'
+            }`,
+          );
+          continue;
+        }
+        const path = projectFilePath(user.id, checked.extension);
+        const { error } = await supabase.storage
+          .from(PROJECT_FILES_BUCKET)
+          .upload(path, file, { contentType: checked.type, upsert: false });
+        if (error) {
+          refused.push(`${file.name}: ${ar ? 'فشل الرفع' : 'upload failed'}`);
+          continue;
+        }
+        added.push({ id: crypto.randomUUID(), path, name: file.name.slice(0, 200), type: checked.type, size: file.size, date: today() });
+      }
+      if (added.length) {
+        try {
+          await updateProject(project.id, { attachments: [...project.attachments, ...added] });
+        } catch {
+          // The list didn't save, so the uploaded objects would be unreachable.
+          void supabase.storage.from(PROJECT_FILES_BUCKET).remove(added.map((a) => a.path));
+          refused.push(ar ? 'تعذّر حفظ قائمة المرفقات' : 'The attachment list could not be saved');
+        }
+      }
+    } finally {
+      setUploading(false);
+    }
+    if (refused.length) alert((ar ? 'لم تُرفع بعض الملفات:\n' : 'Some files were not added:\n') + refused.join('\n'));
+  };
+
+  const removeAttachment = (id: string) => {
+    if (!selected) return;
+    const project = selected;
+    const file = project.attachments.find((a) => a.id === id);
+    if (!file) return;
+    setConfirm({
+      title: ar ? 'حذف المرفق' : 'Delete attachment',
+      message: ar ? `سيُحذف "${file.name}" نهائياً.` : `"${file.name}" will be deleted for good.`,
+      onConfirm: () =>
+        void run(async () => {
+          await updateProject(project.id, { attachments: project.attachments.filter((a) => a.id !== id) });
+          void supabase.storage.from(PROJECT_FILES_BUCKET).remove([file.path]);
+        }),
+    });
+  };
+
   const confirmModal = (
     <ConfirmModal
       isOpen={!!confirm}
@@ -701,6 +796,66 @@ export const Projects: React.FC = () => {
             </div>
           )}
         </div>
+      </div>
+
+      {/* Attachments */}
+      <div className="bg-white dark:bg-slate-900 p-5 rounded-3xl border border-slate-100 dark:border-slate-800 space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-sm font-extrabold text-slate-800 dark:text-white flex items-center gap-2">
+            <AttachIcon className="w-4 h-4 text-sky-500" />
+            {ar ? 'المرفقات' : 'Attachments'}
+            {selected.attachments.length > 0 && <span className="text-xs text-slate-400">({selected.attachments.length})</span>}
+          </div>
+          <label className={`px-3 py-2 bg-sky-500 hover:bg-sky-600 text-white font-bold text-xs rounded-xl flex items-center gap-1.5 ${uploading ? 'opacity-50 pointer-events-none' : 'cursor-pointer'}`}>
+            {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+            {uploading ? (ar ? 'جارٍ الرفع...' : 'Uploading...') : ar ? 'إضافة ملفات' : 'Add files'}
+            <input
+              type="file"
+              multiple
+              accept={PROJECT_FILE_ACCEPT}
+              className="hidden"
+              onChange={(e) => {
+                void addAttachments(e.target.files);
+                e.target.value = '';
+              }}
+            />
+          </label>
+        </div>
+        <p className="text-[11px] text-slate-500">
+          {ar ? 'فواتير، عقود، صور، PDF، Word، Excel — حتى 10 ميغابايت للملف.' : 'Invoices, contracts, photos, PDF, Word, Excel — up to 10 MB each.'}
+        </p>
+        {selected.attachments.length > 0 && (
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+            {[...selected.attachments].sort((a, b) => b.date.localeCompare(a.date)).map((a) => {
+              const url = fileUrls[a.path];
+              const isImage = a.type.startsWith('image/');
+              return (
+                <div key={a.id} className="relative group rounded-2xl border border-slate-100 dark:border-slate-800 overflow-hidden">
+                  <a href={url || undefined} target="_blank" rel="noopener noreferrer" className="block">
+                    <div className="h-24 bg-slate-50 dark:bg-slate-800/60 flex items-center justify-center">
+                      {isImage && url ? (
+                        <img src={url} alt="" className="w-full h-full object-cover" />
+                      ) : (
+                        <FileText className="w-8 h-8 text-slate-400" />
+                      )}
+                    </div>
+                    <div className="p-2">
+                      <div className="text-xs font-bold text-slate-700 dark:text-slate-200 truncate" dir="auto" title={a.name}>{a.name}</div>
+                      <div className="text-[10px] text-slate-400">{formatFileSize(a.size)} · {a.date}</div>
+                    </div>
+                  </a>
+                  <button
+                    title={ar ? 'حذف' : 'Delete'}
+                    onClick={() => removeAttachment(a.id)}
+                    className="absolute top-1.5 end-1.5 p-1 rounded-lg bg-white/90 dark:bg-slate-900/90 text-rose-500 cursor-pointer"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Timeline */}

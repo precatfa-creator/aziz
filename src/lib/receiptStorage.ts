@@ -65,10 +65,10 @@ export const resolveReceiptUrls = async (
  * Inlines a receipt as Base64 so a backup stays self-contained — a JSON full of
  * object paths would be useless when restored into another account.
  */
-export const receiptToDataUrl = async (entry: string): Promise<string> => {
+export const receiptToDataUrl = async (entry: string, bucket = RECEIPTS_BUCKET): Promise<string> => {
   if (isInlineReceipt(entry)) return entry;
 
-  const { data, error } = await supabase.storage.from(RECEIPTS_BUCKET).download(entry);
+  const { data, error } = await supabase.storage.from(bucket).download(entry);
   if (error) throw error;
 
   return new Promise((resolve, reject) => {
@@ -93,7 +93,7 @@ export const inlineReceiptsForBackup = async <T extends { imageUrl?: string }>(
     rows.map(async (row) => {
       const entries = receiptEntries(row.imageUrl);
       if (!entries.some((entry) => !isInlineReceipt(entry))) return row;
-      const inlined = await Promise.all(entries.map(receiptToDataUrl));
+      const inlined = await Promise.all(entries.map((entry) => receiptToDataUrl(entry)));
       return { ...row, imageUrl: inlined.join('|') };
     }),
   );

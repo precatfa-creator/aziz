@@ -15,6 +15,7 @@ import {
   SavingsGroup,
   SavingsGroupMember,
   Project,
+  ProjectAttachment,
   ProjectNote,
   JamiyaNotification,
   Wallet,
@@ -23,6 +24,8 @@ import {
 } from "../types";
 import type { ExpenseKind, IncomeKind } from "../lib/walletBalance";
 import { translations } from "../translations";
+import { PROJECT_FILES_BUCKET } from "../lib/projectFiles";
+import { RECEIPTS_BUCKET } from "../lib/receiptStorage";
 
 function logSupabaseError(error: unknown, context: string) {
   console.error(`Supabase error [${context}]:`, error);
@@ -177,6 +180,7 @@ function mapProject(row: any): Project {
     parentId: row.parent_id || undefined,
     logoUrl: row.logo_url || undefined,
     notes: row.notes || [],
+    attachments: row.attachments || [],
     isArchived: !!row.is_archived,
     createdAt: new Date(row.created_at),
     updatedAt: new Date(row.updated_at),
@@ -563,6 +567,7 @@ interface AppContextProps {
       notes?: ProjectNote[];
       parentId?: string | null;
       logoUrl?: string | null;
+      attachments?: ProjectAttachment[];
     },
   ) => Promise<void>;
   deleteProject: (id: string) => Promise<void>;
@@ -2239,6 +2244,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
       notes?: ProjectNote[];
       parentId?: string | null;
       logoUrl?: string | null;
+      attachments?: ProjectAttachment[];
     },
   ) => {
     const payload: Record<string, any> = {};
@@ -2248,6 +2254,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     if (fields.notes !== undefined) payload.notes = fields.notes;
     if (fields.parentId !== undefined) payload.parent_id = fields.parentId;
     if (fields.logoUrl !== undefined) payload.logo_url = fields.logoUrl;
+    if (fields.attachments !== undefined) payload.attachments = fields.attachments;
     try {
       const { data, error } = await supabase
         .from("projects")
@@ -2267,6 +2274,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
   // ponytail: hard delete, no trash — the money stays in the ledger, only the
   // grouping and its notes go. Archive is the reversible option.
   const deleteProject = async (id: string) => {
+    const project = projects.find((p) => p.id === id);
     try {
       // project_id is not an FK (see the migration), so unlink explicitly.
       for (const table of ["expenses", "incomes"]) {
@@ -2281,6 +2289,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
       );
       setExpenses((prev) => prev.map((e) => (e.projectId === id ? { ...e, projectId: undefined } : e)));
       setIncomes((prev) => prev.map((i) => (i.projectId === id ? { ...i, projectId: undefined } : i)));
+      // Its files go with it. Best effort, after the row is gone: a leftover
+      // object costs storage, while removing files first could orphan a row.
+      const files = (project?.attachments || []).map((a) => a.path).filter((p) => !p.startsWith("data:"));
+      if (files.length) void supabase.storage.from(PROJECT_FILES_BUCKET).remove(files);
+      if (project?.logoUrl && !project.logoUrl.startsWith("data:"))
+        void supabase.storage.from(RECEIPTS_BUCKET).remove([project.logoUrl]);
     } catch (e) {
       logSupabaseError(e, `projects/${id}`);
       throw e;
