@@ -114,6 +114,7 @@ export async function restoreBackup(
     user_id: userId,
     name: p.name,
     description: p.description || null,
+    parent_id: p.parentId ? projectMap.get(p.parentId) || null : null,
     notes: p.notes || [],
     is_archived: !!p.isArchived,
   }));

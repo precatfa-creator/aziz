@@ -20,7 +20,7 @@ import {
 } from 'lucide-react';
 import type { Expense, Income, Project } from '../types';
 import { ConfirmModal } from './ConfirmModal';
-import { isProjectCost, projectTotals } from '../lib/projectTotals';
+import { isProjectCost, projectFamily, projectTotals } from '../lib/projectTotals';
 import { convertAmount, isEarning } from '../lib/walletBalance';
 
 const inputClass =
@@ -31,7 +31,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 type TimelineEntry =
   | { kind: 'expense'; date: string; row: Expense }
   | { kind: 'income'; date: string; row: Income }
-  | { kind: 'note'; date: string; id: string; text: string };
+  | { kind: 'note'; date: string; id: string; text: string; projectId: string };
 
 export const Projects: React.FC = () => {
   const {
@@ -55,7 +55,9 @@ export const Projects: React.FC = () => {
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
-  const [form, setForm] = useState<{ id?: string; name: string; description: string } | null>(null);
+  const [form, setForm] = useState<{ id?: string; name: string; description: string; parentId: string } | null>(null);
+  // Roll sub-projects' figures and history into the parent's view.
+  const [combined, setCombined] = useState(false);
   const [noteDate, setNoteDate] = useState(today());
   const [noteText, setNoteText] = useState('');
   const [linking, setLinking] = useState(false);
@@ -65,7 +67,21 @@ export const Projects: React.FC = () => {
   const [confirm, setConfirm] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
 
   const selected = projects.find((p) => p.id === selectedId) || null;
-  const totalsOf = (p: Project) => projectTotals(p.id, incomes, expenses, currency, exchangeRate);
+  const byId = (id?: string) => projects.find((p) => p.id === id);
+  const childrenOf = (id: string) => projects.filter((p) => p.parentId === id);
+  const familyOf = (p: Project) => projectFamily(projects, p.id);
+  const totalsOf = (p: Project, withChildren = false) =>
+    projectTotals(withChildren ? familyOf(p) : new Set([p.id]), incomes, expenses, currency, exchangeRate);
+  // What the detail view covers: the project alone, or with everything under it.
+  const scope = useMemo(
+    () => (selected ? (combined ? projectFamily(projects, selected.id) : new Set([selected.id])) : new Set<string>()),
+    [selected, combined, projects],
+  );
+  const openProject = (id: string | null) => {
+    setSelectedId(id);
+    setCombined(false);
+    setLinking(false);
+  };
   const categoryName = (row: Income | Expense) =>
     categories.find((c) => c.id === row.categoryId)?.name || row.categoryName || '';
 
@@ -85,8 +101,9 @@ export const Projects: React.FC = () => {
     e.preventDefault();
     if (!form || !form.name.trim()) return;
     void run(async () => {
-      if (form.id) await updateProject(form.id, { name: form.name.trim(), description: form.description.trim() });
-      else await addProject(form.name.trim(), form.description.trim());
+      if (form.id)
+        await updateProject(form.id, { name: form.name.trim(), description: form.description.trim(), parentId: form.parentId || null });
+      else await addProject(form.name.trim(), form.description.trim(), form.parentId || undefined);
       setForm(null);
     });
   };
@@ -94,22 +111,24 @@ export const Projects: React.FC = () => {
   const timeline: TimelineEntry[] = useMemo(() => {
     if (!selected) return [];
     return [
-      ...expenses.filter((e) => e.projectId === selected.id).map((row) => ({ kind: 'expense' as const, date: row.date, row })),
-      ...incomes.filter((i) => i.projectId === selected.id).map((row) => ({ kind: 'income' as const, date: row.date, row })),
-      ...selected.notes.map((n) => ({ kind: 'note' as const, date: n.date, id: n.id, text: n.text })),
+      ...expenses.filter((e) => e.projectId && scope.has(e.projectId)).map((row) => ({ kind: 'expense' as const, date: row.date, row })),
+      ...incomes.filter((i) => i.projectId && scope.has(i.projectId)).map((row) => ({ kind: 'income' as const, date: row.date, row })),
+      ...projects
+        .filter((p) => scope.has(p.id))
+        .flatMap((p) => p.notes.map((n) => ({ kind: 'note' as const, date: n.date, id: n.id, text: n.text, projectId: p.id }))),
     ].sort((a, b) => b.date.localeCompare(a.date));
-  }, [selected, expenses, incomes]);
+  }, [selected, scope, projects, expenses, incomes]);
 
   const byCategory = useMemo(() => {
     if (!selected) return [];
     const sums = new Map<string, number>();
     for (const e of expenses) {
-      if (e.projectId !== selected.id || !isProjectCost(e)) continue;
+      if (!e.projectId || !scope.has(e.projectId) || !isProjectCost(e)) continue;
       const name = categoryName(e) || (ar ? 'بدون تصنيف' : 'Uncategorised');
       sums.set(name, (sums.get(name) || 0) + convertAmount(e.amount, e.currency, currency, exchangeRate));
     }
     return [...sums.entries()].sort((a, b) => b[1] - a[1]);
-  }, [selected, expenses, categories, currency, exchangeRate]);
+  }, [selected, scope, expenses, categories, currency, exchangeRate]);
 
   // Rows that can still be linked: real money, not yet in any project. An id
   // of a deleted project (a row restored from trash) counts as unlinked.
@@ -163,15 +182,17 @@ export const Projects: React.FC = () => {
       </div>
       {selected ? (
         <button
-          onClick={() => { setSelectedId(null); setLinking(false); }}
+          onClick={() => openProject(selected.parentId && byId(selected.parentId) ? selected.parentId : null)}
           className="px-4 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 font-bold text-xs rounded-xl cursor-pointer"
         >
-          {ar ? '→ العودة للمشاريع' : '← Back to projects'}
+          {selected.parentId && byId(selected.parentId)
+            ? (ar ? `→ العودة إلى ${byId(selected.parentId)!.name}` : `← Back to ${byId(selected.parentId)!.name}`)
+            : ar ? '→ العودة للمشاريع' : '← Back to projects'}
         </button>
       ) : (
         !form && (
           <button
-            onClick={() => setForm({ name: '', description: '' })}
+            onClick={() => setForm({ name: '', description: '', parentId: '' })}
             className="w-full sm:w-auto px-4 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs rounded-xl shadow-md shadow-emerald-500/10 flex justify-center items-center gap-2 cursor-pointer"
           >
             <Plus className="w-4 h-4" />
@@ -209,6 +230,18 @@ export const Projects: React.FC = () => {
         placeholder={ar ? 'وصف مختصر (اختياري)' : 'Short description (optional)'}
         className={`${inputClass} w-full`}
       />
+      <label className="flex flex-col gap-1.5">
+        <span className="text-xs font-bold text-slate-500 dark:text-slate-400">{ar ? 'تحت مشروع' : 'Parent project'}</span>
+        <select value={form.parentId} onChange={(e) => setForm({ ...form, parentId: e.target.value })} className={`${inputClass} w-full`}>
+          <option value="">{ar ? 'لا شيء (مشروع مستقل)' : 'None (standalone)'}</option>
+          {projects
+            // A project can't sit under itself or under anything below it.
+            .filter((p) => !form.id || !projectFamily(projects, form.id).has(p.id))
+            .map((p) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+        </select>
+      </label>
       <button disabled={busy} className="px-5 py-2.5 bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white font-bold text-xs rounded-xl cursor-pointer">
         {ar ? 'حفظ' : 'Save'}
       </button>
@@ -227,7 +260,8 @@ export const Projects: React.FC = () => {
 
   // ---------------------------------------------------------------- list view
   if (!selected) {
-    const visible = projects.filter((p) => p.isArchived === showArchived);
+    // Sub-projects live on their parent's page; the list shows the top level.
+    const visible = projects.filter((p) => p.isArchived === showArchived && !byId(p.parentId));
     return (
       <div className="space-y-6 animate-fade-in pb-16">
         {header}
@@ -250,16 +284,23 @@ export const Projects: React.FC = () => {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {visible.map((p) => {
-              const tot = totalsOf(p);
+              const subs = familyOf(p).size - 1;
+              // The list shows a parent with everything under it.
+              const tot = totalsOf(p, true);
               return (
                 <button
                   key={p.id}
-                  onClick={() => setSelectedId(p.id)}
+                  onClick={() => openProject(p.id)}
                   className="text-start bg-white dark:bg-slate-900 p-5 rounded-3xl border border-slate-100 dark:border-slate-800 shadow-sm hover:shadow-lg transition-shadow cursor-pointer space-y-3"
                 >
                   <div className="flex items-center gap-2">
                     <Briefcase className="w-5 h-5 text-emerald-500 shrink-0" />
                     <span className="font-extrabold text-slate-900 dark:text-white truncate">{p.name}</span>
+                    {subs > 0 && (
+                      <span className="ms-auto shrink-0 text-[10px] px-2 py-0.5 rounded-full bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-300 font-bold">
+                        {ar ? `+${subs} مشروع فرعي` : `+${subs} sub-project${subs > 1 ? 's' : ''}`}
+                      </span>
+                    )}
                   </div>
                   <div className="grid grid-cols-3 gap-2 text-xs">
                     <div>
@@ -285,7 +326,9 @@ export const Projects: React.FC = () => {
   }
 
   // -------------------------------------------------------------- detail view
-  const tot = totalsOf(selected);
+  const tot = totalsOf(selected, combined);
+  const children = childrenOf(selected.id);
+  const parent = byId(selected.parentId);
   const perCurrency = (m: Record<'LYD' | 'USD', number>) =>
     (['LYD', 'USD'] as const).filter((c) => m[c]).map((c) => fmt(m[c], c)).join(' + ');
 
@@ -305,10 +348,25 @@ export const Projects: React.FC = () => {
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500">{ar ? 'مؤرشف' : 'Archived'}</span>
               )}
             </h3>
+            {parent && (
+              <p className="text-xs text-slate-500 mt-1 flex flex-wrap items-center gap-2">
+                <span>
+                  {ar ? 'مشروع فرعي من ' : 'Sub-project of '}
+                  <button onClick={() => openProject(parent.id)} className="font-bold text-indigo-500 hover:underline cursor-pointer">{parent.name}</button>
+                </span>
+                <button
+                  disabled={busy}
+                  onClick={() => void run(() => updateProject(selected.id, { parentId: null }))}
+                  className="px-2 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold hover:bg-slate-200 cursor-pointer"
+                >
+                  {ar ? 'اجعله مستقلاً' : 'Make standalone'}
+                </button>
+              </p>
+            )}
             {selected.description && <p className="text-xs text-slate-500 mt-1 whitespace-pre-wrap">{selected.description}</p>}
           </div>
           <div className="flex gap-1">
-            <button title={ar ? 'تعديل' : 'Edit'} onClick={() => setForm({ id: selected.id, name: selected.name, description: selected.description })} className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 cursor-pointer">
+            <button title={ar ? 'تعديل' : 'Edit'} onClick={() => setForm({ id: selected.id, name: selected.name, description: selected.description, parentId: selected.parentId || '' })} className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 cursor-pointer">
               <Edit2 className="w-4 h-4" />
             </button>
             <button title={selected.isArchived ? (ar ? 'إلغاء الأرشفة' : 'Unarchive') : ar ? 'أرشفة' : 'Archive'} onClick={() => void run(() => updateProject(selected.id, { isArchived: !selected.isArchived }))} className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 cursor-pointer">
@@ -320,9 +378,9 @@ export const Projects: React.FC = () => {
                 setConfirm({
                   title: ar ? 'حذف المشروع' : 'Delete project',
                   message: ar
-                    ? `سيُحذف "${selected.name}" وخطواته نهائياً. المصاريف والدخل المرتبطة به تبقى في سجلك ومحافظك كما هي، فقط تُفك من المشروع.`
-                    : `"${selected.name}" and its steps will be deleted for good. Its linked expenses and incomes stay in your ledger and wallets, only unlinked.`,
-                  onConfirm: () => void run(async () => { await deleteProject(selected.id); setSelectedId(null); }),
+                    ? `سيُحذف "${selected.name}" وخطواته نهائياً. المصاريف والدخل المرتبطة به تبقى في سجلك ومحافظك كما هي، فقط تُفك من المشروع.${children.length ? ' مشاريعه الفرعية تصبح مستقلة ولا تُحذف.' : ''}`
+                    : `"${selected.name}" and its steps will be deleted for good. Its linked expenses and incomes stay in your ledger and wallets, only unlinked.${children.length ? ' Its sub-projects become standalone and are kept.' : ''}`,
+                  onConfirm: () => void run(async () => { await deleteProject(selected.id); openProject(parent ? parent.id : null); }),
                 })
               }
               className="p-2 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-950/40 text-rose-500 cursor-pointer"
@@ -331,6 +389,38 @@ export const Projects: React.FC = () => {
             </button>
           </div>
         </div>
+
+        {children.length > 0 && (
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs font-bold text-slate-500">{ar ? 'المشاريع الفرعية' : 'Sub-projects'}</span>
+              <label className="flex items-center gap-2 text-xs font-bold text-slate-700 dark:text-slate-200 cursor-pointer">
+                <input type="checkbox" checked={combined} onChange={(e) => setCombined(e.target.checked)} className="w-4 h-4 accent-emerald-500" />
+                {ar ? 'اجمع أرقام المشاريع الفرعية' : 'Include sub-projects in the figures'}
+              </label>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {children.map((c) => {
+                const ct = totalsOf(c, true);
+                return (
+                  <button
+                    key={c.id}
+                    onClick={() => openProject(c.id)}
+                    className="text-start p-3 rounded-2xl border border-slate-100 dark:border-slate-800 hover:border-indigo-300 cursor-pointer flex items-center gap-2"
+                  >
+                    <Briefcase className="w-4 h-4 text-indigo-500 shrink-0" />
+                    <span className="flex-1 truncate text-sm font-bold text-slate-800 dark:text-white">
+                      {c.name}
+                      {c.isArchived && <span className="text-[10px] text-slate-400 font-normal">{ar ? ' · مؤرشف' : ' · archived'}</span>}
+                    </span>
+                    <span className="text-xs font-black text-rose-500">{fmt(ct.spentTotal)}</span>
+                    {ct.earnedTotal > 0 && <span className="text-xs font-black text-emerald-500">+{fmt(ct.earnedTotal)}</span>}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           {[
@@ -439,10 +529,16 @@ export const Projects: React.FC = () => {
               <div key={`note:${entry.id}`} className="flex items-start gap-3 p-3 rounded-2xl bg-amber-50/60 dark:bg-amber-950/20">
                 <StickyNote className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
                 <span className="text-xs text-slate-400 w-20 shrink-0">{entry.date}</span>
-                <span className="flex-1 text-sm text-slate-700 dark:text-slate-200 whitespace-pre-wrap">{entry.text}</span>
+                <span className="flex-1 text-sm text-slate-700 dark:text-slate-200 whitespace-pre-wrap">
+                  {entry.text}
+                  {entry.projectId !== selected.id && <span className="block text-[10px] text-indigo-500">{byId(entry.projectId)?.name}</span>}
+                </span>
                 <button
                   title={ar ? 'حذف الخطوة' : 'Delete step'}
-                  onClick={() => void run(() => updateProject(selected.id, { notes: selected.notes.filter((n) => n.id !== entry.id) }))}
+                  onClick={() => {
+                    const owner = byId(entry.projectId);
+                    if (owner) void run(() => updateProject(owner.id, { notes: owner.notes.filter((n) => n.id !== entry.id) }));
+                  }}
                   className="p-1 text-slate-400 hover:text-rose-500 cursor-pointer"
                 >
                   <X className="w-4 h-4" />
@@ -461,6 +557,7 @@ export const Projects: React.FC = () => {
                 <div className="text-sm text-slate-800 dark:text-slate-100 truncate">{entry.row.title}</div>
                 <div className="text-[10px] text-slate-400 truncate">
                   {categoryName(entry.row)}
+                  {entry.row.projectId !== selected.id && <span className="text-indigo-500"> · {byId(entry.row.projectId)?.name}</span>}
                   {!counted && (ar ? ' · لا يُحتسب' : ' · not counted')}
                 </div>
               </div>

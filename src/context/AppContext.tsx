@@ -174,6 +174,7 @@ function mapProject(row: any): Project {
     userId: row.user_id,
     name: row.name,
     description: row.description || "",
+    parentId: row.parent_id || undefined,
     notes: row.notes || [],
     isArchived: !!row.is_archived,
     createdAt: new Date(row.created_at),
@@ -551,10 +552,10 @@ interface AppContextProps {
   deleteSavingsGroup: (id: string) => Promise<void>;
 
   // Projects
-  addProject: (name: string, description?: string) => Promise<void>;
+  addProject: (name: string, description?: string, parentId?: string) => Promise<void>;
   updateProject: (
     id: string,
-    fields: { name?: string; description?: string; isArchived?: boolean; notes?: ProjectNote[] },
+    fields: { name?: string; description?: string; isArchived?: boolean; notes?: ProjectNote[]; parentId?: string | null },
   ) => Promise<void>;
   deleteProject: (id: string) => Promise<void>;
   /** Tags (or, with null, untags) rows; a split part brings its whole purchase. */
@@ -2205,12 +2206,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   // PROJECTS OPERATIONS
-  const addProject = async (name: string, description?: string) => {
+  const addProject = async (name: string, description?: string, parentId?: string) => {
     if (!user) return;
     try {
       const { data, error } = await supabase
         .from("projects")
-        .insert({ user_id: user.id, name, description: description || null })
+        .insert({ user_id: user.id, name, description: description || null, parent_id: parentId || null })
         .select()
         .single();
       if (error) throw error;
@@ -2223,13 +2224,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const updateProject = async (
     id: string,
-    fields: { name?: string; description?: string; isArchived?: boolean; notes?: ProjectNote[] },
+    fields: { name?: string; description?: string; isArchived?: boolean; notes?: ProjectNote[]; parentId?: string | null },
   ) => {
     const payload: Record<string, any> = {};
     if (fields.name !== undefined) payload.name = fields.name;
     if (fields.description !== undefined) payload.description = fields.description || null;
     if (fields.isArchived !== undefined) payload.is_archived = fields.isArchived;
     if (fields.notes !== undefined) payload.notes = fields.notes;
+    if (fields.parentId !== undefined) payload.parent_id = fields.parentId;
     try {
       const { data, error } = await supabase
         .from("projects")
@@ -2257,7 +2259,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
       }
       const { error } = await supabase.from("projects").delete().eq("id", id);
       if (error) throw error;
-      setProjects((prev) => prev.filter((p) => p.id !== id));
+      // The FK lifts sub-projects to the top level; mirror it.
+      setProjects((prev) =>
+        prev.filter((p) => p.id !== id).map((p) => (p.parentId === id ? { ...p, parentId: undefined } : p)),
+      );
       setExpenses((prev) => prev.map((e) => (e.projectId === id ? { ...e, projectId: undefined } : e)));
       setIncomes((prev) => prev.map((i) => (i.projectId === id ? { ...i, projectId: undefined } : i)));
     } catch (e) {

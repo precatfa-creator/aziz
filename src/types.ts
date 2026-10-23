@@ -170,6 +170,8 @@ export interface Project {
   userId: string;
   name: string;
   description: string;
+  /** The project this one sits under, if any. */
+  parentId?: string;
   notes: ProjectNote[];
   isArchived: boolean;
   createdAt: Date;

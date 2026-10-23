@@ -9,7 +9,7 @@
  */
 
 import assert from 'node:assert';
-import { projectTotals } from './projectTotals.ts';
+import { projectFamily, projectTotals } from './projectTotals.ts';
 
 const row = (amount: number, extra: object = {}) =>
   ({ id: `r${amount}`, amount, currency: 'LYD', date: '2026-07-01', projectId: 'p1', ...extra }) as any;
@@ -29,7 +29,7 @@ const row = (amount: number, extra: object = {}) =>
     row(50, { projectId: undefined }),
   ];
   const incomes = [row(1000), row(300, { transferId: 't1' }), row(800, { isOpening: true })];
-  const t = projectTotals('p1', incomes, expenses, 'LYD', 7);
+  const t = projectTotals(new Set(['p1']), incomes, expenses, 'LYD', 7);
 
   assert.deepStrictEqual(t.spent, { LYD: 3500, USD: 200 });
   assert.deepStrictEqual(t.earned, { LYD: 1000, USD: 0 });
@@ -37,15 +37,30 @@ const row = (amount: number, extra: object = {}) =>
   assert.strictEqual(t.earnedTotal, 1000);
   assert.strictEqual(t.net, -3900);
 
-  const usd = projectTotals('p1', incomes, expenses, 'USD', 7);
+  const usd = projectTotals(new Set(['p1']), incomes, expenses, 'USD', 7);
+
+  // p2 under p1: the parent alone ignores it, the family adds its 999.
+  const projects = [{ id: 'p1' }, { id: 'p2', parentId: 'p1' }] as any;
+  const all = projectTotals(projectFamily(projects, 'p1'), incomes, expenses, 'LYD', 7);
+  assert.strictEqual(all.spentTotal, 4900 + 999);
   assert.strictEqual(usd.spentTotal, 700, '3500 / 7 + 200');
 }
 
 // An empty project is all zeros, not NaN.
 {
-  const t = projectTotals('p9', [], [], 'LYD', 6.15);
+  const t = projectTotals(new Set(['p9']), [], [], 'LYD', 6.15);
   assert.strictEqual(t.spentTotal, 0);
   assert.strictEqual(t.net, 0);
+}
+
+// Grandchildren are included; a cycle terminates instead of looping forever.
+{
+  const projects = [
+    { id: 'a' }, { id: 'b', parentId: 'a' }, { id: 'c', parentId: 'b' }, { id: 'x' },
+    { id: 'm', parentId: 'n' }, { id: 'n', parentId: 'm' },
+  ] as any;
+  assert.deepStrictEqual([...projectFamily(projects, 'a')].sort(), ['a', 'b', 'c']);
+  assert.deepStrictEqual([...projectFamily(projects, 'm')].sort(), ['m', 'n']);
 }
 
 console.log('projectTotals: all checks passed');

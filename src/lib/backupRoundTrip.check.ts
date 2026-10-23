@@ -74,6 +74,7 @@ const input = {
   ],
   projects: [
     { id: 'pr1', userId: 'u1', name: 'بضاعة الصين', description: '', notes: [{ id: 'n1', date: '2026-01-05', text: 'وصلت الميناء' }], isArchived: false, createdAt: now, updatedAt: now },
+    { id: 'pr2', userId: 'u1', name: 'الشحنة الأولى', description: '', parentId: 'pr1', notes: [], isArchived: false, createdAt: now, updatedAt: now },
   ],
 } as any;
 
@@ -95,7 +96,7 @@ assert.deepEqual(result, {
   expenses: 4,
   plannedPurchases: 1,
   savingsGroups: 1,
-  projects: 1,
+  projects: 2,
 });
 
 // Field mapping actually resolved — not just row counts. A camelCase/snake_case
@@ -154,6 +155,8 @@ assert.notEqual(projectId, 'pr1', 'project id was reused rather than remapped');
 assert.equal(inserted.expenses[0].project_id, projectId, 'expense fell out of its project');
 assert.equal(inserted.incomes[0].project_id, projectId, 'income fell out of its project');
 assert.equal(inserted.expenses[1].project_id, null, 'an unlinked expense joined a project');
+assert.equal(inserted.projects[1].parent_id, projectId, 'sub-project lost its parent');
+assert.equal(inserted.projects[0].parent_id, null);
 assert.equal(inserted.projects[0].notes[0].text, 'وصلت الميناء', 'project steps lost on restore');
 
 // Self-referencing category parent survives the remap.

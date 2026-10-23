@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { Expense, Income } from '../types';
+import type { Expense, Income, Project } from '../types';
 import { convertAmount, isEarning, roundMoney, type Currency } from './walletBalance';
 
 /**
@@ -13,6 +13,24 @@ import { convertAmount, isEarning, roundMoney, type Currency } from './walletBal
  */
 export const isProjectCost = (e: Expense): boolean =>
   (e.expenseKind ?? 'wallet_spend') !== 'cash_withdrawal' && !e.transferId;
+
+/**
+ * The project and every project below it, at any depth. Guards against a
+ * cycle (A under B under A), which the database cannot rule out on its own.
+ */
+export function projectFamily(projects: Project[], rootId: string): Set<string> {
+  const family = new Set([rootId]);
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const p of projects) {
+      if (p.parentId && family.has(p.parentId) && !family.has(p.id)) {
+        family.add(p.id);
+        grew = true;
+      }
+    }
+  }
+  return family;
+}
 
 export interface ProjectTotals {
   /** Per currency, as recorded — never converted. */
@@ -24,8 +42,9 @@ export interface ProjectTotals {
   net: number;
 }
 
+/** `projectIds`: one project's own figures, or a whole `projectFamily`. */
 export function projectTotals(
-  projectId: string,
+  projectIds: Set<string>,
   incomes: Income[],
   expenses: Expense[],
   currency: Currency,
@@ -34,10 +53,10 @@ export function projectTotals(
   const spent: Record<Currency, number> = { LYD: 0, USD: 0 };
   const earned: Record<Currency, number> = { LYD: 0, USD: 0 };
   for (const e of expenses) {
-    if (e.projectId === projectId && isProjectCost(e)) spent[e.currency] += e.amount;
+    if (e.projectId && projectIds.has(e.projectId) && isProjectCost(e)) spent[e.currency] += e.amount;
   }
   for (const i of incomes) {
-    if (i.projectId === projectId && isEarning(i)) earned[i.currency] += i.amount;
+    if (i.projectId && projectIds.has(i.projectId) && isEarning(i)) earned[i.currency] += i.amount;
   }
   const total = (m: Record<Currency, number>) =>
     roundMoney(
