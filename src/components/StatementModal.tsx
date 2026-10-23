@@ -12,7 +12,7 @@
 import React, { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { motion } from 'motion/react';
-import { Check, EyeOff, FileText, Loader2, Printer, X } from 'lucide-react';
+import { Check, Eye, EyeOff, FileText, Loader2, Printer, X } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { buildStatements, type Statement } from '../lib/statement';
 import { printPage } from '../lib/printPage';
@@ -24,7 +24,7 @@ const keyOf = (s: Statement) => `${s.wallet.id}-${s.currency}-${s.compartment}`;
 const today = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 
 export const StatementModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
-  const { language, wallets, incomes, expenses, profile } = useApp();
+  const { language, wallets, incomes, expenses, profile, categories } = useApp();
   const ar = language === 'ar';
   // Every statement there is to print — a card with cash has two — each picked
   // on its own. A statement covers the wallet's whole history.
@@ -36,6 +36,8 @@ export const StatementModal: React.FC<{ onClose: () => void }> = ({ onClose }) =
     all.filter((x) => !x.wallet.isHidden).map(keyOf),
   );
   const [masked, setMasked] = useState(false);
+  // Opposite of masked, so ticking one clears the other.
+  const [detailed, setDetailed] = useState(false);
   // Mounted on the first print and kept until the window closes: Android's print
   // service lays the page out after the call returns, so it must still be there.
   const [printing, setPrinting] = useState(false);
@@ -162,9 +164,23 @@ export const StatementModal: React.FC<{ onClose: () => void }> = ({ onClose }) =
           )}
         </div>
 
+        {/* Per-row details */}
+        <label className="flex items-start gap-2.5 p-3 rounded-xl border border-slate-200 dark:border-slate-800 cursor-pointer">
+          <input type="checkbox" checked={detailed} onChange={(e) => { setDetailed(e.target.checked); if (e.target.checked) setMasked(false); }} className="mt-0.5 w-4 h-4 accent-brand-teal cursor-pointer" />
+          <span>
+            <span className="flex items-center gap-1.5 text-xs font-bold text-slate-800 dark:text-white">
+              <Eye className="w-3.5 h-3.5" />
+              {ar ? 'عرض التفاصيل' : 'Show details'}
+            </span>
+            <span className="block text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+              {ar ? 'التصنيف والملاحظات تحت كل حركة.' : 'Category and notes under each transaction.'}
+            </span>
+          </span>
+        </label>
+
         {/* Hidden details */}
         <label className="flex items-start gap-2.5 p-3 rounded-xl border border-slate-200 dark:border-slate-800 cursor-pointer">
-          <input type="checkbox" checked={masked} onChange={(e) => setMasked(e.target.checked)} className="mt-0.5 w-4 h-4 accent-brand-teal cursor-pointer" />
+          <input type="checkbox" checked={masked} onChange={(e) => { setMasked(e.target.checked); if (e.target.checked) setDetailed(false); }} className="mt-0.5 w-4 h-4 accent-brand-teal cursor-pointer" />
           <span>
             <span className="flex items-center gap-1.5 text-xs font-bold text-slate-800 dark:text-white">
               <EyeOff className="w-3.5 h-3.5" />
@@ -250,7 +266,19 @@ export const StatementModal: React.FC<{ onClose: () => void }> = ({ onClose }) =
                       {s.rows.map((r) => (
                         <tr key={r.id}>
                           <td className={`${cell} whitespace-nowrap`} dir="ltr">{r.date.replace('T', ' ')}</td>
-                          <td className={cell} dir="auto">{title(r)}</td>
+                          <td className={cell} dir="auto">
+                            {title(r)}
+                            {detailed && !masked && (() => {
+                              const category = categories.find((c) => c.id === r.categoryId)?.name || r.categoryName;
+                              return (category || r.notes) && (
+                                <div className="text-[9.5px] text-slate-500 mt-0.5 whitespace-pre-wrap">
+                                  {category && <span className="font-bold">{category}</span>}
+                                  {category && r.notes && ' — '}
+                                  {r.notes}
+                                </div>
+                              );
+                            })()}
+                          </td>
                           <td className={`${cell} whitespace-nowrap ${r.credit ? 'text-emerald-700' : 'text-rose-700'}`}>
                             {r.credit ? (ar ? 'إيداع' : 'Earning') : (ar ? 'خصم' : 'Deduction')}
                           </td>

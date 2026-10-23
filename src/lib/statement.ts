@@ -27,6 +27,10 @@ export interface StatementRow {
   /** As stored: YYYY-MM-DD or YYYY-MM-DDTHH:mm. */
   date: string;
   title: string;
+  /** For the show-details print; the name is resolved against live categories. */
+  categoryId: string;
+  categoryName: string;
+  notes: string;
   /** Money arriving in this compartment (earning) rather than leaving it (deduction). */
   credit: boolean;
   amount: number;
@@ -125,6 +129,9 @@ export function buildStatements(
           id: r.id,
           date: r.date,
           title: r.title,
+          categoryId: r.categoryId,
+          categoryName: r.categoryName || '',
+          notes: r.notes || '',
           credit,
           amount: r.amount,
           balance,
