@@ -37,6 +37,35 @@
 :root { color-scheme: light; }
 .dark { color-scheme: dark; }
 
+/* Dark mode is calm neutral black rather than navy. Every dark: utility in the
+   components is written against slate, so the slate scale itself is redrawn as
+   soft graphite inside .dark (the same <html> element as :root, so the
+   half-steps above mix from these values). Pure white text is eased to an
+   off-white so it doesn't glare against black. Light mode is untouched. */
+.dark {
+  --color-slate-950: #0e0e10;
+  --color-slate-900: #17171a;
+  --color-slate-800: #232327;
+  --color-slate-700: #34343a;
+  --color-slate-600: #4b4b52;
+  --color-slate-500: #707078;
+  --color-slate-400: #9a9aa2;
+  --color-slate-300: #bfbfc6;
+  --color-slate-200: #d6d6dc;
+  --color-slate-100: #e4e4e8;
+  /* Half-steps pinned too: Tailwind ships a navy hex fallback for them on
+     WebViews without color-mix, which would otherwise leak through. */
+  --color-slate-850: #1d1d20;
+  --color-slate-750: #2b2b30;
+  --color-slate-650: #3f3f46;
+  --color-slate-550: #5e5e65;
+  --color-slate-450: #85858d;
+  --color-slate-350: #adadb4;
+  --color-slate-250: #cacad0;
+  --color-slate-150: #dddde2;
+  --color-white: #ececef;
+}
+
 /* Keyboard focus for every control that doesn't style its own. Base layer, so
    a component's focus:outline-none / ring utilities still win. */
 @layer base {
@@ -130,12 +159,12 @@ body {
 }
 
 .dark body {
-  background-color: #080c16;
-  background-image: 
-    radial-gradient(at 0% 0%, rgba(74, 68, 102, 0.3) 0px, transparent 50%),
-    radial-gradient(at 100% 100%, rgba(110, 173, 188, 0.1) 0px, transparent 50%);
+  background-color: #0e0e10;
+  /* A faint warm lift at the top only: enough to keep the black from feeling
+     flat, too little to tint the cards above it. */
+  background-image: radial-gradient(at 50% 0%, rgba(255, 255, 255, 0.025) 0px, transparent 60%);
   background-attachment: fixed;
-  color: #f1f5f9;
+  color: #e4e4e8;
 }
 
 /* Glassmorphism 2.0 core panels */
@@ -149,14 +178,13 @@ body {
     inset 0 1px 1px rgba(255, 255, 255, 0.7);
 }
 
-/* Dark surfaces sit one clear step above the page (slate-900 lifted toward
-   the brand slate) instead of a 15% purple wash that read as muddy and let
-   the background blobs bleed through unevenly from card to card. */
+/* Dark surfaces sit one clear step above the black page, in neutral graphite
+   so no colour cast builds up from card to card. */
 .dark .glass-card {
-  background: rgba(22, 30, 48, 0.72);
-  backdrop-filter: blur(20px) saturate(140%);
-  -webkit-backdrop-filter: blur(20px) saturate(140%);
-  border: 1px solid rgba(148, 163, 184, 0.10);
+  background: rgba(24, 24, 27, 0.85);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.06);
   box-shadow:
     0 8px 30px rgba(0, 0, 0, 0.35),
     inset 0 1px 0 rgba(255, 255, 255, 0.04);
@@ -173,12 +201,12 @@ body {
 }
 
 .dark .glass-modal {
-  background: rgba(17, 24, 39, 0.94);
+  background: rgba(22, 22, 25, 0.96);
   backdrop-filter: blur(25px);
   -webkit-backdrop-filter: blur(25px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.07);
   box-shadow: 
-    0 20px 50px rgba(0, 0, 0, 0.4),
+    0 20px 50px rgba(0, 0, 0, 0.5),
     inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
@@ -189,8 +217,8 @@ body {
 }
 
 .dark .glass-input {
-  background: rgba(2, 6, 23, 0.45);
-  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.09);
   backdrop-filter: blur(5px);
 }
 
@@ -218,7 +246,7 @@ body {
 }
 
 .dark ::-webkit-scrollbar-thumb {
-  background: #334155;
+  background: #34343a;
 }
 
 /* Flip animations and utilities for RTL/LTR */
