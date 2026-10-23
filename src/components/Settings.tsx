@@ -54,6 +54,7 @@ export const Settings: React.FC = () => {
     expenses,
     plannedPurchases,
     savingsGroups,
+    projects,
     categories: allCategories
   } = useApp();
 
@@ -159,13 +160,14 @@ export const Settings: React.FC = () => {
       expenses: inlinedExpenses,
       plannedPurchases,
       savingsGroups,
+      projects,
     });
     const c = backupCounts(backup);
     downloadBackup(backup);
     setBackupMessage(
       language === 'ar'
-        ? `تم تنزيل النسخة: ${c.wallets} محفظة، ${c.categories} تصنيف، ${c.incomes} دخل، ${c.expenses} مصروف، ${c.plannedPurchases} مشترى مخطط، ${c.savingsGroups} جمعية.`
-        : `Backup downloaded: ${c.wallets} wallets, ${c.categories} categories, ${c.incomes} incomes, ${c.expenses} expenses, ${c.plannedPurchases} planned purchases, ${c.savingsGroups} savings groups.`,
+        ? `تم تنزيل النسخة: ${c.wallets} محفظة، ${c.categories} تصنيف، ${c.incomes} دخل، ${c.expenses} مصروف، ${c.plannedPurchases} مشترى مخطط، ${c.savingsGroups} جمعية، ${c.projects} مشروع.`
+        : `Backup downloaded: ${c.wallets} wallets, ${c.categories} categories, ${c.incomes} incomes, ${c.expenses} expenses, ${c.plannedPurchases} planned purchases, ${c.savingsGroups} savings groups, ${c.projects} projects.`,
     );
   };
 

@@ -20,6 +20,7 @@ export interface AzizBackup {
   expenses?: any[];
   plannedPurchases?: any[];
   savingsGroups?: any[];
+  projects?: any[];
 }
 
 export interface RestoreResult {
@@ -29,6 +30,7 @@ export interface RestoreResult {
   expenses: number;
   plannedPurchases: number;
   savingsGroups: number;
+  projects: number;
 }
 
 const CHUNK = 200;
@@ -61,15 +63,17 @@ export async function restoreBackup(
 ): Promise<RestoreResult> {
   const walletMap = new Map<string, string>();
   const categoryMap = new Map<string, string>();
+  const projectMap = new Map<string, string>();
   const newId = () => crypto.randomUUID();
 
   (backup.wallets || []).forEach((w) => walletMap.set(w.id, newId()));
   (backup.categories || []).forEach((c) => categoryMap.set(c.id, newId()));
+  (backup.projects || []).forEach((p) => projectMap.set(p.id, newId()));
 
   // --- Clear existing rows, FK-safe order (children before parents) ---
   // Detach the profile's wallet ref first so wallets can be deleted.
   await supabase.from('profiles').update({ default_expense_wallet_id: null }).eq('id', userId);
-  for (const table of ['comments', 'trash', 'future_purchases', 'incomes', 'expenses', 'savings_groups', 'notifications', 'categories', 'wallets']) {
+  for (const table of ['comments', 'trash', 'future_purchases', 'incomes', 'expenses', 'savings_groups', 'projects', 'notifications', 'categories', 'wallets']) {
     const { error } = await supabase.from(table).delete().eq('user_id', userId);
     if (error) throw new Error(`clear ${table}: ${error.message}`);
   }
@@ -102,6 +106,20 @@ export async function restoreBackup(
     parent_id: c.parentId ? categoryMap.get(c.parentId) || null : null,
   }));
   await insertChunked(supabase, 'categories', categoryRows);
+
+  // --- Projects (before incomes/expenses, which carry their remapped id;
+  // notes are self-contained JSONB) ---
+  const projectRows = (backup.projects || []).map((p) => ({
+    id: projectMap.get(p.id),
+    user_id: userId,
+    name: p.name,
+    description: p.description || null,
+    notes: p.notes || [],
+    is_archived: !!p.isArchived,
+  }));
+  await insertChunked(supabase, 'projects', projectRows);
+  // Drop this and every restored row falls out of its project.
+  const mapProjectId = (id?: string) => (id ? projectMap.get(id) || null : null);
 
   // --- Incomes ---
   // Both legs of a transfer must land on the same new id, or the pair becomes
@@ -141,6 +159,7 @@ export async function restoreBackup(
     category_name: t.categoryName || null,
     transfer_id: mapTransferId(t.transferId),
     hidden_from_viewers: t.hiddenFromViewers ?? null,
+    project_id: mapProjectId(t.projectId),
     // Drop this and cash that was received comes back on the card.
     // Spread only when cash, so a card-only backup restores the same columns as before.
     ...(t.incomeKind === 'cash' ? { income_kind: 'cash' } : {}),
@@ -176,6 +195,7 @@ export async function restoreBackup(
     // Remapped like transfer ids, so restoring twice gives two separate purchases.
     split_id: mapSplitId(t.splitId),
     external_source: t.externalSource || null,
+    project_id: mapProjectId(t.projectId),
   }));
   await insertChunked(supabase, 'expenses', expenseRows);
 
@@ -236,5 +256,6 @@ export async function restoreBackup(
     expenses: expenseRows.length,
     plannedPurchases: purchaseRows.length,
     savingsGroups: groupRows.length,
+    projects: projectRows.length,
   };
 }

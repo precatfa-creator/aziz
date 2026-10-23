@@ -57,11 +57,11 @@ const input = {
     { id: 'c2', userId: 'u1', name: 'راتب / Salary', type: 'income', color: 'emerald', icon: 'Coins', isArchived: false, parentId: 'c1', createdAt: now },
   ],
   incomes: [
-    { id: 'i1', userId: 'u1', amount: 1200, currency: 'LYD', title: 'Salary', date: '2026-01-01', categoryId: 'c2', walletId: 'w1', notes: 'monthly', createdAt: now, updatedAt: now },
+    { id: 'i1', userId: 'u1', amount: 1200, currency: 'LYD', title: 'Salary', date: '2026-01-01', categoryId: 'c2', walletId: 'w1', notes: 'monthly', projectId: 'pr1', createdAt: now, updatedAt: now },
     { id: 'i2', userId: 'u1', amount: 100, currency: 'USD', title: 'صرافة', date: '2026-01-04', categoryId: 'c2', walletId: 'w1', transferId: 'tr1', incomeKind: 'cash', createdAt: now, updatedAt: now },
   ],
   expenses: [
-    { id: 'e1', userId: 'u1', amount: 40, currency: 'LYD', title: 'Lunch', date: '2026-01-02', categoryId: 'c1', walletId: 'w1', isRefunded: false, hiddenFromViewers: true, splitId: 's1', createdAt: now, updatedAt: now },
+    { id: 'e1', userId: 'u1', amount: 40, currency: 'LYD', title: 'Lunch', date: '2026-01-02', categoryId: 'c1', walletId: 'w1', isRefunded: false, hiddenFromViewers: true, splitId: 's1', projectId: 'pr1', createdAt: now, updatedAt: now },
     { id: 'e2', userId: 'u1', amount: 500, currency: 'LYD', title: 'سحب نقدي', date: '2026-01-03', categoryId: 'c1', walletId: 'w1', expenseKind: 'cash_withdrawal', createdAt: now, updatedAt: now },
     { id: 'e3', userId: 'u1', amount: 912, currency: 'LYD', title: 'صرافة', date: '2026-01-04', categoryId: 'c1', walletId: 'w1', transferId: 'tr1', createdAt: now, updatedAt: now },
     { id: 'e4', userId: 'u1', amount: 900, currency: 'LYD', title: 'Lunch', date: '2026-01-02', categoryId: 'c1', splitId: 's1', externalSource: 'Gold', createdAt: now, updatedAt: now },
@@ -71,6 +71,9 @@ const input = {
   ],
   savingsGroups: [
     { id: 'g1', userId: 'u1', name: 'Jamiya', currency: 'LYD', totalAmount: 6000, numMembers: 6, paymentPerMember: 1000, paymentCycle: 'monthly', startDate: '2026-01-01', members: [], receivingOrder: [], isArchived: false, createdAt: now, updatedAt: now },
+  ],
+  projects: [
+    { id: 'pr1', userId: 'u1', name: 'بضاعة الصين', description: '', notes: [{ id: 'n1', date: '2026-01-05', text: 'وصلت الميناء' }], isArchived: false, createdAt: now, updatedAt: now },
   ],
 } as any;
 
@@ -92,6 +95,7 @@ assert.deepEqual(result, {
   expenses: 4,
   plannedPurchases: 1,
   savingsGroups: 1,
+  projects: 1,
 });
 
 // Field mapping actually resolved — not just row counts. A camelCase/snake_case
@@ -143,6 +147,14 @@ assert.equal(inserted.incomes[0].wallet_id, walletId);
 assert.equal(inserted.expenses[0].category_id, foodId);
 assert.equal(inserted.future_purchases[0].category_id, foodId);
 assert.notEqual(walletId, 'w1');
+
+// A restored row still belongs to its project, under the project's new id.
+const projectId = inserted.projects[0].id;
+assert.notEqual(projectId, 'pr1', 'project id was reused rather than remapped');
+assert.equal(inserted.expenses[0].project_id, projectId, 'expense fell out of its project');
+assert.equal(inserted.incomes[0].project_id, projectId, 'income fell out of its project');
+assert.equal(inserted.expenses[1].project_id, null, 'an unlinked expense joined a project');
+assert.equal(inserted.projects[0].notes[0].text, 'وصلت الميناء', 'project steps lost on restore');
 
 // Self-referencing category parent survives the remap.
 const salary = inserted.categories.find((c: any) => c.name.includes('Salary'));

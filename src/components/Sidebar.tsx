@@ -14,7 +14,8 @@ import {
   Settings as SettingsIcon, 
   Layers,
   Wallet,
-  Trash2
+  Trash2,
+  Briefcase
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -53,6 +54,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, setCurrentTab }) =
   const baseItems = [
     { id: 'futurePurchases', label: t.futurePurchases, icon: ShoppingBag },
     { id: 'savingsGroups', label: t.savingsGroups, icon: Users },
+    { id: 'projects', label: t.projects, icon: Briefcase },
     { id: 'wallets', label: language === 'ar' ? 'المحافظ' : 'Wallets', icon: Wallet },
     { id: 'dashboard', label: t.dashboard, icon: BarChart3 },
     { id: 'transactions', label: language === 'ar' ? 'العمليات' : 'Ledger', icon: Layers },

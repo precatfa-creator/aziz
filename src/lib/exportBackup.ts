@@ -9,6 +9,7 @@ import type {
   Expense,
   FuturePurchase,
   Income,
+  Project,
   SavingsGroup,
   UserProfile,
   Wallet,
@@ -26,11 +27,12 @@ export interface BackupInput {
   expenses: Expense[];
   plannedPurchases: FuturePurchase[];
   savingsGroups: SavingsGroup[];
+  projects: Project[];
 }
 
 /**
  * Builds the same JSON shape `restoreBackup` reads, so a backup taken here can
- * be loaded straight back in. Deliberately covers exactly the six collections
+ * be loaded straight back in. Deliberately covers exactly the collections
  * restore supports — notifications, comments and trash are not included,
  * because restore drops them and a backup that silently omits what it claims to
  * carry is worse than one with a stated scope.
@@ -57,6 +59,7 @@ export function buildBackup(data: BackupInput): AzizBackup {
     expenses: data.expenses,
     plannedPurchases: data.plannedPurchases,
     savingsGroups: data.savingsGroups,
+    projects: data.projects,
   } as AzizBackup;
 }
 
@@ -69,6 +72,7 @@ export function backupCounts(backup: AzizBackup) {
     expenses: backup.expenses?.length || 0,
     plannedPurchases: backup.plannedPurchases?.length || 0,
     savingsGroups: backup.savingsGroups?.length || 0,
+    projects: backup.projects?.length || 0,
   };
 }
 

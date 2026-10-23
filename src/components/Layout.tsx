@@ -13,6 +13,7 @@ import { Dashboard } from './Dashboard';
 import { TransactionManager } from './TransactionManager';
 import { FuturePurchases } from './FuturePurchases';
 import { SavingsGroups } from './SavingsGroups';
+import { Projects } from './Projects';
 import { CategoryManager } from './CategoryManager';
 import { Reports } from './Reports';
 import { Settings } from './Settings';
@@ -63,6 +64,7 @@ export const Layout: React.FC = () => {
       const swipeableTabs = [
         'futurePurchases',
         'savingsGroups',
+        'projects',
         'wallets',
         'dashboard',
         'transactions',
@@ -172,6 +174,8 @@ export const Layout: React.FC = () => {
         return <FuturePurchases />;
       case 'savingsGroups':
         return <SavingsGroups />;
+      case 'projects':
+        return <Projects />;
       case 'wallets':
         return <WalletManager setCurrentTab={setCurrentTab} />;
       case 'categories':

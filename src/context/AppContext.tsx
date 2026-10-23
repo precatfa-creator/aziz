@@ -14,6 +14,8 @@ import {
   FuturePurchase,
   SavingsGroup,
   SavingsGroupMember,
+  Project,
+  ProjectNote,
   JamiyaNotification,
   Wallet,
   TransactionComment,
@@ -84,6 +86,7 @@ function mapIncome(row: any): Income {
     transferId: row.transfer_id || undefined,
     incomeKind: row.income_kind || undefined,
     hiddenFromViewers: !!row.hidden_from_viewers,
+    projectId: row.project_id || undefined,
   };
 }
 
@@ -116,6 +119,7 @@ function mapExpense(row: any): Expense {
     splitId: row.split_id || undefined,
     externalSource: row.external_source || undefined,
     hiddenFromViewers: !!row.hidden_from_viewers,
+    projectId: row.project_id || undefined,
   };
 }
 
@@ -158,6 +162,19 @@ function mapSavingsGroup(row: any): SavingsGroup {
       paidCycles: m.paidCycles || [],
     })),
     receivingOrder: row.receiving_order || [],
+    isArchived: !!row.is_archived,
+    createdAt: new Date(row.created_at),
+    updatedAt: new Date(row.updated_at),
+  };
+}
+
+function mapProject(row: any): Project {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    name: row.name,
+    description: row.description || "",
+    notes: row.notes || [],
     isArchived: !!row.is_archived,
     createdAt: new Date(row.created_at),
     updatedAt: new Date(row.updated_at),
@@ -227,6 +244,7 @@ type RealtimeTable =
   | "expenses"
   | "future_purchases"
   | "savings_groups"
+  | "projects"
   | "notifications"
   | "wallets"
   | "comments"
@@ -239,6 +257,7 @@ const REALTIME_TABLES: RealtimeTable[] = [
   "expenses",
   "future_purchases",
   "savings_groups",
+  "projects",
   "notifications",
   "wallets",
   "comments",
@@ -326,6 +345,7 @@ interface AppContextProps {
   expenses: Expense[];
   plannedPurchases: FuturePurchase[];
   savingsGroups: SavingsGroup[];
+  projects: Project[];
   notifications: JamiyaNotification[];
   wallets: Wallet[];
   comments: TransactionComment[];
@@ -530,6 +550,20 @@ interface AppContextProps {
   archiveSavingsGroup: (id: string, isArchived: boolean) => Promise<void>;
   deleteSavingsGroup: (id: string) => Promise<void>;
 
+  // Projects
+  addProject: (name: string, description?: string) => Promise<void>;
+  updateProject: (
+    id: string,
+    fields: { name?: string; description?: string; isArchived?: boolean; notes?: ProjectNote[] },
+  ) => Promise<void>;
+  deleteProject: (id: string) => Promise<void>;
+  /** Tags (or, with null, untags) rows; a split part brings its whole purchase. */
+  setTransactionsProject: (
+    type: "income" | "expense",
+    ids: string[],
+    projectId: string | null,
+  ) => Promise<void>;
+
   // Notification Management
   addNotificationArEn: (
     titleAr: string,
@@ -608,6 +642,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     [],
   );
   const [savingsGroups, setSavingsGroups] = useState<SavingsGroup[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [notifications, setNotifications] = useState<JamiyaNotification[]>([]);
   const [wallets, setWallets] = useState<Wallet[]>([]);
   const [comments, setComments] = useState<TransactionComment[]>([]);
@@ -661,6 +696,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
       expensesRes,
       purchasesRes,
       groupsRes,
+      projectsRes,
       notifyRes,
       walletsRes,
       commentsRes,
@@ -671,6 +707,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
       supabase.from("expenses").select("*"),
       supabase.from("future_purchases").select("*"),
       supabase.from("savings_groups").select("*"),
+      supabase.from("projects").select("*"),
       supabase.from("notifications").select("*"),
       supabase.from("wallets").select("*"),
       supabase.from("comments").select("*"),
@@ -691,6 +728,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
 
     if (groupsRes.error) logSupabaseError(groupsRes.error, "savings_groups/list");
     else setSavingsGroups((groupsRes.data || []).map(mapSavingsGroup));
+
+    if (projectsRes.error) logSupabaseError(projectsRes.error, "projects/list");
+    else setProjects((projectsRes.data || []).map(mapProject));
 
     if (notifyRes.error) logSupabaseError(notifyRes.error, "notifications/list");
     else
@@ -783,6 +823,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
       case "savings_groups":
         setSavingsGroups(rows.map(mapSavingsGroup));
         break;
+      case "projects":
+        setProjects(rows.map(mapProject));
+        break;
       case "notifications":
         setNotifications(
           rows
@@ -835,6 +878,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     setExpenses([]);
     setPlannedPurchases([]);
     setSavingsGroups([]);
+    setProjects([]);
     setNotifications([]);
     setWallets([]);
     setComments([]);
@@ -2160,6 +2204,97 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   };
 
+  // PROJECTS OPERATIONS
+  const addProject = async (name: string, description?: string) => {
+    if (!user) return;
+    try {
+      const { data, error } = await supabase
+        .from("projects")
+        .insert({ user_id: user.id, name, description: description || null })
+        .select()
+        .single();
+      if (error) throw error;
+      setProjects((prev) => [...prev, mapProject(data)]);
+    } catch (e) {
+      logSupabaseError(e, "projects/create");
+      throw e;
+    }
+  };
+
+  const updateProject = async (
+    id: string,
+    fields: { name?: string; description?: string; isArchived?: boolean; notes?: ProjectNote[] },
+  ) => {
+    const payload: Record<string, any> = {};
+    if (fields.name !== undefined) payload.name = fields.name;
+    if (fields.description !== undefined) payload.description = fields.description || null;
+    if (fields.isArchived !== undefined) payload.is_archived = fields.isArchived;
+    if (fields.notes !== undefined) payload.notes = fields.notes;
+    try {
+      const { data, error } = await supabase
+        .from("projects")
+        .update(payload)
+        .eq("id", id)
+        .select()
+        .single();
+      if (error) throw error;
+      const updated = mapProject(data);
+      setProjects((prev) => prev.map((p) => (p.id === id ? updated : p)));
+    } catch (e) {
+      logSupabaseError(e, `projects/${id}`);
+      throw e;
+    }
+  };
+
+  // ponytail: hard delete, no trash — the money stays in the ledger, only the
+  // grouping and its notes go. Archive is the reversible option.
+  const deleteProject = async (id: string) => {
+    try {
+      // project_id is not an FK (see the migration), so unlink explicitly.
+      for (const table of ["expenses", "incomes"]) {
+        const { error } = await supabase.from(table).update({ project_id: null }).eq("project_id", id);
+        if (error) throw error;
+      }
+      const { error } = await supabase.from("projects").delete().eq("id", id);
+      if (error) throw error;
+      setProjects((prev) => prev.filter((p) => p.id !== id));
+      setExpenses((prev) => prev.map((e) => (e.projectId === id ? { ...e, projectId: undefined } : e)));
+      setIncomes((prev) => prev.map((i) => (i.projectId === id ? { ...i, projectId: undefined } : i)));
+    } catch (e) {
+      logSupabaseError(e, `projects/${id}`);
+      throw e;
+    }
+  };
+
+  const setTransactionsProject = async (
+    type: "income" | "expense",
+    ids: string[],
+    projectId: string | null,
+  ) => {
+    const targets = new Set(ids);
+    if (type === "expense") {
+      // A split purchase is one purchase: tagging one part tags them all.
+      const splitIds = new Set(expenses.filter((e) => targets.has(e.id) && e.splitId).map((e) => e.splitId));
+      expenses.forEach((e) => e.splitId && splitIds.has(e.splitId) && targets.add(e.id));
+    }
+    if (!targets.size) return;
+    const table = type === "income" ? "incomes" : "expenses";
+    try {
+      const { error } = await supabase
+        .from(table)
+        .update({ project_id: projectId })
+        .in("id", [...targets]);
+      if (error) throw error;
+      const tag = <T extends { id: string; projectId?: string }>(rows: T[]) =>
+        rows.map((r) => (targets.has(r.id) ? { ...r, projectId: projectId || undefined } : r));
+      if (type === "income") setIncomes(tag);
+      else setExpenses(tag);
+    } catch (e) {
+      logSupabaseError(e, `${table}/project`);
+      throw e;
+    }
+  };
+
   const markNotificationRead = async (id: string) => {
     try {
       const { error } = await supabase
@@ -2518,6 +2653,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
         expenses,
         plannedPurchases,
         savingsGroups,
+        projects,
         notifications,
         wallets,
         comments,
@@ -2569,6 +2705,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
         toggleMemberReceivedState,
         archiveSavingsGroup,
         deleteSavingsGroup,
+        addProject,
+        updateProject,
+        deleteProject,
+        setTransactionsProject,
 
         addNotificationArEn,
         markNotificationRead,

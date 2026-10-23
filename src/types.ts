@@ -50,6 +50,7 @@ export interface Income {
   incomeKind?: 'card' | 'cash';
   /** Shown to viewers of a partially shared wallet as "معاملة N", amount and date only. */
   hiddenFromViewers?: boolean;
+  projectId?: string;
 }
 
 export interface Expense {
@@ -82,6 +83,7 @@ export interface Expense {
   externalSource?: string;
   /** Shown to viewers of a partially shared wallet as "معاملة N", amount and date only. */
   hiddenFromViewers?: boolean;
+  projectId?: string;
 }
 
 export interface Wallet {
@@ -153,6 +155,25 @@ export interface SavingsGroup {
   createdAt: Date;
   updatedAt: Date;
   // History is derived or kept as subfields
+}
+
+/** A dated step with no money attached ("the goods reached the port"). */
+export interface ProjectNote {
+  id: string;
+  date: string; // YYYY-MM-DD
+  text: string;
+}
+
+/** An investment or venture; its money lives in incomes/expenses tagged with its id. */
+export interface Project {
+  id: string;
+  userId: string;
+  name: string;
+  description: string;
+  notes: ProjectNote[];
+  isArchived: boolean;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface JamiyaNotification {
