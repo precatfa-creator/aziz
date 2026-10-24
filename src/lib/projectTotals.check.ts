@@ -46,6 +46,24 @@ const row = (amount: number, extra: object = {}) =>
   assert.strictEqual(usd.spentTotal, 700, '3500 / 7 + 200');
 }
 
+// Project-only entries count for their own project (and its family), and
+// mix currencies like linked rows.
+{
+  const projects = [
+    { id: 'p1', entries: [
+      { id: 'e1', kind: 'expense', amount: 100, currency: 'LYD' },
+      { id: 'e2', kind: 'income', amount: 10, currency: 'USD' },
+    ] },
+    { id: 'p2', parentId: 'p1', entries: [{ id: 'e3', kind: 'expense', amount: 5, currency: 'USD' }] },
+  ] as any;
+  const own = projectTotals(new Set(['p1']), [row(1000)], [row(50)], 'LYD', 7, projects);
+  assert.deepStrictEqual(own.spent, { LYD: 150, USD: 0 });
+  assert.deepStrictEqual(own.earned, { LYD: 1000, USD: 10 });
+  assert.strictEqual(own.net, 1070 - 150);
+  const all = projectTotals(projectFamily(projects, 'p1'), [], [], 'LYD', 7, projects);
+  assert.strictEqual(all.spentTotal, 100 + 35);
+}
+
 // An empty project is all zeros, not NaN.
 {
   const t = projectTotals(new Set(['p9']), [], [], 'LYD', 6.15);

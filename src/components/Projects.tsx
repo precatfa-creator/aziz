@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import {
   Plus,
@@ -22,8 +22,9 @@ import {
   FileText,
   Paperclip as AttachIcon,
   Loader2,
+  Check,
 } from 'lucide-react';
-import type { Expense, Income, Project } from '../types';
+import type { Expense, Income, Project, ProjectEntry } from '../types';
 import { ConfirmModal } from './ConfirmModal';
 import { isProjectCost, projectFamily, projectTotals } from '../lib/projectTotals';
 import { convertAmount, isEarning } from '../lib/walletBalance';
@@ -44,10 +45,14 @@ const inputClass =
 
 const today = () => new Date().toISOString().slice(0, 10);
 
+type LedgerEntry = { kind: 'expense'; date: string; row: Expense } | { kind: 'income'; date: string; row: Income };
 type TimelineEntry =
-  | { kind: 'expense'; date: string; row: Expense }
-  | { kind: 'income'; date: string; row: Income }
-  | { kind: 'note'; date: string; id: string; text: string; projectId: string };
+  | LedgerEntry
+  | { kind: 'note'; date: string; id: string; text: string; projectId: string }
+  | { kind: 'entry'; date: string; entry: ProjectEntry; projectId: string };
+
+/** The add/edit form for a project-only entry; `amount` stays text while typed. */
+type EntryForm = Omit<ProjectEntry, 'id' | 'amount' | 'notes'> & { id?: string; projectId?: string; amount: string; notes: string };
 
 export const Projects: React.FC = () => {
   const {
@@ -103,6 +108,13 @@ export const Projects: React.FC = () => {
   };
   const [noteDate, setNoteDate] = useState(today());
   const [noteText, setNoteText] = useState('');
+  const [entryForm, setEntryForm] = useState<EntryForm | null>(null);
+  const entryFormRef = useRef<HTMLFormElement>(null);
+  // Edit is tapped on a timeline row far below; bring the form into view once.
+  const entryFormKey = entryForm ? entryForm.id || 'new' : '';
+  useEffect(() => {
+    if (entryFormKey) entryFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [entryFormKey]);
   const [linking, setLinking] = useState(false);
   const [linkSearch, setLinkSearch] = useState('');
   const [picked, setPicked] = useState<Set<string>>(new Set());
@@ -114,7 +126,7 @@ export const Projects: React.FC = () => {
   const childrenOf = (id: string) => projects.filter((p) => p.parentId === id);
   const familyOf = (p: Project) => projectFamily(projects, p.id);
   const totalsOf = (p: Project, withChildren = false) =>
-    projectTotals(withChildren ? familyOf(p) : new Set([p.id]), incomes, expenses, currency, exchangeRate);
+    projectTotals(withChildren ? familyOf(p) : new Set([p.id]), incomes, expenses, currency, exchangeRate, projects);
   // What the detail view covers: the project alone, or with everything under it.
   const scope = useMemo(
     () => (selected ? (combined ? projectFamily(projects, selected.id) : new Set([selected.id])) : new Set<string>()),
@@ -123,6 +135,7 @@ export const Projects: React.FC = () => {
   const openProject = (id: string | null) => {
     setSelectedId(id);
     setLinking(false);
+    setEntryForm(null);
   };
   const categoryName = (row: Income | Expense) =>
     categories.find((c) => c.id === row.categoryId)?.name || row.categoryName || '';
@@ -220,7 +233,10 @@ export const Projects: React.FC = () => {
       ...incomes.filter((i) => i.projectId && scope.has(i.projectId)).map((row) => ({ kind: 'income' as const, date: row.date, row })),
       ...projects
         .filter((p) => scope.has(p.id))
-        .flatMap((p) => p.notes.map((n) => ({ kind: 'note' as const, date: n.date, id: n.id, text: n.text, projectId: p.id }))),
+        .flatMap((p) => [
+          ...p.notes.map((n) => ({ kind: 'note' as const, date: n.date, id: n.id, text: n.text, projectId: p.id })),
+          ...p.entries.map((entry) => ({ kind: 'entry' as const, date: entry.date, entry, projectId: p.id })),
+        ]),
     ].sort((a, b) => b.date.localeCompare(a.date));
   }, [selected, scope, projects, expenses, incomes]);
 
@@ -232,8 +248,15 @@ export const Projects: React.FC = () => {
       const name = categoryName(e) || (ar ? 'بدون تصنيف' : 'Uncategorised');
       sums.set(name, (sums.get(name) || 0) + convertAmount(e.amount, e.currency, currency, exchangeRate));
     }
+    const projectOnly = ar ? 'خاص بالمشروع' : 'Project only';
+    for (const p of projects) {
+      if (!scope.has(p.id)) continue;
+      for (const e of p.entries)
+        if (e.kind === 'expense')
+          sums.set(projectOnly, (sums.get(projectOnly) || 0) + convertAmount(e.amount, e.currency, currency, exchangeRate));
+    }
     return [...sums.entries()].sort((a, b) => b[1] - a[1]);
-  }, [selected, scope, expenses, categories, currency, exchangeRate]);
+  }, [selected, scope, projects, expenses, categories, currency, exchangeRate]);
 
   // Rows that can still be linked: real money, not yet in any project. An id
   // of a deleted project (a row restored from trash) counts as unlinked.
@@ -241,14 +264,14 @@ export const Projects: React.FC = () => {
     const projectIds = new Set(projects.map((p) => p.id));
     const free = (id?: string) => !id || !projectIds.has(id);
     const q = linkSearch.trim().toLowerCase();
-    const rows: TimelineEntry[] = [
+    const rows: LedgerEntry[] = [
       ...expenses
         .filter((e) => free(e.projectId) && isProjectCost(e))
         .map((row) => ({ kind: 'expense' as const, date: row.date, row })),
       ...incomes.filter((i) => free(i.projectId) && isEarning(i)).map((row) => ({ kind: 'income' as const, date: row.date, row })),
     ];
     return rows
-      .filter((r) => r.kind !== 'note' && (!q || `${r.row.title} ${r.row.notes} ${r.row.amount} ${categoryName(r.row)} ${sourceName(r.row)}`.toLowerCase().includes(q)))
+      .filter((r) => (!q || `${r.row.title} ${r.row.notes} ${r.row.amount} ${categoryName(r.row)} ${sourceName(r.row)}`.toLowerCase().includes(q)))
       .sort((a, b) => b.date.localeCompare(a.date))
       .slice(0, 100);
   }, [projects, expenses, incomes, linkSearch, categories, wallets]);
@@ -274,6 +297,26 @@ export const Projects: React.FC = () => {
     void run(async () => {
       await updateProject(selected.id, { notes });
       setNoteText('');
+    });
+  };
+
+  const saveEntry = (e: React.FormEvent) => {
+    e.preventDefault();
+    const owner = byId(entryForm?.projectId) || selected;
+    const amount = Number(entryForm?.amount);
+    if (!entryForm || !owner || !entryForm.title.trim() || !(amount > 0)) return;
+    const { projectId: _, ...fields } = entryForm;
+    const saved: ProjectEntry = {
+      ...fields,
+      id: entryForm.id || crypto.randomUUID(),
+      amount,
+      title: entryForm.title.trim(),
+      notes: entryForm.notes.trim() || undefined,
+    };
+    const entries = entryForm.id ? owner.entries.map((x) => (x.id === saved.id ? saved : x)) : [...owner.entries, saved];
+    void run(async () => {
+      await updateProject(owner.id, { entries });
+      setEntryForm(null);
     });
   };
 
@@ -653,8 +696,8 @@ export const Projects: React.FC = () => {
                 setConfirm({
                   title: ar ? 'حذف المشروع' : 'Delete project',
                   message: ar
-                    ? `سيُحذف "${selected.name}" وخطواته نهائياً. المصاريف والدخل المرتبطة به تبقى في سجلك ومحافظك كما هي، فقط تُفك من المشروع.${children.length ? ' مشاريعه الفرعية تصبح مستقلة ولا تُحذف.' : ''}`
-                    : `"${selected.name}" and its steps will be deleted for good. Its linked expenses and incomes stay in your ledger and wallets, only unlinked.${children.length ? ' Its sub-projects become standalone and are kept.' : ''}`,
+                    ? `سيُحذف "${selected.name}" وخطواته وعملياته الخاصة نهائياً. المصاريف والدخل المرتبطة به تبقى في سجلك ومحافظك كما هي، فقط تُفك من المشروع.${children.length ? ' مشاريعه الفرعية تصبح مستقلة ولا تُحذف.' : ''}`
+                    : `"${selected.name}", its steps and project-only entries will be deleted for good. Its linked expenses and incomes stay in your ledger and wallets, only unlinked.${children.length ? ' Its sub-projects become standalone and are kept.' : ''}`,
                   onConfirm: () => void run(async () => { await deleteProject(selected.id); openProject(parent ? parent.id : null); }),
                 })
               }
@@ -728,6 +771,85 @@ export const Projects: React.FC = () => {
         )}
       </div>
 
+      {/* Project-only money: counted here, never in a wallet or the ledger */}
+      <div className="bg-white dark:bg-slate-900 p-5 rounded-3xl border border-slate-100 dark:border-slate-800 space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-sm font-extrabold text-slate-800 dark:text-white flex items-center gap-2">
+            <Plus className="w-4 h-4 text-emerald-500" />
+            {entryForm?.id ? (ar ? 'تعديل عملية المشروع' : 'Edit project entry') : ar ? 'عملية خاصة بالمشروع' : 'Project-only entry'}
+          </div>
+          {!entryForm && (
+            <div className="flex gap-2">
+              {(['expense', 'income'] as const).map((kind) => (
+                <button
+                  key={kind}
+                  onClick={() => setEntryForm({ kind, amount: '', currency, title: '', date: today(), notes: '' })}
+                  className={`px-3 py-2 text-white font-bold text-xs rounded-xl cursor-pointer ${kind === 'income' ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-rose-500 hover:bg-rose-600'}`}
+                >
+                  {kind === 'income' ? (ar ? '+ دخل' : '+ Income') : ar ? '- مصروف' : '- Expense'}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <p className="text-[11px] text-slate-500">
+          {ar
+            ? 'تُحتسب في أرقام المشروع فقط، ولا تمسّ أي محفظة أو سجل العمليات.'
+            : 'Counts in this project’s figures only. No wallet or transaction list is touched.'}
+        </p>
+        {entryForm && (
+          <form ref={entryFormRef} onSubmit={saveEntry} className="space-y-2">
+            <div className="flex flex-wrap gap-2">
+              <select value={entryForm.kind} onChange={(e) => setEntryForm({ ...entryForm, kind: e.target.value as ProjectEntry['kind'] })} className={inputClass}>
+                <option value="expense">{ar ? 'مصروف' : 'Expense'}</option>
+                <option value="income">{ar ? 'دخل' : 'Income'}</option>
+              </select>
+              <input
+                required
+                type="number"
+                inputMode="decimal"
+                min="0.01"
+                step="any"
+                value={entryForm.amount}
+                onChange={(e) => setEntryForm({ ...entryForm, amount: e.target.value })}
+                placeholder={ar ? 'المبلغ' : 'Amount'}
+                className={`${inputClass} w-32`}
+              />
+              <select value={entryForm.currency} onChange={(e) => setEntryForm({ ...entryForm, currency: e.target.value as ProjectEntry['currency'] })} className={inputClass}>
+                <option value="LYD">{t.lydSymbol}</option>
+                <option value="USD">{t.usdSymbol}</option>
+              </select>
+              <input type="date" required value={entryForm.date} onChange={(e) => setEntryForm({ ...entryForm, date: e.target.value })} className={inputClass} />
+            </div>
+            <input
+              required
+              maxLength={150}
+              value={entryForm.title}
+              onChange={(e) => setEntryForm({ ...entryForm, title: e.target.value })}
+              placeholder={ar ? 'العنوان: شحن، دفعة من شريك...' : 'Title: shipping, partner payment...'}
+              className={`${inputClass} w-full`}
+            />
+            <textarea
+              maxLength={1000}
+              rows={2}
+              value={entryForm.notes}
+              onChange={(e) => setEntryForm({ ...entryForm, notes: e.target.value })}
+              placeholder={ar ? 'ملاحظة (اختياري)' : 'Note (optional)'}
+              className={`${inputClass} w-full`}
+            />
+            <div className="flex gap-2">
+              <button disabled={busy} className="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white font-bold text-xs rounded-xl cursor-pointer flex items-center gap-1.5">
+                <Check className="w-4 h-4" />
+                {ar ? 'حفظ' : 'Save'}
+              </button>
+              <button type="button" onClick={() => setEntryForm(null)} className="px-4 py-2 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold text-xs rounded-xl cursor-pointer">
+                {ar ? 'إلغاء' : 'Cancel'}
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
+
       {/* Add a step + link transactions */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <form onSubmit={addNote} className="bg-white dark:bg-slate-900 p-5 rounded-3xl border border-slate-100 dark:border-slate-800 space-y-3">
@@ -763,7 +885,6 @@ export const Projects: React.FC = () => {
               <input value={linkSearch} onChange={(e) => setLinkSearch(e.target.value)} placeholder={ar ? 'ابحث بالعنوان أو المبلغ...' : 'Search title or amount...'} className={`${inputClass} w-full`} />
               <div className="max-h-72 overflow-y-auto space-y-1">
                 {linkable.map((r) => {
-                  if (r.kind === 'note') return null;
                   const key = `${r.kind}:${r.row.id}`;
                   return (
                     <label key={key} className="flex items-start gap-2 p-2 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer text-xs">
@@ -881,6 +1002,52 @@ export const Projects: React.FC = () => {
                   className="p-1 text-slate-400 hover:text-rose-500 cursor-pointer"
                 >
                   <X className="w-4 h-4" />
+                </button>
+              </div>
+            );
+          }
+          if (entry.kind === 'entry') {
+            const { entry: x } = entry;
+            const isIn = x.kind === 'income';
+            const owner = byId(entry.projectId);
+            return (
+              <div key={`entry:${x.id}`} className="flex items-center gap-3 p-3 rounded-2xl hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                {isIn ? <ArrowUpCircle className="w-4 h-4 shrink-0 text-emerald-500" /> : <ArrowDownCircle className="w-4 h-4 shrink-0 text-rose-500" />}
+                {txDate(x.date)}
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm text-slate-800 dark:text-slate-100 truncate">{x.title}</div>
+                  <div className="text-[10px] text-slate-400 min-w-0">
+                    <div className="truncate">
+                      {ar ? 'خاص بالمشروع' : 'Project only'}
+                      {entry.projectId !== selected.id && <span className="text-indigo-500"> · {owner?.name}</span>}
+                    </div>
+                    {x.notes && <div className="line-clamp-2 whitespace-pre-wrap text-slate-500 dark:text-slate-400">{x.notes}</div>}
+                  </div>
+                </div>
+                <span className={`text-sm font-black ${isIn ? 'text-emerald-500' : 'text-rose-500'}`}>
+                  {isIn ? '+' : '-'}{fmt(x.amount, x.currency)}
+                </span>
+                <button
+                  title={ar ? 'تعديل' : 'Edit'}
+                  onClick={() => setEntryForm({ ...x, amount: String(x.amount), notes: x.notes || '', projectId: entry.projectId })}
+                  className="p-1 text-slate-400 hover:text-indigo-500 cursor-pointer"
+                >
+                  <Edit2 className="w-4 h-4" />
+                </button>
+                <button
+                  title={ar ? 'حذف' : 'Delete'}
+                  onClick={() =>
+                    setConfirm({
+                      title: ar ? 'حذف العملية؟' : 'Delete entry?',
+                      message: ar ? `سيُحذف "${x.title}" نهائياً من المشروع.` : `"${x.title}" will be removed from the project for good.`,
+                      onConfirm: () => {
+                        if (owner) void run(() => updateProject(owner.id, { entries: owner.entries.filter((y) => y.id !== x.id) }));
+                      },
+                    })
+                  }
+                  className="p-1 text-slate-400 hover:text-rose-500 cursor-pointer"
+                >
+                  <Trash2 className="w-4 h-4" />
                 </button>
               </div>
             );

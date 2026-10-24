@@ -164,6 +164,17 @@ export interface ProjectNote {
   text: string;
 }
 
+/** Money recorded on a project only: no wallet, never in the ledger. */
+export interface ProjectEntry {
+  id: string;
+  kind: 'expense' | 'income';
+  amount: number;
+  currency: 'LYD' | 'USD';
+  title: string;
+  date: string; // YYYY-MM-DD
+  notes?: string;
+}
+
 /** A file kept with a project; `path` is in the private project-files bucket. */
 export interface ProjectAttachment {
   id: string;
@@ -188,6 +199,7 @@ export interface Project {
   logoUrl?: string;
   notes: ProjectNote[];
   attachments: ProjectAttachment[];
+  entries: ProjectEntry[];
   isArchived: boolean;
   createdAt: Date;
   updatedAt: Date;

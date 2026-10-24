@@ -140,6 +140,7 @@ export async function restoreBackup(
     logo_url: p.logoUrl || null,
     notes: p.notes || [],
     attachments: projectAttachments.get(p.id) || [],
+    entries: p.entries || [],
     is_archived: !!p.isArchived,
   }));
   await insertChunked(supabase, 'projects', projectRows);

@@ -16,6 +16,7 @@ import {
   SavingsGroupMember,
   Project,
   ProjectAttachment,
+  ProjectEntry,
   ProjectNote,
   JamiyaNotification,
   Wallet,
@@ -181,6 +182,7 @@ function mapProject(row: any): Project {
     logoUrl: row.logo_url || undefined,
     notes: row.notes || [],
     attachments: row.attachments || [],
+    entries: row.entries || [],
     isArchived: !!row.is_archived,
     createdAt: new Date(row.created_at),
     updatedAt: new Date(row.updated_at),
@@ -568,6 +570,7 @@ interface AppContextProps {
       parentId?: string | null;
       logoUrl?: string | null;
       attachments?: ProjectAttachment[];
+      entries?: ProjectEntry[];
     },
   ) => Promise<void>;
   deleteProject: (id: string) => Promise<void>;
@@ -2245,6 +2248,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
       parentId?: string | null;
       logoUrl?: string | null;
       attachments?: ProjectAttachment[];
+      entries?: ProjectEntry[];
     },
   ) => {
     const payload: Record<string, any> = {};
@@ -2255,6 +2259,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     if (fields.parentId !== undefined) payload.parent_id = fields.parentId;
     if (fields.logoUrl !== undefined) payload.logo_url = fields.logoUrl;
     if (fields.attachments !== undefined) payload.attachments = fields.attachments;
+    if (fields.entries !== undefined) payload.entries = fields.entries;
     try {
       const { data, error } = await supabase
         .from("projects")

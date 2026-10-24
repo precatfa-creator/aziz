@@ -42,13 +42,17 @@ export interface ProjectTotals {
   net: number;
 }
 
-/** `projectIds`: one project's own figures, or a whole `projectFamily`. */
+/**
+ * `projectIds`: one project's own figures, or a whole `projectFamily`.
+ * `projects` supplies their project-only entries, which count like linked rows.
+ */
 export function projectTotals(
   projectIds: Set<string>,
   incomes: Income[],
   expenses: Expense[],
   currency: Currency,
   rateLydPerUsd: number,
+  projects: Pick<Project, 'id' | 'entries'>[] = [],
 ): ProjectTotals {
   const spent: Record<Currency, number> = { LYD: 0, USD: 0 };
   const earned: Record<Currency, number> = { LYD: 0, USD: 0 };
@@ -57,6 +61,10 @@ export function projectTotals(
   }
   for (const i of incomes) {
     if (i.projectId && projectIds.has(i.projectId) && isEarning(i)) earned[i.currency] += i.amount;
+  }
+  for (const p of projects) {
+    if (!projectIds.has(p.id)) continue;
+    for (const e of p.entries || []) (e.kind === 'income' ? earned : spent)[e.currency] += e.amount;
   }
   const total = (m: Record<Currency, number>) =>
     roundMoney(
