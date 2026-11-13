@@ -1049,7 +1049,17 @@ export const Projects: React.FC = () => {
           <div key={card.label} className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800">
             <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{card.label}</div>
             <div dir="ltr" className={`text-lg font-black tabular-nums truncate ${ar ? 'text-end' : ''} ${card.color}`}>{card.value}</div>
-            {card.detail && card.detail !== card.value && <div dir="ltr" className={`text-[10px] text-slate-400 tabular-nums ${ar ? 'text-end' : ''}`}>{card.detail}</div>}
+            {card.detail && card.detail !== card.value && (
+              <div dir="ltr" className={`text-[11px] text-slate-400 tabular-nums ${ar ? 'text-end' : ''}`}>
+                {/* Each amount isolated: "205 د.ل" next to "123 $" otherwise reorders into "$ د.ل + 205 123". */}
+                {card.detail.split(' + ').map((part, i) => (
+                  <React.Fragment key={part}>
+                    {i > 0 && ' + '}
+                    <bdi dir="ltr">{part}</bdi>
+                  </React.Fragment>
+                ))}
+              </div>
+            )}
           </div>
         ))}
       </div>
