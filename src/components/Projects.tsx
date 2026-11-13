@@ -165,8 +165,12 @@ export const Projects: React.FC = () => {
   } = useApp();
   const ar = language === 'ar';
   const sym = (c: 'LYD' | 'USD') => (c === 'LYD' ? t.lydSymbol : t.usdSymbol);
-  const fmt = (n: number, c: 'LYD' | 'USD' = currency) =>
-    `${n.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${sym(c)}`;
+  // Arabic reads "60.00 د.ل" right to left: number first, the symbol after it on
+  // the left. An RTL isolate keeps that order even inside an LTR cell, and the
+  // inner LTR isolate keeps the minus sign in front of the digits.
+  const money = (num: string, c: 'LYD' | 'USD') =>
+    ar && c === 'LYD' ? `\u2067\u2066${num}\u2069 ${sym(c)}\u2069` : `${num} ${sym(c)}`;
+  const fmt = (n: number, c: 'LYD' | 'USD' = currency) => money(n.toLocaleString(undefined, { maximumFractionDigits: 2 }), c);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
@@ -931,7 +935,7 @@ export const Projects: React.FC = () => {
   });
   const reportSteps = [...timeline].reverse().filter((i): i is Extract<TimelineEntry, { kind: 'note' }> => i.kind === 'note');
   const n2 = (v: number) => v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const money2 = (v: number, c: 'LYD' | 'USD' = currency) => `${n2(v)} ${sym(c)}`;
+  const money2 = (v: number, c: 'LYD' | 'USD' = currency) => money(n2(v), c);
   const report = printing && createPortal(
     <div id="statement-print" dir={ar ? 'rtl' : 'ltr'} className="text-slate-900">
       <section className="stmt">
