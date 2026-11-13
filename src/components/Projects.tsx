@@ -23,10 +23,16 @@ import {
   Paperclip as AttachIcon,
   Loader2,
   Check,
+  TrendingUp,
+  TrendingDown,
+  Users,
+  CircleCheck,
+  Clock,
 } from 'lucide-react';
+import { Area, AreaChart, Cell, ComposedChart, Line, Pie, PieChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import type { Expense, Income, Project, ProjectEntry } from '../types';
 import { ConfirmModal } from './ConfirmModal';
-import { isProjectCost, projectFamily, projectTotals } from '../lib/projectTotals';
+import { isProjectCost, netSeries, projectFamily, projectTotals, shareTotals, inRange, RANGE_DAYS, type NetPoint, type Range } from '../lib/projectTotals';
 import { convertAmount, isEarning } from '../lib/walletBalance';
 import { RECEIPTS_BUCKET, resolveReceiptUrls, uploadReceipt } from '../lib/receiptStorage';
 import { isInlineReceipt } from '../lib/receiptImages';
@@ -54,6 +60,87 @@ type TimelineEntry =
 /** The add/edit form for a project-only entry; `amount` stays text while typed. */
 type EntryForm = Omit<ProjectEntry, 'id' | 'amount' | 'notes'> & { id?: string; projectId?: string; amount: string; notes: string };
 
+const UP = '#10b981';
+const DOWN = '#f43f5e';
+const MINE = '#6366f1';
+const SLICES = ['#f43f5e', '#f59e0b', '#8b5cf6', '#0ea5e9', '#14b8a6', '#94a3b8'];
+
+/** The project's running net, stock-chart style; green above water, red below. */
+const NetChart: React.FC<{ data: NetPoint[]; showMine: boolean; fmt: (n: number) => string; ar: boolean }> = ({ data, showMine, fmt, ar }) => {
+  const color = (data.at(-1)?.net ?? 0) < 0 ? DOWN : UP;
+  const gid = `net-${React.useId().replace(/:/g, '')}`;
+  return (
+    // ltr: Arabic layout must not mirror the time axis.
+    <div dir="ltr" className="h-56 sm:h-64 -mx-2 text-slate-400">
+      <ResponsiveContainer width="100%" height="100%" minHeight={1} minWidth={1}>
+        <ComposedChart data={data} margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
+          <defs>
+            <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={color} stopOpacity={0.3} />
+              <stop offset="100%" stopColor={color} stopOpacity={0} />
+            </linearGradient>
+          </defs>
+          <XAxis dataKey="date" hide />
+          <YAxis hide domain={['auto', 'auto']} />
+          <ReferenceLine y={0} stroke="currentColor" strokeOpacity={0.35} strokeDasharray="3 3" />
+          <Tooltip
+            cursor={{ stroke: color, strokeOpacity: 0.4 }}
+            content={({ active, payload }) => {
+              const pt = active && (payload?.[0]?.payload as NetPoint | undefined);
+              if (!pt) return null;
+              return (
+                <div dir={ar ? 'rtl' : 'ltr'} className="rounded-xl bg-slate-900 text-white px-3 py-2 text-xs shadow-xl space-y-0.5">
+                  <div className="text-slate-400 font-bold">{pt.date}</div>
+                  <div className="font-black tabular-nums">{fmt(pt.net)}</div>
+                  {showMine && <div className="tabular-nums text-indigo-300">{ar ? 'حصتك ' : 'Your share '}{fmt(pt.mine)}</div>}
+                </div>
+              );
+            }}
+          />
+          <Area type="monotone" dataKey="net" stroke={color} strokeWidth={2.5} fill={`url(#${gid})`} dot={false} activeDot={{ r: 4 }} isAnimationActive={false} />
+          {showMine && <Line type="monotone" dataKey="mine" stroke={MINE} strokeWidth={1.5} strokeDasharray="4 3" dot={false} isAnimationActive={false} />}
+        </ComposedChart>
+      </ResponsiveContainer>
+    </div>
+  );
+};
+
+const Sparkline: React.FC<{ data: NetPoint[] }> = ({ data }) => {
+  const color = (data.at(-1)?.net ?? 0) < 0 ? DOWN : UP;
+  if (data.length < 2) return <div className="h-12" />;
+  return (
+    <div dir="ltr" className="h-12">
+      <ResponsiveContainer width="100%" height="100%" minHeight={1} minWidth={1}>
+        <AreaChart data={data} margin={{ top: 4, right: 0, left: 0, bottom: 4 }}>
+          <YAxis hide domain={['auto', 'auto']} />
+          <Area type="monotone" dataKey="net" stroke={color} strokeWidth={1.75} fill={color} fillOpacity={0.08} dot={false} isAnimationActive={false} />
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
+  );
+};
+
+/** Return on what went in: earned / spent − 1. None until something is spent. */
+const roi = (earned: number, spent: number) => (spent > 0 ? (earned / spent - 1) * 100 : null);
+
+const RoiPill: React.FC<{ value: number | null; small?: boolean }> = ({ value, small }) => {
+  if (value === null) return null;
+  const up = value >= 0;
+  const Icon = up ? TrendingUp : TrendingDown;
+  return (
+    <span
+      dir="ltr"
+      className={`inline-flex items-center gap-1 rounded-full font-black tabular-nums ${small ? 'px-1.5 py-0.5 text-[10px]' : 'px-2.5 py-1 text-xs'} ${
+        up ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-rose-500/10 text-rose-600 dark:text-rose-400'
+      }`}
+    >
+      <Icon className={small ? 'w-3 h-3' : 'w-3.5 h-3.5'} />
+      {up ? '+' : ''}
+      {value.toLocaleString(undefined, { maximumFractionDigits: 1 })}%
+    </span>
+  );
+};
+
 export const Projects: React.FC = () => {
   const {
     t,
@@ -70,6 +157,7 @@ export const Projects: React.FC = () => {
     updateProject,
     deleteProject,
     setTransactionsProject,
+    setTransactionsSettled,
   } = useApp();
   const ar = language === 'ar';
   const sym = (c: 'LYD' | 'USD') => (c === 'LYD' ? t.lydSymbol : t.usdSymbol);
@@ -119,6 +207,7 @@ export const Projects: React.FC = () => {
   const [linkSearch, setLinkSearch] = useState('');
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
+  const [range, setRange] = useState<Range>('ALL');
   const [confirm, setConfirm] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
 
   const selected = projects.find((p) => p.id === selectedId) || null;
@@ -127,6 +216,9 @@ export const Projects: React.FC = () => {
   const familyOf = (p: Project) => projectFamily(projects, p.id);
   const totalsOf = (p: Project, withChildren = false) =>
     projectTotals(withChildren ? familyOf(p) : new Set([p.id]), incomes, expenses, currency, exchangeRate, projects);
+  const shareOf = (ids: Set<string>) => shareTotals(ids, incomes, expenses, currency, exchangeRate, projects);
+  const seriesOf = (ids: Set<string>) => netSeries(ids, incomes, expenses, currency, exchangeRate, projects);
+  const scopeOf = (p: Project, withChildren: boolean) => (withChildren ? familyOf(p) : new Set([p.id]));
   // What the detail view covers: the project alone, or with everything under it.
   const scope = useMemo(
     () => (selected ? (combined ? projectFamily(projects, selected.id) : new Set([selected.id])) : new Set<string>()),
@@ -134,6 +226,7 @@ export const Projects: React.FC = () => {
   );
   const openProject = (id: string | null) => {
     setSelectedId(id);
+    setRange('ALL');
     setLinking(false);
     setEntryForm(null);
   };
@@ -563,6 +656,44 @@ export const Projects: React.FC = () => {
         );
       });
 
+  /**
+   * The amount, and in a shared project the user's half plus the done toggle.
+   * Not done: the user paid (or received) it all and the partner's half is open.
+   */
+  const amountCell = (isIn: boolean, amount: number, c: 'LYD' | 'USD', shared: boolean, settled: boolean, toggle: () => void) => (
+    <span className="flex flex-col items-end gap-1 shrink-0">
+      <span dir="ltr" className={`text-sm font-black tabular-nums ${isIn ? 'text-emerald-500' : 'text-rose-500'}`}>
+        {isIn ? '+' : '-'}{fmt(amount, c)}
+      </span>
+      {shared && (
+        <>
+          <span className="text-[10px] font-bold text-indigo-500 tabular-nums">
+            {ar ? 'حصتك ' : 'Yours '}<span dir="ltr">{fmt(amount / 2, c)}</span>
+          </span>
+          <button
+            disabled={busy}
+            onClick={toggle}
+            title={
+              settled
+                ? ar ? 'تمت التسوية: دفع كل منكما حصته' : 'Done: each of you paid your half'
+                : isIn
+                  ? ar ? 'استلمت المبلغ كاملاً، حصة الشريك عندك' : 'You received it all; the partner’s half is with you'
+                  : ar ? 'دفعت المبلغ كاملاً، الشريك مدين لك بحصته' : 'You paid it all; the partner owes you their half'
+            }
+            className={`text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 cursor-pointer disabled:opacity-50 ${
+              settled
+                ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                : 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
+            }`}
+          >
+            {settled ? <CircleCheck className="w-3 h-3" /> : <Clock className="w-3 h-3" />}
+            {settled ? (ar ? 'تمت' : 'Done') : ar ? 'معلّقة' : 'Pending'}
+          </button>
+        </>
+      )}
+    </span>
+  );
+
   // ---------------------------------------------------------------- list view
   if (!selected) {
     // Top-level cards; each shows its whole tree of sub-projects inline.
@@ -597,30 +728,49 @@ export const Projects: React.FC = () => {
             {visible.map((p) => {
               const subs = familyOf(p).size - 1;
               const tot = totalsOf(p, combined);
+              const ids = scopeOf(p, combined);
+              const sh = shareOf(ids);
               return (
                 <div
                   key={p.id}
                   className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-100 dark:border-slate-800 shadow-sm hover:shadow-lg transition-shadow overflow-hidden"
                 >
                   <button onClick={() => openProject(p.id)} className="w-full text-start p-5 space-y-3 cursor-pointer">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2.5">
                       {logo(p, 'w-9 h-9')}
-                      <span className="font-extrabold text-slate-900 dark:text-white truncate">{p.name}</span>
+                      <span className="flex-1 min-w-0">
+                        <span className="block font-extrabold text-slate-900 dark:text-white truncate">{p.name}</span>
+                        {p.isShared && (
+                          <span className="text-[10px] font-bold text-indigo-500 flex items-center gap-1">
+                            <Users className="w-3 h-3" />{ar ? 'مشترك 50/50' : 'Shared 50/50'}
+                          </span>
+                        )}
+                      </span>
+                      <RoiPill value={roi(tot.earnedTotal, tot.spentTotal)} small />
                     </div>
-                    <div className="grid grid-cols-3 gap-2 text-xs">
-                      <div>
-                        <div className="text-slate-400 font-bold">{ar ? 'المصروف' : 'Spent'}</div>
-                        <div className="font-black text-rose-500">{fmt(tot.spentTotal)}</div>
-                      </div>
-                      <div>
-                        <div className="text-slate-400 font-bold">{ar ? 'العائد' : 'Returned'}</div>
-                        <div className="font-black text-emerald-500">{fmt(tot.earnedTotal)}</div>
-                      </div>
-                      <div>
-                        <div className="text-slate-400 font-bold">{ar ? 'الصافي' : 'Net'}</div>
-                        <div className={`font-black ${tot.net < 0 ? 'text-rose-500' : 'text-emerald-500'}`}>{fmt(tot.net)}</div>
+                    <div>
+                      <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{ar ? 'صافي المركز' : 'Net position'}</div>
+                      <div dir="ltr" className={`text-2xl font-black tabular-nums tracking-tight ${ar ? 'text-end' : ''} ${tot.net < 0 ? 'text-rose-500' : 'text-slate-900 dark:text-white'}`}>
+                        {fmt(tot.net)}
                       </div>
                     </div>
+                    <Sparkline data={inRange(seriesOf(ids), 'ALL')} />
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div>
+                        <div className="text-slate-400 font-bold text-[10px]">{ar ? 'المصروف' : 'Spent'}</div>
+                        <div dir="ltr" className={`font-black tabular-nums text-rose-500 ${ar ? 'text-end' : ''}`}>{fmt(tot.spentTotal)}</div>
+                      </div>
+                      <div>
+                        <div className="text-slate-400 font-bold text-[10px]">{ar ? 'العائد' : 'Returned'}</div>
+                        <div dir="ltr" className={`font-black tabular-nums text-emerald-500 ${ar ? 'text-end' : ''}`}>{fmt(tot.earnedTotal)}</div>
+                      </div>
+                    </div>
+                    {sh.anyShared && (sh.owedToMeTotal > 0 || sh.iOweTotal > 0) && (
+                      <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] font-bold text-amber-600 dark:text-amber-400">
+                        {sh.owedToMeTotal > 0 && <span>{ar ? 'الشريك مدين لك ' : 'Partner owes you '}<span dir="ltr">{fmt(sh.owedToMeTotal)}</span></span>}
+                        {sh.iOweTotal > 0 && <span>{ar ? 'أنت مدين للشريك ' : 'You owe partner '}<span dir="ltr">{fmt(sh.iOweTotal)}</span></span>}
+                      </div>
+                    )}
                     {subs > 0 && (
                       <div className="text-[10px] text-slate-400">
                         {combined
@@ -649,6 +799,14 @@ export const Projects: React.FC = () => {
   const parent = byId(selected.parentId);
   const perCurrency = (m: Record<'LYD' | 'USD', number>) =>
     (['LYD', 'USD'] as const).filter((c) => m[c]).map((c) => fmt(m[c], c)).join(' + ');
+  const share = shareOf(scope);
+  const chart = inRange(seriesOf(scope), range);
+  const rangeChange = chart.length ? (chart.at(-1)!.net - chart[0].net) : 0;
+  // Top five, the rest folded into one slice so the donut stays readable.
+  const slices = byCategory.length > 6
+    ? [...byCategory.slice(0, 5), [ar ? 'أخرى' : 'Other', byCategory.slice(5).reduce((n, [, v]) => n + v, 0)] as [string, number]]
+        .map(([name, value]) => ({ name, value }))
+    : byCategory.map(([name, value]) => ({ name, value }));
 
   return (
     <div className="space-y-6 animate-fade-in pb-16">
@@ -656,14 +814,19 @@ export const Projects: React.FC = () => {
       {formCard}
       {confirmModal}
 
-      <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-100 dark:border-slate-800 shadow-sm space-y-4">
+      <div className="bg-white dark:bg-slate-900 p-5 sm:p-6 rounded-3xl border border-slate-100 dark:border-slate-800 shadow-sm space-y-5">
         <div className="flex flex-wrap justify-between items-start gap-3">
-          <div>
-            <h3 className="text-xl font-black text-slate-900 dark:text-white flex items-center gap-2">
+          <div className="min-w-0">
+            <h3 className="text-lg font-black text-slate-900 dark:text-white flex items-center gap-2.5">
               {logo(selected, 'w-10 h-10')}
-              {selected.name}
+              <span className="truncate">{selected.name}</span>
+              {selected.isShared && (
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 flex items-center gap-1 shrink-0">
+                  <Users className="w-3 h-3" />50/50
+                </span>
+              )}
               {selected.isArchived && (
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500">{ar ? 'مؤرشف' : 'Archived'}</span>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 shrink-0">{ar ? 'مؤرشف' : 'Archived'}</span>
               )}
             </h3>
             {parent && (
@@ -708,8 +871,142 @@ export const Projects: React.FC = () => {
           </div>
         </div>
 
-        {children.length > 0 && (
-          <div className="space-y-2">
+        {/* Position, stock-quote style */}
+        <div className="space-y-1">
+          <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">{ar ? 'صافي المركز' : 'Net position'}</div>
+          <div className="flex flex-wrap items-center gap-3">
+            <span dir="ltr" className={`text-4xl font-black tabular-nums tracking-tight ${tot.net < 0 ? 'text-rose-500' : 'text-slate-900 dark:text-white'}`}>
+              {fmt(tot.net)}
+            </span>
+            <RoiPill value={roi(tot.earnedTotal, tot.spentTotal)} />
+          </div>
+          {chart.length > 1 && range !== 'ALL' && (
+            <div className={`text-xs font-bold tabular-nums ${rangeChange < 0 ? 'text-rose-500' : 'text-emerald-500'}`} dir="ltr">
+              {rangeChange >= 0 ? '+' : ''}{fmt(rangeChange)} <span className="text-slate-400 font-normal">{ar ? 'خلال الفترة' : 'this period'}</span>
+            </div>
+          )}
+          {share.anyShared && (
+            <div className="text-xs font-bold text-indigo-500 tabular-nums">
+              {ar ? 'حصتك: ' : 'Your share: '}<span dir="ltr">{fmt(share.myNet)}</span>
+            </div>
+          )}
+        </div>
+
+        {chart.length > 1 ? (
+          <>
+            <NetChart data={chart} showMine={share.anyShared} fmt={(n) => fmt(n)} ar={ar} />
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800/70">
+                {(Object.keys(RANGE_DAYS) as Range[]).map((r) => (
+                  <button
+                    key={r}
+                    onClick={() => setRange(r)}
+                    className={`px-3 py-1 rounded-lg text-[11px] font-black cursor-pointer ${range === r ? 'bg-white dark:bg-slate-950 text-slate-900 dark:text-white shadow-sm' : 'text-slate-500'}`}
+                  >
+                    {r === 'ALL' ? (ar ? 'الكل' : 'All') : r}
+                  </button>
+                ))}
+              </div>
+              {share.anyShared && (
+                <span className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400">
+                  <span className="w-4 border-t-2 border-dashed border-indigo-500" />
+                  {ar ? 'حصتك' : 'Your share'}
+                </span>
+              )}
+            </div>
+          </>
+        ) : (
+          <p className="text-xs text-slate-400 text-center py-6">{ar ? 'يظهر الرسم بعد أول عملية.' : 'The chart appears after the first entry.'}</p>
+        )}
+
+        <label className="flex items-center justify-between gap-3 p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/50 cursor-pointer">
+          <span className="flex items-center gap-2.5 min-w-0">
+            <Users className="w-4 h-4 text-indigo-500 shrink-0" />
+            <span className="min-w-0">
+              <span className="block text-xs font-extrabold text-slate-800 dark:text-white">{ar ? 'مشروع مشترك مع شريك' : 'Shared with a partner'}</span>
+              <span className="block text-[10px] text-slate-500">
+                {ar ? 'كل مصروف ودخل يُقسم 50/50 على هذا المشروع فقط.' : 'Every expense and income splits 50/50, on this project only.'}
+              </span>
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            role="switch"
+            disabled={busy}
+            checked={selected.isShared}
+            onChange={(e) => void run(() => updateProject(selected.id, { isShared: e.target.checked }))}
+            className="w-5 h-5 accent-indigo-500 shrink-0"
+          />
+        </label>
+      </div>
+
+      {/* Key figures */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {[
+          { label: ar ? 'إجمالي المصروف' : 'Total spent', value: fmt(tot.spentTotal), detail: perCurrency(tot.spent), color: 'text-rose-500' },
+          { label: ar ? 'إجمالي العائد' : 'Total returned', value: fmt(tot.earnedTotal), detail: perCurrency(tot.earned), color: 'text-emerald-500' },
+          ...(share.anyShared
+            ? [
+                { label: ar ? 'حصتك من المصروف' : 'Your spent', value: fmt(share.mySpent), detail: '', color: 'text-slate-900 dark:text-white' },
+                { label: ar ? 'حصتك من العائد' : 'Your returned', value: fmt(share.myEarned), detail: '', color: 'text-slate-900 dark:text-white' },
+                {
+                  label: ar ? 'الشريك مدين لك' : 'Partner owes you',
+                  value: fmt(share.owedToMeTotal),
+                  detail: perCurrency(share.owedToMe),
+                  color: share.owedToMeTotal ? 'text-amber-500' : 'text-slate-400',
+                },
+                {
+                  label: ar ? 'أنت مدين للشريك' : 'You owe partner',
+                  value: fmt(share.iOweTotal),
+                  detail: perCurrency(share.iOwe),
+                  color: share.iOweTotal ? 'text-amber-500' : 'text-slate-400',
+                },
+                { label: ar ? 'حصة الشريك من المصروف' : 'Partner spent', value: fmt(share.partnerSpent), detail: '', color: 'text-slate-500' },
+                { label: ar ? 'حصة الشريك من العائد' : 'Partner returned', value: fmt(share.partnerEarned), detail: '', color: 'text-slate-500' },
+              ]
+            : []),
+        ].map((card) => (
+          <div key={card.label} className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{card.label}</div>
+            <div dir="ltr" className={`text-lg font-black tabular-nums truncate ${ar ? 'text-end' : ''} ${card.color}`}>{card.value}</div>
+            {card.detail && card.detail !== card.value && <div dir="ltr" className={`text-[10px] text-slate-400 tabular-nums ${ar ? 'text-end' : ''}`}>{card.detail}</div>}
+          </div>
+        ))}
+      </div>
+
+      {byCategory.length > 0 && (
+        <div className="bg-white dark:bg-slate-900 p-5 rounded-3xl border border-slate-100 dark:border-slate-800">
+          <div className="text-sm font-extrabold text-slate-800 dark:text-white mb-3">{ar ? 'توزيع المصروف' : 'Allocation'}</div>
+          <div className="flex flex-col sm:flex-row items-center gap-5">
+            <div dir="ltr" className="w-40 h-40 shrink-0 relative">
+              <ResponsiveContainer width="100%" height="100%" minHeight={1} minWidth={1}>
+                <PieChart>
+                  <Pie data={slices} dataKey="value" nameKey="name" innerRadius="68%" outerRadius="100%" paddingAngle={2} stroke="none" isAnimationActive={false}>
+                    {slices.map((sl, i) => <Cell key={sl.name} fill={SLICES[i % SLICES.length]} />)}
+                  </Pie>
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                <span className="text-[10px] font-bold text-slate-400">{ar ? 'المصروف' : 'Spent'}</span>
+                <span className="text-sm font-black tabular-nums text-slate-900 dark:text-white">{fmt(tot.spentTotal)}</span>
+              </div>
+            </div>
+            <div className="flex-1 w-full space-y-2">
+              {slices.map((sl, i) => (
+                <div key={sl.name} className="flex items-center gap-2 text-xs">
+                  <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: SLICES[i % SLICES.length] }} />
+                  <span className="flex-1 truncate text-slate-600 dark:text-slate-300">{sl.name}</span>
+                  <span className="text-slate-400 tabular-nums">{tot.spentTotal ? Math.round((sl.value / tot.spentTotal) * 100) : 0}%</span>
+                  <span dir="ltr" className="w-28 text-end font-bold tabular-nums text-slate-700 dark:text-slate-200">{fmt(sl.value)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {children.length > 0 && (
+          <div className="bg-white dark:bg-slate-900 p-5 rounded-3xl border border-slate-100 dark:border-slate-800 space-y-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-xs font-bold text-slate-500">{ar ? 'المشاريع الفرعية' : 'Sub-projects'}</span>
               <label className="flex items-center gap-2 text-xs font-bold text-slate-700 dark:text-slate-200 cursor-pointer">
@@ -740,36 +1037,6 @@ export const Projects: React.FC = () => {
             </div>
           </div>
         )}
-
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          {[
-            { label: ar ? 'إجمالي ما صرفته' : 'Total spent', value: tot.spentTotal, detail: perCurrency(tot.spent), color: 'text-rose-500' },
-            { label: ar ? 'إجمالي العائد' : 'Total returned', value: tot.earnedTotal, detail: perCurrency(tot.earned), color: 'text-emerald-500' },
-            { label: tot.net < 0 ? (ar ? 'الصافي (لم يُسترد بعد)' : 'Net (not yet recovered)') : ar ? 'صافي الربح' : 'Net profit', value: tot.net, detail: '', color: tot.net < 0 ? 'text-rose-500' : 'text-emerald-500' },
-          ].map((card) => (
-            <div key={card.label} className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50">
-              <div className="text-[11px] font-bold text-slate-400">{card.label}</div>
-              <div className={`text-xl font-black ${card.color}`}>{fmt(card.value)}</div>
-              {card.detail && card.detail !== fmt(card.value) && <div className="text-[10px] text-slate-400 mt-0.5">{card.detail}</div>}
-            </div>
-          ))}
-        </div>
-
-        {byCategory.length > 0 && (
-          <div className="space-y-1.5">
-            <div className="text-xs font-bold text-slate-500">{ar ? 'أين ذهبت الفلوس' : 'Where the money went'}</div>
-            {byCategory.map(([name, value]) => (
-              <div key={name} className="flex items-center gap-2 text-xs">
-                <span className="w-32 truncate text-slate-600 dark:text-slate-300">{name}</span>
-                <div className="flex-1 h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
-                  <div className="h-full bg-rose-400" style={{ width: `${tot.spentTotal ? (value / tot.spentTotal) * 100 : 0}%` }} />
-                </div>
-                <span className="font-bold text-slate-700 dark:text-slate-200">{fmt(value)}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
 
       {/* Project-only money: counted here, never in a wallet or the ledger */}
       <div className="bg-white dark:bg-slate-900 p-5 rounded-3xl border border-slate-100 dark:border-slate-800 space-y-3">
@@ -1024,9 +1291,10 @@ export const Projects: React.FC = () => {
                     {x.notes && <div className="line-clamp-2 whitespace-pre-wrap text-slate-500 dark:text-slate-400">{x.notes}</div>}
                   </div>
                 </div>
-                <span className={`text-sm font-black ${isIn ? 'text-emerald-500' : 'text-rose-500'}`}>
-                  {isIn ? '+' : '-'}{fmt(x.amount, x.currency)}
-                </span>
+                {amountCell(isIn, x.amount, x.currency, !!owner?.isShared, !!x.settled, () => {
+                  if (owner)
+                    void run(() => updateProject(owner.id, { entries: owner.entries.map((y) => (y.id === x.id ? { ...y, settled: !y.settled } : y)) }));
+                })}
                 <button
                   title={ar ? 'تعديل' : 'Edit'}
                   onClick={() => setEntryForm({ ...x, amount: String(x.amount), notes: x.notes || '', projectId: entry.projectId })}
@@ -1069,9 +1337,14 @@ export const Projects: React.FC = () => {
                   </>,
                 )}
               </div>
-              <span className={`text-sm font-black ${isIncome ? 'text-emerald-500' : 'text-rose-500'}`}>
-                {isIncome ? '+' : '-'}{fmt(entry.row.amount, entry.row.currency)}
-              </span>
+              {amountCell(
+                isIncome,
+                entry.row.amount,
+                entry.row.currency,
+                counted && !!byId(entry.row.projectId)?.isShared,
+                !!entry.row.projectSettled,
+                () => void run(() => setTransactionsSettled(entry.kind, [entry.row.id], !entry.row.projectSettled)),
+              )}
               <button
                 title={ar ? 'فك الربط' : 'Unlink'}
                 onClick={() => void run(() => setTransactionsProject(entry.kind, [entry.row.id], null))}

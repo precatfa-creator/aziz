@@ -51,6 +51,8 @@ export interface Income {
   /** Shown to viewers of a partially shared wallet as "معاملة N", amount and date only. */
   hiddenFromViewers?: boolean;
   projectId?: string;
+  /** In a shared project: the partner has paid their half. */
+  projectSettled?: boolean;
 }
 
 export interface Expense {
@@ -84,6 +86,8 @@ export interface Expense {
   /** Shown to viewers of a partially shared wallet as "معاملة N", amount and date only. */
   hiddenFromViewers?: boolean;
   projectId?: string;
+  /** In a shared project: the partner has paid their half. */
+  projectSettled?: boolean;
 }
 
 export interface Wallet {
@@ -173,6 +177,8 @@ export interface ProjectEntry {
   title: string;
   date: string; // YYYY-MM-DD
   notes?: string;
+  /** In a shared project: the partner has paid their half. */
+  settled?: boolean;
 }
 
 /** A file kept with a project; `path` is in the private project-files bucket. */
@@ -200,6 +206,8 @@ export interface Project {
   notes: ProjectNote[];
   attachments: ProjectAttachment[];
   entries: ProjectEntry[];
+  /** Split 50/50 with one partner. */
+  isShared: boolean;
   isArchived: boolean;
   createdAt: Date;
   updatedAt: Date;

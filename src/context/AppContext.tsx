@@ -91,6 +91,7 @@ function mapIncome(row: any): Income {
     incomeKind: row.income_kind || undefined,
     hiddenFromViewers: !!row.hidden_from_viewers,
     projectId: row.project_id || undefined,
+    projectSettled: !!row.project_settled,
   };
 }
 
@@ -124,6 +125,7 @@ function mapExpense(row: any): Expense {
     externalSource: row.external_source || undefined,
     hiddenFromViewers: !!row.hidden_from_viewers,
     projectId: row.project_id || undefined,
+    projectSettled: !!row.project_settled,
   };
 }
 
@@ -183,6 +185,7 @@ function mapProject(row: any): Project {
     notes: row.notes || [],
     attachments: row.attachments || [],
     entries: row.entries || [],
+    isShared: !!row.is_shared,
     isArchived: !!row.is_archived,
     createdAt: new Date(row.created_at),
     updatedAt: new Date(row.updated_at),
@@ -571,6 +574,7 @@ interface AppContextProps {
       logoUrl?: string | null;
       attachments?: ProjectAttachment[];
       entries?: ProjectEntry[];
+      isShared?: boolean;
     },
   ) => Promise<void>;
   deleteProject: (id: string) => Promise<void>;
@@ -580,6 +584,7 @@ interface AppContextProps {
     ids: string[],
     projectId: string | null,
   ) => Promise<void>;
+  setTransactionsSettled: (type: "income" | "expense", ids: string[], settled: boolean) => Promise<void>;
 
   // Notification Management
   addNotificationArEn: (
@@ -2249,6 +2254,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
       logoUrl?: string | null;
       attachments?: ProjectAttachment[];
       entries?: ProjectEntry[];
+      isShared?: boolean;
     },
   ) => {
     const payload: Record<string, any> = {};
@@ -2260,6 +2266,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     if (fields.logoUrl !== undefined) payload.logo_url = fields.logoUrl;
     if (fields.attachments !== undefined) payload.attachments = fields.attachments;
     if (fields.entries !== undefined) payload.entries = fields.entries;
+    if (fields.isShared !== undefined) payload.is_shared = fields.isShared;
     try {
       const { data, error } = await supabase
         .from("projects")
@@ -2322,15 +2329,39 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     try {
       const { error } = await supabase
         .from(table)
-        .update({ project_id: projectId })
+        // A row done in its old project starts over as not done in the new one.
+        .update({ project_id: projectId, project_settled: false })
         .in("id", [...targets]);
       if (error) throw error;
       const tag = <T extends { id: string; projectId?: string }>(rows: T[]) =>
-        rows.map((r) => (targets.has(r.id) ? { ...r, projectId: projectId || undefined } : r));
+        rows.map((r) => (targets.has(r.id) ? { ...r, projectId: projectId || undefined, projectSettled: false } : r));
       if (type === "income") setIncomes(tag);
       else setExpenses(tag);
     } catch (e) {
       logSupabaseError(e, `${table}/project`);
+      throw e;
+    }
+  };
+
+  /** Marks project rows as paid by the partner (done) or still owed. */
+  const setTransactionsSettled = async (type: "income" | "expense", ids: string[], settled: boolean) => {
+    const targets = new Set(ids);
+    if (type === "expense") {
+      // A split purchase is one purchase: settling one part settles them all.
+      const splitIds = new Set(expenses.filter((e) => targets.has(e.id) && e.splitId).map((e) => e.splitId));
+      expenses.forEach((e) => e.splitId && splitIds.has(e.splitId) && targets.add(e.id));
+    }
+    if (!targets.size) return;
+    const table = type === "income" ? "incomes" : "expenses";
+    try {
+      const { error } = await supabase.from(table).update({ project_settled: settled }).in("id", [...targets]);
+      if (error) throw error;
+      const tag = <T extends { id: string; projectSettled?: boolean }>(rows: T[]) =>
+        rows.map((r) => (targets.has(r.id) ? { ...r, projectSettled: settled } : r));
+      if (type === "income") setIncomes(tag);
+      else setExpenses(tag);
+    } catch (e) {
+      logSupabaseError(e, `${table}/settled`);
       throw e;
     }
   };
@@ -2749,6 +2780,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
         updateProject,
         deleteProject,
         setTransactionsProject,
+        setTransactionsSettled,
 
         addNotificationArEn,
         markNotificationRead,

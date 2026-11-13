@@ -69,7 +69,7 @@ const input = {
     { id: 'i2', userId: 'u1', amount: 100, currency: 'USD', title: 'صرافة', date: '2026-01-04', categoryId: 'c2', walletId: 'w1', transferId: 'tr1', incomeKind: 'cash', createdAt: now, updatedAt: now },
   ],
   expenses: [
-    { id: 'e1', userId: 'u1', amount: 40, currency: 'LYD', title: 'Lunch', date: '2026-01-02', categoryId: 'c1', walletId: 'w1', isRefunded: false, hiddenFromViewers: true, splitId: 's1', projectId: 'pr1', createdAt: now, updatedAt: now },
+    { id: 'e1', userId: 'u1', amount: 40, currency: 'LYD', title: 'Lunch', date: '2026-01-02', categoryId: 'c1', walletId: 'w1', isRefunded: false, hiddenFromViewers: true, splitId: 's1', projectId: 'pr1', projectSettled: true, createdAt: now, updatedAt: now },
     { id: 'e2', userId: 'u1', amount: 500, currency: 'LYD', title: 'سحب نقدي', date: '2026-01-03', categoryId: 'c1', walletId: 'w1', expenseKind: 'cash_withdrawal', createdAt: now, updatedAt: now },
     { id: 'e3', userId: 'u1', amount: 912, currency: 'LYD', title: 'صرافة', date: '2026-01-04', categoryId: 'c1', walletId: 'w1', transferId: 'tr1', createdAt: now, updatedAt: now },
     { id: 'e4', userId: 'u1', amount: 900, currency: 'LYD', title: 'Lunch', date: '2026-01-02', categoryId: 'c1', splitId: 's1', externalSource: 'Gold', createdAt: now, updatedAt: now },
@@ -81,7 +81,7 @@ const input = {
     { id: 'g1', userId: 'u1', name: 'Jamiya', currency: 'LYD', totalAmount: 6000, numMembers: 6, paymentPerMember: 1000, paymentCycle: 'monthly', startDate: '2026-01-01', members: [], receivingOrder: [], isArchived: false, createdAt: now, updatedAt: now },
   ],
   projects: [
-    { id: 'pr1', userId: 'u1', name: 'بضاعة الصين', description: '', notes: [{ id: 'n1', date: '2026-01-05', text: 'وصلت الميناء' }], attachments: [{ id: 'a1', path: 'data:application/pdf;base64,JVBERi0=', name: 'Invoice.pdf', type: 'application/pdf', size: 5, date: '2026-01-06' }], entries: [{ id: 'e1', kind: 'expense', amount: 250, currency: 'USD', title: 'شحن', date: '2026-01-07' }], isArchived: false, createdAt: now, updatedAt: now },
+    { id: 'pr1', userId: 'u1', name: 'بضاعة الصين', description: '', notes: [{ id: 'n1', date: '2026-01-05', text: 'وصلت الميناء' }], attachments: [{ id: 'a1', path: 'data:application/pdf;base64,JVBERi0=', name: 'Invoice.pdf', type: 'application/pdf', size: 5, date: '2026-01-06' }], entries: [{ id: 'e1', kind: 'expense', amount: 250, currency: 'USD', title: 'شحن', date: '2026-01-07', settled: true }], isShared: true, isArchived: false, createdAt: now, updatedAt: now },
     { id: 'pr2', userId: 'u1', name: 'الشحنة الأولى', description: '', parentId: 'pr1', logoUrl: 'data:image/jpeg;base64,AAAA', notes: [], attachments: [], isArchived: false, createdAt: now, updatedAt: now },
   ],
 } as any;
@@ -175,6 +175,11 @@ assert.deepEqual(inserted['storage:project-files'], [{ path: restoredFile.path, 
 assert.equal(inserted.projects[0].notes[0].text, 'وصلت الميناء', 'project steps lost on restore');
 assert.equal(inserted.projects[0].entries[0].amount, 250, 'project-only entries lost on restore');
 assert.deepEqual(inserted.projects[1].entries, [], 'a backup without entries must restore an empty list');
+assert.equal(inserted.projects[0].is_shared, true, 'shared project restored unshared');
+assert.equal(inserted.projects[1].is_shared, undefined, 'unshared project must not send the column');
+assert.equal(inserted.projects[0].entries[0].settled, true, 'entry done flag lost on restore');
+assert.equal(inserted.expenses[0].project_settled, true, 'expense done flag lost on restore');
+assert.equal(inserted.expenses[1].project_settled, undefined);
 
 // Self-referencing category parent survives the remap.
 const salary = inserted.categories.find((c: any) => c.name.includes('Salary'));

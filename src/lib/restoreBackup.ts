@@ -141,6 +141,8 @@ export async function restoreBackup(
     notes: p.notes || [],
     attachments: projectAttachments.get(p.id) || [],
     entries: p.entries || [],
+    // Spread only when on, so a backup without sharing restores the same columns as before.
+    ...(p.isShared ? { is_shared: true } : {}),
     is_archived: !!p.isArchived,
   }));
   await insertChunked(supabase, 'projects', projectRows);
@@ -186,6 +188,7 @@ export async function restoreBackup(
     transfer_id: mapTransferId(t.transferId),
     hidden_from_viewers: t.hiddenFromViewers ?? null,
     project_id: mapProjectId(t.projectId),
+    ...(t.projectSettled ? { project_settled: true } : {}),
     // Drop this and cash that was received comes back on the card.
     // Spread only when cash, so a card-only backup restores the same columns as before.
     ...(t.incomeKind === 'cash' ? { income_kind: 'cash' } : {}),
@@ -222,6 +225,7 @@ export async function restoreBackup(
     split_id: mapSplitId(t.splitId),
     external_source: t.externalSource || null,
     project_id: mapProjectId(t.projectId),
+    ...(t.projectSettled ? { project_settled: true } : {}),
   }));
   await insertChunked(supabase, 'expenses', expenseRows);
 
