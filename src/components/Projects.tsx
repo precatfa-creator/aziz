@@ -208,6 +208,7 @@ export const Projects: React.FC = () => {
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [range, setRange] = useState<Range>('ALL');
+  const [historyFilter, setHistoryFilter] = useState<'all' | 'out' | 'in' | 'note'>('all');
   const [confirm, setConfirm] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
 
   const selected = projects.find((p) => p.id === selectedId) || null;
@@ -227,6 +228,7 @@ export const Projects: React.FC = () => {
   const openProject = (id: string | null) => {
     setSelectedId(id);
     setRange('ALL');
+    setHistoryFilter('all');
     setLinking(false);
     setEntryForm(null);
   };
@@ -662,12 +664,12 @@ export const Projects: React.FC = () => {
    */
   const amountCell = (isIn: boolean, amount: number, c: 'LYD' | 'USD', shared: boolean, settled: boolean, toggle: () => void) => (
     <span className="flex flex-col items-end gap-1 shrink-0">
-      <span dir="ltr" className={`text-sm font-black tabular-nums ${isIn ? 'text-emerald-500' : 'text-rose-500'}`}>
+      <span dir="ltr" className={`text-base font-black tabular-nums ${isIn ? 'text-emerald-500' : 'text-rose-500'}`}>
         {isIn ? '+' : '-'}{fmt(amount, c)}
       </span>
       {shared && (
         <>
-          <span className="text-[10px] font-bold text-indigo-500 tabular-nums">
+          <span className="text-xs font-bold text-indigo-500 tabular-nums">
             {ar ? 'حصتك ' : 'Yours '}<span dir="ltr">{fmt(amount / 2, c)}</span>
           </span>
           <button
@@ -680,7 +682,7 @@ export const Projects: React.FC = () => {
                   ? ar ? 'استلمت المبلغ كاملاً، حصة الشريك عندك' : 'You received it all; the partner’s half is with you'
                   : ar ? 'دفعت المبلغ كاملاً، الشريك مدين لك بحصته' : 'You paid it all; the partner owes you their half'
             }
-            className={`text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 cursor-pointer disabled:opacity-50 ${
+            className={`text-[11px] font-black px-2.5 py-1 rounded-full flex items-center gap-1 cursor-pointer disabled:opacity-50 ${
               settled
                 ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
                 : 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
@@ -693,6 +695,62 @@ export const Projects: React.FC = () => {
       )}
     </span>
   );
+
+  /** "12 Nov 2026 · 14:30" — the row's own date, never shifted by UTC parsing. */
+  const dayText = (date: string) => {
+    const [y, m, d] = date.slice(0, 10).split('-').map(Number);
+    const day = new Date(y, m - 1, d).toLocaleDateString(ar ? 'ar-LY' : 'en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+    const time = date.slice(11, 16);
+    return time ? `${day} · ${time}` : day;
+  };
+
+  /** One history row: icon, full title, meta line, notes; amount and actions at the end. */
+  const historyRow = (r: {
+    key: string;
+    tone: 'in' | 'out' | 'note';
+    title: string;
+    meta: (string | undefined)[];
+    notes?: string;
+    receipt?: boolean;
+    amount?: React.ReactNode;
+    actions: React.ReactNode;
+  }) => {
+    const Icon = r.tone === 'note' ? StickyNote : r.tone === 'in' ? ArrowUpCircle : ArrowDownCircle;
+    const chip =
+      r.tone === 'note'
+        ? 'bg-amber-500/10 text-amber-500'
+        : r.tone === 'in'
+          ? 'bg-emerald-500/10 text-emerald-500'
+          : 'bg-rose-500/10 text-rose-500';
+    return (
+      <div key={r.key} className="group flex items-start gap-3 sm:gap-4 px-5 py-4 hover:bg-slate-50/70 dark:hover:bg-slate-800/40">
+        <span className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 ${chip}`}>
+          <Icon className="w-5 h-5" />
+        </span>
+        <div className="flex-1 min-w-0 space-y-1">
+          <div className="text-[15px] font-bold leading-snug text-slate-900 dark:text-white break-words whitespace-pre-wrap">{r.title}</div>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
+            {r.meta.filter(Boolean).map((m, i) => (
+              <React.Fragment key={i}>
+                {i > 0 && <span className="text-slate-300 dark:text-slate-600">•</span>}
+                <span className={i === 0 ? 'font-semibold' : ''}>{m}</span>
+              </React.Fragment>
+            ))}
+            {r.receipt && <Paperclip className="w-3.5 h-3.5" aria-label={ar ? 'مرفق' : 'Receipt'} />}
+          </div>
+          {r.notes && (
+            <div className="text-xs leading-relaxed text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-800/60 rounded-xl px-3 py-2 whitespace-pre-wrap break-words">
+              {r.notes}
+            </div>
+          )}
+        </div>
+        <div className="flex flex-col items-end gap-1.5 shrink-0">
+          {r.amount}
+          <div className="flex gap-0.5">{r.actions}</div>
+        </div>
+      </div>
+    );
+  };
 
   // ---------------------------------------------------------------- list view
   if (!selected) {
@@ -800,6 +858,28 @@ export const Projects: React.FC = () => {
   const perCurrency = (m: Record<'LYD' | 'USD', number>) =>
     (['LYD', 'USD'] as const).filter((c) => m[c]).map((c) => fmt(m[c], c)).join(' + ');
   const share = shareOf(scope);
+  // History grouped by month, newest first, each month with its money in and out.
+  const months: { key: string; label: string; in: number; out: number; items: TimelineEntry[] }[] = [];
+  for (const item of timeline) {
+    const tone = item.kind === 'note' ? 'note' : item.kind === 'entry' ? (item.entry.kind === 'income' ? 'in' : 'out') : item.kind === 'income' ? 'in' : 'out';
+    if (historyFilter !== 'all' && historyFilter !== tone) continue;
+    const key = item.date.slice(0, 7);
+    let m = months.at(-1);
+    if (!m || m.key !== key) {
+      const [y, mo] = key.split('-').map(Number);
+      m = { key, label: new Date(y, mo - 1, 1).toLocaleDateString(ar ? 'ar-LY' : 'en-GB', { month: 'long', year: 'numeric' }), in: 0, out: 0, items: [] };
+      months.push(m);
+    }
+    m.items.push(item);
+    // Same rule as the totals: withdrawals and transfers never count.
+    const money =
+      item.kind === 'entry' ? item.entry
+      : item.kind === 'income' ? (isEarning(item.row) ? item.row : null)
+      : item.kind === 'expense' ? (isProjectCost(item.row) ? item.row : null)
+      : null;
+    if (money) m[tone === 'in' ? 'in' : 'out'] += convertAmount(money.amount, money.currency, currency, exchangeRate);
+  }
+
   const chart = inRange(seriesOf(scope), range);
   const rangeChange = chart.length ? (chart.at(-1)!.net - chart[0].net) : 0;
   // Top five, the rest folded into one slice so the donut stays readable.
@@ -1246,115 +1326,137 @@ export const Projects: React.FC = () => {
         )}
       </div>
 
-      {/* Timeline */}
-      <div className="bg-white dark:bg-slate-900 p-5 rounded-3xl border border-slate-100 dark:border-slate-800 space-y-2">
-        <div className="text-sm font-extrabold text-slate-800 dark:text-white">{ar ? 'السجل من البداية' : 'History from the start'}</div>
-        {timeline.length === 0 && <p className="text-xs text-slate-400 py-6 text-center">{ar ? 'لا شيء بعد.' : 'Nothing yet.'}</p>}
-        {timeline.map((entry) => {
-          if (entry.kind === 'note') {
-            return (
-              <div key={`note:${entry.id}`} className="flex items-start gap-3 p-3 rounded-2xl bg-amber-50/60 dark:bg-amber-950/20">
-                <StickyNote className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
-                <span className="text-xs text-slate-400 w-20 shrink-0">{entry.date}</span>
-                <span className="flex-1 text-sm text-slate-700 dark:text-slate-200 whitespace-pre-wrap">
-                  {entry.text}
-                  {entry.projectId !== selected.id && <span className="block text-[10px] text-indigo-500">{byId(entry.projectId)?.name}</span>}
-                </span>
-                <button
-                  title={ar ? 'حذف الخطوة' : 'Delete step'}
-                  onClick={() => {
-                    const owner = byId(entry.projectId);
-                    if (owner) void run(() => updateProject(owner.id, { notes: owner.notes.filter((n) => n.id !== entry.id) }));
-                  }}
-                  className="p-1 text-slate-400 hover:text-rose-500 cursor-pointer"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            );
-          }
-          if (entry.kind === 'entry') {
-            const { entry: x } = entry;
-            const isIn = x.kind === 'income';
-            const owner = byId(entry.projectId);
-            return (
-              <div key={`entry:${x.id}`} className="flex items-center gap-3 p-3 rounded-2xl hover:bg-slate-50 dark:hover:bg-slate-800/50">
-                {isIn ? <ArrowUpCircle className="w-4 h-4 shrink-0 text-emerald-500" /> : <ArrowDownCircle className="w-4 h-4 shrink-0 text-rose-500" />}
-                {txDate(x.date)}
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm text-slate-800 dark:text-slate-100 truncate">{x.title}</div>
-                  <div className="text-[10px] text-slate-400 min-w-0">
-                    <div className="truncate">
-                      {ar ? 'خاص بالمشروع' : 'Project only'}
-                      {entry.projectId !== selected.id && <span className="text-indigo-500"> · {owner?.name}</span>}
-                    </div>
-                    {x.notes && <div className="line-clamp-2 whitespace-pre-wrap text-slate-500 dark:text-slate-400">{x.notes}</div>}
-                  </div>
-                </div>
-                {amountCell(isIn, x.amount, x.currency, !!owner?.isShared, !!x.settled, () => {
-                  if (owner)
-                    void run(() => updateProject(owner.id, { entries: owner.entries.map((y) => (y.id === x.id ? { ...y, settled: !y.settled } : y)) }));
-                })}
-                <button
-                  title={ar ? 'تعديل' : 'Edit'}
-                  onClick={() => setEntryForm({ ...x, amount: String(x.amount), notes: x.notes || '', projectId: entry.projectId })}
-                  className="p-1 text-slate-400 hover:text-indigo-500 cursor-pointer"
-                >
-                  <Edit2 className="w-4 h-4" />
-                </button>
-                <button
-                  title={ar ? 'حذف' : 'Delete'}
-                  onClick={() =>
-                    setConfirm({
-                      title: ar ? 'حذف العملية؟' : 'Delete entry?',
-                      message: ar ? `سيُحذف "${x.title}" نهائياً من المشروع.` : `"${x.title}" will be removed from the project for good.`,
-                      onConfirm: () => {
-                        if (owner) void run(() => updateProject(owner.id, { entries: owner.entries.filter((y) => y.id !== x.id) }));
-                      },
-                    })
-                  }
-                  className="p-1 text-slate-400 hover:text-rose-500 cursor-pointer"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            );
-          }
-          const isIncome = entry.kind === 'income';
-          const counted = isIncome ? isEarning(entry.row as Income) : isProjectCost(entry.row as Expense);
-          const Icon = isIncome ? ArrowUpCircle : ArrowDownCircle;
-          return (
-            <div key={`${entry.kind}:${entry.row.id}`} className="flex items-center gap-3 p-3 rounded-2xl hover:bg-slate-50 dark:hover:bg-slate-800/50">
-              <Icon className={`w-4 h-4 shrink-0 ${isIncome ? 'text-emerald-500' : 'text-rose-500'}`} />
-              {txDate(entry.row.date)}
-              <div className="flex-1 min-w-0">
-                <div className="text-sm text-slate-800 dark:text-slate-100 truncate">{entry.row.title}</div>
-                {details(
-                  entry.row,
-                  <>
-                    {entry.row.projectId !== selected.id && <span className="text-indigo-500"> · {byId(entry.row.projectId)?.name}</span>}
-                    {!counted && (ar ? ' · لا يُحتسب' : ' · not counted')}
-                  </>,
-                )}
-              </div>
-              {amountCell(
-                isIncome,
-                entry.row.amount,
-                entry.row.currency,
-                counted && !!byId(entry.row.projectId)?.isShared,
-                !!entry.row.projectSettled,
-                () => void run(() => setTransactionsSettled(entry.kind, [entry.row.id], !entry.row.projectSettled)),
-              )}
+      {/* History: month by month, one clear row per item */}
+      <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-100 dark:border-slate-800 overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-3 px-5 pt-5 pb-3">
+          <div className="text-base font-extrabold text-slate-900 dark:text-white">{ar ? 'سجل العمليات' : 'Transaction history'}</div>
+          <div className="flex gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800/70">
+            {([
+              ['all', ar ? 'الكل' : 'All'],
+              ['out', ar ? 'مصروف' : 'Spent'],
+              ['in', ar ? 'دخل' : 'Income'],
+              ['note', ar ? 'خطوات' : 'Steps'],
+            ] as const).map(([k, label]) => (
               <button
-                title={ar ? 'فك الربط' : 'Unlink'}
-                onClick={() => void run(() => setTransactionsProject(entry.kind, [entry.row.id], null))}
-                className="p-1 text-slate-400 hover:text-rose-500 cursor-pointer"
+                key={k}
+                onClick={() => setHistoryFilter(k)}
+                className={`px-3 py-1 rounded-lg text-xs font-black cursor-pointer ${historyFilter === k ? 'bg-white dark:bg-slate-950 text-slate-900 dark:text-white shadow-sm' : 'text-slate-500'}`}
               >
-                <Unlink className="w-4 h-4" />
+                {label}
               </button>
+            ))}
+          </div>
+        </div>
+        {months.length === 0 && <p className="text-sm text-slate-400 py-10 text-center">{ar ? 'لا شيء بعد.' : 'Nothing yet.'}</p>}
+        {months.map((m) => (
+          <section key={m.key}>
+            <div className="flex items-center justify-between gap-3 px-5 py-2 bg-slate-50 dark:bg-slate-800/60 border-y border-slate-100 dark:border-slate-800">
+              <span className="text-xs font-black text-slate-600 dark:text-slate-300">{m.label}</span>
+              <span dir="ltr" className="flex gap-3 text-[11px] font-black tabular-nums">
+                {m.in > 0 && <span className="text-emerald-500">+{fmt(m.in)}</span>}
+                {m.out > 0 && <span className="text-rose-500">-{fmt(m.out)}</span>}
+              </span>
             </div>
-          );
-        })}
+            <div className="divide-y divide-slate-100 dark:divide-slate-800">
+              {m.items.map((entry) => {
+                if (entry.kind === 'note') {
+                  return historyRow({
+                    key: `note:${entry.id}`,
+                    tone: 'note',
+                    title: entry.text,
+                    meta: [dayText(entry.date), entry.projectId !== selected.id ? byId(entry.projectId)?.name : '', ar ? 'خطوة' : 'Step'],
+                    actions: (
+                      <button
+                        title={ar ? 'حذف الخطوة' : 'Delete step'}
+                        onClick={() => {
+                          const owner = byId(entry.projectId);
+                          if (owner) void run(() => updateProject(owner.id, { notes: owner.notes.filter((n) => n.id !== entry.id) }));
+                        }}
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 cursor-pointer"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    ),
+                  });
+                }
+                if (entry.kind === 'entry') {
+                  const { entry: x } = entry;
+                  const owner = byId(entry.projectId);
+                  return historyRow({
+                    key: `entry:${x.id}`,
+                    tone: x.kind === 'income' ? 'in' : 'out',
+                    title: x.title,
+                    meta: [dayText(x.date), ar ? 'خاص بالمشروع' : 'Project only', entry.projectId !== selected.id ? owner?.name : ''],
+                    notes: x.notes,
+                    amount: amountCell(x.kind === 'income', x.amount, x.currency, !!owner?.isShared, !!x.settled, () => {
+                      if (owner)
+                        void run(() => updateProject(owner.id, { entries: owner.entries.map((y) => (y.id === x.id ? { ...y, settled: !y.settled } : y)) }));
+                    }),
+                    actions: (
+                      <>
+                        <button
+                          title={ar ? 'تعديل' : 'Edit'}
+                          onClick={() => setEntryForm({ ...x, amount: String(x.amount), notes: x.notes || '', projectId: entry.projectId })}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-500 hover:bg-indigo-500/10 cursor-pointer"
+                        >
+                          <Edit2 className="w-4 h-4" />
+                        </button>
+                        <button
+                          title={ar ? 'حذف' : 'Delete'}
+                          onClick={() =>
+                            setConfirm({
+                              title: ar ? 'حذف العملية؟' : 'Delete entry?',
+                              message: ar ? `سيُحذف "${x.title}" نهائياً من المشروع.` : `"${x.title}" will be removed from the project for good.`,
+                              onConfirm: () => {
+                                if (owner) void run(() => updateProject(owner.id, { entries: owner.entries.filter((y) => y.id !== x.id) }));
+                              },
+                            })
+                          }
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 cursor-pointer"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </>
+                    ),
+                  });
+                }
+                const isIncome = entry.kind === 'income';
+                const counted = isIncome ? isEarning(entry.row as Income) : isProjectCost(entry.row as Expense);
+                return historyRow({
+                  key: `${entry.kind}:${entry.row.id}`,
+                  tone: isIncome ? 'in' : 'out',
+                  title: entry.row.title,
+                  meta: [
+                    dayText(entry.row.date),
+                    categoryName(entry.row),
+                    sourceName(entry.row),
+                    entry.row.projectId !== selected.id ? byId(entry.row.projectId)?.name : '',
+                    counted ? '' : ar ? 'لا يُحتسب' : 'Not counted',
+                  ],
+                  notes: entry.row.notes,
+                  receipt: !!entry.row.imageUrl,
+                  amount: amountCell(
+                    isIncome,
+                    entry.row.amount,
+                    entry.row.currency,
+                    counted && !!byId(entry.row.projectId)?.isShared,
+                    !!entry.row.projectSettled,
+                    () => void run(() => setTransactionsSettled(entry.kind, [entry.row.id], !entry.row.projectSettled)),
+                  ),
+                  actions: (
+                    <button
+                      title={ar ? 'فك الربط' : 'Unlink'}
+                      onClick={() => void run(() => setTransactionsProject(entry.kind, [entry.row.id], null))}
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 cursor-pointer"
+                    >
+                      <Unlink className="w-4 h-4" />
+                    </button>
+                  ),
+                });
+              })}
+            </div>
+          </section>
+        ))}
       </div>
     </div>
   );
