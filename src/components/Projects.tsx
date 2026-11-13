@@ -4,6 +4,8 @@
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { printPage } from '../lib/printPage';
 import { useApp } from '../context/AppContext';
 import {
   Plus,
@@ -28,12 +30,13 @@ import {
   Users,
   CircleCheck,
   Clock,
+  FileDown,
 } from 'lucide-react';
 import { Area, AreaChart, Cell, ComposedChart, Line, Pie, PieChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import type { Expense, Income, Project, ProjectEntry } from '../types';
 import { ConfirmModal } from './ConfirmModal';
 import { isProjectCost, netSeries, projectFamily, projectTotals, shareTotals, inRange, RANGE_DAYS, type NetPoint, type Range } from '../lib/projectTotals';
-import { convertAmount, isEarning } from '../lib/walletBalance';
+import { convertAmount, isEarning, roundMoney } from '../lib/walletBalance';
 import { RECEIPTS_BUCKET, resolveReceiptUrls, uploadReceipt } from '../lib/receiptStorage';
 import { isInlineReceipt } from '../lib/receiptImages';
 import { fileToReceiptJpeg } from '../lib/imageDownscale';
@@ -153,6 +156,7 @@ export const Projects: React.FC = () => {
     categories,
     wallets,
     user,
+    profile,
     addProject,
     updateProject,
     deleteProject,
@@ -208,6 +212,9 @@ export const Projects: React.FC = () => {
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [range, setRange] = useState<Range>('ALL');
+  // The report is mounted on the first print and kept while the project is open:
+  // Android's print service lays the page out after the call returns.
+  const [printing, setPrinting] = useState(false);
   const [historyFilter, setHistoryFilter] = useState<'all' | 'out' | 'in' | 'note'>('all');
   const [confirm, setConfirm] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
 
@@ -229,6 +236,7 @@ export const Projects: React.FC = () => {
     setSelectedId(id);
     setRange('ALL');
     setHistoryFilter('all');
+    setPrinting(false);
     setLinking(false);
     setEntryForm(null);
   };
@@ -881,6 +889,165 @@ export const Projects: React.FC = () => {
   }
 
   const chart = inRange(seriesOf(scope), range);
+
+  const printReport = async () => {
+    setBusy(true);
+    setPrinting(true);
+    try {
+      // Let the report reach the DOM before the print service reads it.
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      await printPage(`${selected.name} ${today()}`);
+    } catch (e) {
+      console.error(e);
+      alert(ar ? 'تعذّرت الطباعة على هذا الجهاز.' : 'Printing is not available on this device.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Oldest first, as a statement reads; money rows only, steps listed apart.
+  const reportRows = [...timeline].reverse().flatMap((item) => {
+    if (item.kind === 'note') return [];
+    if (item.kind === 'entry') {
+      const x = item.entry;
+      return [{ key: `entry:${x.id}`, date: x.date, title: x.title, detail: [ar ? 'خاص بالمشروع' : 'Project only', x.notes].filter(Boolean).join(' — '), isIn: x.kind === 'income', amount: x.amount, currency: x.currency, counted: true, shared: !!byId(item.projectId)?.isShared, settled: !!x.settled, project: item.projectId }];
+    }
+    const r = item.row;
+    const isIn = item.kind === 'income';
+    const counted = isIn ? isEarning(r as Income) : isProjectCost(r as Expense);
+    return [{ key: `${item.kind}:${r.id}`, date: r.date, title: r.title, detail: [categoryName(r), r.notes].filter(Boolean).join(' — '), isIn, amount: r.amount, currency: r.currency, counted, shared: counted && !!byId(r.projectId)?.isShared, settled: !!r.projectSettled, project: r.projectId || '' }];
+  });
+  const reportSteps = [...timeline].reverse().filter((i): i is Extract<TimelineEntry, { kind: 'note' }> => i.kind === 'note');
+  const n2 = (v: number) => v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const money2 = (v: number, c: 'LYD' | 'USD' = currency) => `${n2(v)} ${sym(c)}`;
+  const report = printing && createPortal(
+    <div id="statement-print" dir={ar ? 'rtl' : 'ltr'} className="text-slate-900">
+      <section className="stmt">
+        <header className="flex items-start justify-between gap-4 border-b-2 border-slate-800 pb-3 mb-4">
+          <div>
+            <h1 className="text-lg font-black">{ar ? 'تقرير مشروع' : 'Project report'}</h1>
+            <p className="text-base font-extrabold mt-0.5">{selected.name}</p>
+            {selected.description && <p className="text-[11px] text-slate-600 mt-0.5 whitespace-pre-wrap">{selected.description}</p>}
+            {scope.size > 1 && <p className="text-[10px] font-bold text-slate-500 mt-0.5">{ar ? `يشمل ${scope.size - 1} مشروعاً فرعياً` : `Includes ${scope.size - 1} sub-project(s)`}</p>}
+            {share.anyShared && <p className="text-[11px] font-bold mt-1">{ar ? 'مشروع مشترك — 50% لكل شريك' : 'Shared project — 50% each partner'}</p>}
+          </div>
+          <div className="text-[10px] text-end text-slate-600 leading-relaxed">
+            <p className="font-black text-xs text-slate-900">{ar ? 'عزيز' : 'Aziz'}</p>
+            {profile?.name && <p>{profile.name}</p>}
+            <p>
+              {ar ? 'تاريخ الإصدار: ' : 'Issued: '}
+              <span dir="ltr">{new Date().toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}</span>
+            </p>
+            <p>{ar ? 'العملة: ' : 'Currency: '}{sym(currency)}{ar ? ` (السعر ${exchangeRate})` : ` (rate ${exchangeRate})`}</p>
+          </div>
+        </header>
+
+        <table className="w-full border-collapse text-[11px] mb-4">
+          <thead>
+            <tr className="bg-slate-100 font-black text-[10px] text-slate-700">
+              <th className="border border-slate-300 px-2 py-1.5 text-start">{ar ? 'الملخص' : 'Summary'}</th>
+              <th className="border border-slate-300 px-2 py-1.5 text-end">{ar ? 'الإجمالي' : 'Total'}</th>
+              {share.anyShared && <th className="border border-slate-300 px-2 py-1.5 text-end">{ar ? 'حصة الشريك' : 'Partner share'}</th>}
+            </tr>
+          </thead>
+          <tbody>
+            {[
+              [ar ? 'المصروف' : 'Spent', tot.spentTotal, share.partnerSpent, perCurrency(tot.spent)],
+              [ar ? 'العائد' : 'Returned', tot.earnedTotal, share.partnerEarned, perCurrency(tot.earned)],
+              [ar ? 'الصافي' : 'Net', tot.net, roundMoney(share.partnerEarned - share.partnerSpent), ''],
+            ].map(([label, total, each, detail]) => (
+              <tr key={label as string}>
+                <td className="border border-slate-300 px-2 py-1.5 font-bold">{label}</td>
+                <td className="border border-slate-300 px-2 py-1.5 text-end tabular-nums" dir="ltr">
+                  {money2(total as number)}
+                  {detail && detail !== fmt(total as number) && <div className="text-[9.5px] text-slate-500">{(detail as string).split(' + ').map((p, i) => <React.Fragment key={p}>{i > 0 && ' + '}<bdi dir="ltr">{p}</bdi></React.Fragment>)}</div>}
+                </td>
+                {share.anyShared && <td className="border border-slate-300 px-2 py-1.5 text-end tabular-nums" dir="ltr">{money2(each as number)}</td>}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+
+        {share.anyShared && (
+          <div className="grid grid-cols-2 gap-3 mb-4 text-xs">
+            <div className="border-2 border-slate-800 rounded-lg p-3">
+              <div className="font-bold text-slate-600">{ar ? 'مستحق للمالك من الشريك' : 'Partner owes the owner'}</div>
+              <div className="text-base font-black tabular-nums" dir="ltr">{money2(share.owedToMeTotal)}</div>
+              <div className="text-[10px] text-slate-500">{ar ? 'نصف المصاريف غير المسوّاة' : 'Half of unsettled expenses'}</div>
+            </div>
+            <div className="border-2 border-slate-800 rounded-lg p-3">
+              <div className="font-bold text-slate-600">{ar ? 'مستحق للشريك من المالك' : 'Owner owes the partner'}</div>
+              <div className="text-base font-black tabular-nums" dir="ltr">{money2(share.iOweTotal)}</div>
+              <div className="text-[10px] text-slate-500">{ar ? 'نصف الدخل غير المسوّى' : 'Half of unsettled income'}</div>
+            </div>
+          </div>
+        )}
+
+        <h2 className="text-sm font-black mb-1.5">{ar ? 'العمليات' : 'Transactions'}</h2>
+        <table className="w-full border-collapse">
+          <thead>
+            <tr className="bg-slate-100 text-[10px] font-black text-slate-700">
+              <th className="border-b border-slate-300 px-2 py-1.5 text-start">{ar ? 'التاريخ' : 'Date'}</th>
+              <th className="border-b border-slate-300 px-2 py-1.5 text-start">{ar ? 'البيان' : 'Description'}</th>
+              <th className="border-b border-slate-300 px-2 py-1.5 text-start">{ar ? 'النوع' : 'Type'}</th>
+              <th className="border-b border-slate-300 px-2 py-1.5 text-end">{ar ? 'المبلغ' : 'Amount'}</th>
+              {share.anyShared && <th className="border-b border-slate-300 px-2 py-1.5 text-end">{ar ? 'حصة الشريك' : 'Partner share'}</th>}
+              {share.anyShared && <th className="border-b border-slate-300 px-2 py-1.5 text-start">{ar ? 'الحالة' : 'Status'}</th>}
+            </tr>
+          </thead>
+          <tbody>
+            {reportRows.map((r) => (
+              <tr key={r.key} className={r.counted ? '' : 'text-slate-400'}>
+                <td className="border-b border-slate-200 px-2 py-1.5 text-[11px] whitespace-nowrap" dir="ltr">{r.date.replace('T', ' ')}</td>
+                <td className="border-b border-slate-200 px-2 py-1.5 text-[11px]" dir="auto">
+                  {r.title}
+                  {r.project !== selected.id && byId(r.project) && <span className="text-[9.5px] text-slate-500"> · {byId(r.project)!.name}</span>}
+                  {r.detail && <div className="text-[9.5px] text-slate-500 mt-0.5 whitespace-pre-wrap">{r.detail}</div>}
+                  {!r.counted && <div className="text-[9.5px]">{ar ? 'لا يُحتسب' : 'Not counted'}</div>}
+                </td>
+                <td className={`border-b border-slate-200 px-2 py-1.5 text-[11px] whitespace-nowrap ${r.isIn ? 'text-emerald-700' : 'text-rose-700'}`}>
+                  {r.isIn ? (ar ? 'دخل' : 'Income') : ar ? 'مصروف' : 'Expense'}
+                </td>
+                <td className={`border-b border-slate-200 px-2 py-1.5 text-[11px] text-end tabular-nums whitespace-nowrap ${r.isIn ? 'text-emerald-700' : 'text-rose-700'}`} dir="ltr">
+                  {r.isIn ? '+' : '−'}{money2(r.amount, r.currency)}
+                </td>
+                {share.anyShared && (
+                  <td className="border-b border-slate-200 px-2 py-1.5 text-[11px] text-end tabular-nums whitespace-nowrap" dir="ltr">
+                    {r.shared ? money2(r.amount / 2, r.currency) : '—'}
+                  </td>
+                )}
+                {share.anyShared && (
+                  <td className="border-b border-slate-200 px-2 py-1.5 text-[11px] whitespace-nowrap font-bold">
+                    {!r.shared ? '—' : r.settled ? (ar ? 'تمت التسوية' : 'Settled') : r.isIn ? (ar ? 'حصة الشريك عند المالك' : 'Owner holds partner share') : (ar ? 'دفعها المالك كاملة' : 'Paid in full by owner')}
+                  </td>
+                )}
+              </tr>
+            ))}
+            {reportRows.length === 0 && (
+              <tr><td colSpan={6} className="px-2 py-4 text-center text-[11px] text-slate-500">{ar ? 'لا توجد عمليات.' : 'No transactions.'}</td></tr>
+            )}
+          </tbody>
+        </table>
+
+        {reportSteps.length > 0 && (
+          <>
+            <h2 className="text-sm font-black mt-5 mb-1.5">{ar ? 'خطوات المشروع' : 'Project steps'}</h2>
+            <table className="w-full border-collapse">
+              <tbody>
+                {reportSteps.map((n) => (
+                  <tr key={n.id}>
+                    <td className="border-b border-slate-200 px-2 py-1.5 text-[11px] whitespace-nowrap w-24" dir="ltr">{n.date}</td>
+                    <td className="border-b border-slate-200 px-2 py-1.5 text-[11px] whitespace-pre-wrap" dir="auto">{n.text}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
+        )}
+      </section>
+    </div>,
+    document.body,
+  );
   const rangeChange = chart.length ? (chart.at(-1)!.net - chart[0].net) : 0;
   // Top five, the rest folded into one slice so the donut stays readable.
   const slices = byCategory.length > 6
@@ -893,6 +1060,7 @@ export const Projects: React.FC = () => {
       {header}
       {formCard}
       {confirmModal}
+      {report}
 
       <div className="bg-white dark:bg-slate-900 p-5 sm:p-6 rounded-3xl border border-slate-100 dark:border-slate-800 shadow-sm space-y-5">
         <div className="flex flex-wrap justify-between items-start gap-3">
@@ -927,6 +1095,9 @@ export const Projects: React.FC = () => {
             {selected.description && <p className="text-xs text-slate-500 mt-1 whitespace-pre-wrap">{selected.description}</p>}
           </div>
           <div className="flex gap-1">
+            <button title={ar ? 'تقرير PDF' : 'PDF report'} disabled={busy} onClick={printReport} className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 cursor-pointer disabled:opacity-50">
+              <FileDown className="w-4 h-4" />
+            </button>
             <button title={ar ? 'تعديل' : 'Edit'} onClick={() => setForm({ id: selected.id, name: selected.name, description: selected.description, parentId: selected.parentId || '', logoUrl: selected.logoUrl || '' })} className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 cursor-pointer">
               <Edit2 className="w-4 h-4" />
             </button>
