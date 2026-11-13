@@ -704,6 +704,18 @@ export const Projects: React.FC = () => {
     </span>
   );
 
+  /** "205 د.ل + 123 $" with each amount bidi-isolated, so Arabic doesn't reorder it. */
+  const amounts = (text: string) =>
+    text.split(' + ').map((part, i) => (
+      <React.Fragment key={part}>
+        {i > 0 && ' + '}
+        <bdi dir="ltr">{part}</bdi>
+      </React.Fragment>
+    ));
+  /** What is owed, kept in its own currencies: never merged into one. */
+  const owed = (m: Record<'LYD' | 'USD', number>) =>
+    (['LYD', 'USD'] as const).filter((c) => m[c]).map((c) => fmt(m[c], c)).join(' + ') || fmt(0);
+
   /** "12 Nov 2026 · 14:30" — the row's own date, never shifted by UTC parsing. */
   const dayText = (date: string) => {
     const [y, m, d] = date.slice(0, 10).split('-').map(Number);
@@ -833,8 +845,8 @@ export const Projects: React.FC = () => {
                     </div>
                     {sh.anyShared && (sh.owedToMeTotal > 0 || sh.iOweTotal > 0) && (
                       <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] font-bold text-amber-600 dark:text-amber-400">
-                        {sh.owedToMeTotal > 0 && <span>{ar ? 'الشريك مدين لك ' : 'Partner owes you '}<span dir="ltr">{fmt(sh.owedToMeTotal)}</span></span>}
-                        {sh.iOweTotal > 0 && <span>{ar ? 'أنت مدين للشريك ' : 'You owe partner '}<span dir="ltr">{fmt(sh.iOweTotal)}</span></span>}
+                        {sh.owedToMeTotal > 0 && <span>{ar ? 'الشريك مدين لك ' : 'Partner owes you '}<span dir="ltr">{amounts(owed(sh.owedToMe))}</span></span>}
+                        {sh.iOweTotal > 0 && <span>{ar ? 'أنت مدين للشريك ' : 'You owe partner '}<span dir="ltr">{amounts(owed(sh.iOwe))}</span></span>}
                       </div>
                     )}
                     {subs > 0 && (
@@ -972,12 +984,12 @@ export const Projects: React.FC = () => {
           <div className="grid grid-cols-2 gap-3 mb-4 text-xs">
             <div className="border-2 border-slate-800 rounded-lg p-3">
               <div className="font-bold text-slate-600">{ar ? 'مستحق للمالك من الشريك' : 'Partner owes the owner'}</div>
-              <div className="text-base font-black tabular-nums" dir="ltr">{money2(share.owedToMeTotal)}</div>
+              <div className="text-base font-black tabular-nums" dir="ltr">{amounts((['LYD', 'USD'] as const).filter((c) => share.owedToMe[c]).map((c) => money2(share.owedToMe[c], c)).join(' + ') || money2(0))}</div>
               <div className="text-[10px] text-slate-500">{ar ? 'نصف المصاريف غير المسوّاة' : 'Half of unsettled expenses'}</div>
             </div>
             <div className="border-2 border-slate-800 rounded-lg p-3">
               <div className="font-bold text-slate-600">{ar ? 'مستحق للشريك من المالك' : 'Owner owes the partner'}</div>
-              <div className="text-base font-black tabular-nums" dir="ltr">{money2(share.iOweTotal)}</div>
+              <div className="text-base font-black tabular-nums" dir="ltr">{amounts((['LYD', 'USD'] as const).filter((c) => share.iOwe[c]).map((c) => money2(share.iOwe[c], c)).join(' + ') || money2(0))}</div>
               <div className="text-[10px] text-slate-500">{ar ? 'نصف الدخل غير المسوّى' : 'Half of unsettled income'}</div>
             </div>
           </div>
@@ -1202,14 +1214,14 @@ export const Projects: React.FC = () => {
                 { label: ar ? 'حصتك من العائد' : 'Your returned', value: fmt(share.myEarned), detail: '', color: 'text-slate-900 dark:text-white' },
                 {
                   label: ar ? 'الشريك مدين لك' : 'Partner owes you',
-                  value: fmt(share.owedToMeTotal),
-                  detail: perCurrency(share.owedToMe),
+                  value: owed(share.owedToMe),
+                  detail: '',
                   color: share.owedToMeTotal ? 'text-amber-500' : 'text-slate-400',
                 },
                 {
                   label: ar ? 'أنت مدين للشريك' : 'You owe partner',
-                  value: fmt(share.iOweTotal),
-                  detail: perCurrency(share.iOwe),
+                  value: owed(share.iOwe),
+                  detail: '',
                   color: share.iOweTotal ? 'text-amber-500' : 'text-slate-400',
                 },
                 { label: ar ? 'حصة الشريك من المصروف' : 'Partner spent', value: fmt(share.partnerSpent), detail: '', color: 'text-slate-500' },
@@ -1219,7 +1231,7 @@ export const Projects: React.FC = () => {
         ].map((card) => (
           <div key={card.label} className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800">
             <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{card.label}</div>
-            <div dir="ltr" className={`text-lg font-black tabular-nums truncate ${ar ? 'text-end' : ''} ${card.color}`}>{card.value}</div>
+            <div dir="ltr" className={`text-lg font-black tabular-nums break-words ${ar ? 'text-end' : ''} ${card.color}`}>{amounts(card.value)}</div>
             {card.detail && card.detail !== card.value && (
               <div dir="ltr" className={`text-[11px] text-slate-400 tabular-nums ${ar ? 'text-end' : ''}`}>
                 {/* Each amount isolated: "205 د.ل" next to "123 $" otherwise reorders into "$ د.ل + 205 123". */}
